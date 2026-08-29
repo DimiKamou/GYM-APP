@@ -1143,8 +1143,11 @@ declare
   c_frozen constant text[] := array['id', 'gym_id', 'created_at', 'created_by', 'logged_by'];
   v_table   text := p_op ->> 'entity';
   v_action  text := coalesce(p_op ->> 'action', 'upsert');
-  v_id      uuid := (p_op ->> 'id')::uuid;
   v_payload jsonb := coalesce(p_op -> 'payload', '{}'::jsonb);
+  -- The row id may sit on the envelope (natural for update/delete) or inside
+  -- the payload (natural for an insert the client built from a whole row).
+  -- Accepting both keeps the outbox writer from having to care.
+  v_id      uuid := coalesce(nullif(p_op ->> 'id', ''), nullif(v_payload ->> 'id', ''))::uuid;
   v_cols    text;
   v_sets    text;
   v_n       integer;
