@@ -1191,55 +1191,48 @@ begin
      and c.is_generated = 'NEVER'
      and v_payload ? c.column_name;
 
-  if v_action in ('insert', 'upsert') then
+  -- The writable half of the payload, used by both update paths.
+  select string_agg(format('%I = r.%I', c.column_name, c.column_name), ', ')
+    into v_sets
+    from information_schema.columns c
+   where c.table_schema = 'public'
+     and c.table_name = v_table
+     and c.is_generated = 'NEVER'
+     and v_payload ? c.column_name
+     and not (c.column_name = any (c_frozen));
+
+  -- upsert is update-first, not INSERT ... ON CONFLICT. ON CONFLICT has to
+  -- build a complete candidate row before it can detect the conflict, so an op
+  -- carrying a partial payload — one changed field, which is most of what an
+  -- outbox holds — dies on a NOT NULL constraint for a row that already
+  -- exists. Trying the UPDATE first also matches the actual odds: a replayed
+  -- op is far more often an edit to something present than a first insert.
+  if v_action = 'upsert' and v_sets is not null then
+    execute format(
+      'update public.%I t set %s from jsonb_populate_record(null::public.%I, $1) r
+        where t.id = $2 and t.gym_id = $3',
+      v_table, v_sets, v_table) using v_payload, v_id, p_gym;
+    get diagnostics v_n = row_count;
+    if v_n > 0 then
+      return;
+    end if;
+    v_action := 'insert';
+  end if;
+
+  if v_action = 'insert' or v_action = 'upsert' then
     if v_cols is null then
       raise exception 'op payload has no known column' using errcode = '22023';
     end if;
-
-    if v_action = 'insert' then
-      execute format(
-        'insert into public.%I (%s) select %s from jsonb_populate_record(null::public.%I, $1)',
-        v_table, v_cols, v_cols, v_table) using v_payload;
-    else
-      select string_agg(format('%I = excluded.%I', c.column_name, c.column_name), ', ')
-        into v_sets
-        from information_schema.columns c
-       where c.table_schema = 'public'
-         and c.table_name = v_table
-         and c.is_generated = 'NEVER'
-         and v_payload ? c.column_name
-         and not (c.column_name = any (c_frozen));
-
-      if v_sets is null then
-        -- Nothing writable to merge; treat the row as already present.
-        execute format(
-          'insert into public.%I (%s) select %s from jsonb_populate_record(null::public.%I, $1)
-             on conflict (id) do nothing',
-          v_table, v_cols, v_cols, v_table) using v_payload;
-      else
-        execute format(
-          'insert into public.%I as t (%s) select %s from jsonb_populate_record(null::public.%I, $1)
-             on conflict (id) do update set %s where t.gym_id = $2',
-          v_table, v_cols, v_cols, v_table, v_sets) using v_payload, p_gym;
-      end if;
-    end if;
+    execute format(
+      'insert into public.%I (%s) select %s from jsonb_populate_record(null::public.%I, $1)',
+      v_table, v_cols, v_cols, v_table) using v_payload;
     return;
   end if;
 
   if v_action = 'update' then
-    select string_agg(format('%I = r.%I', c.column_name, c.column_name), ', ')
-      into v_sets
-      from information_schema.columns c
-     where c.table_schema = 'public'
-       and c.table_name = v_table
-       and c.is_generated = 'NEVER'
-       and v_payload ? c.column_name
-       and not (c.column_name = any (c_frozen));
-
     if v_sets is null then
       raise exception 'update op carries no writable column' using errcode = '22023';
     end if;
-
     execute format(
       'update public.%I t set %s from jsonb_populate_record(null::public.%I, $1) r
         where t.id = $2 and t.gym_id = $3',
