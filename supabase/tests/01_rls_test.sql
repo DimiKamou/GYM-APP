@@ -103,3 +103,23 @@ insert into public.exercise_aliases (id, exercise_id, gym_id, norm_alias)
 select gen_random_uuid(), id, null, '  ΠΙΕΣΕΙΣ   ΩΜΩΝ  ' from public.exercises where gym_id is null limit 1;
 select 'trainer alias stored as: "'||norm_alias||'"' from public.exercise_aliases
  where norm_alias like '%ωμων%';
+
+-- ===== 13. Ownership can actually be handed over =====
+-- Regression: this was a deadlock. Promoting a successor first hit
+-- memberships_one_active_owner ("at most one"); stepping down first hit
+-- memberships_guard_privilege ("promote a successor first"). A gym whose owner
+-- left was unrecoverable without the service_role key.
+set role authenticated;
+\echo '--- 13a. A trainer cannot take the gym (must FAIL) ---'
+set request.jwt.claim.sub = '11111111-1111-1111-1111-111111111111';
+select public.transfer_ownership('cccccccc-0000-0000-0000-000000000001');
+\echo '--- 13b. The owner cannot demote themselves directly, only via transfer (must FAIL) ---'
+set request.jwt.claim.sub = '22222222-2222-2222-2222-222222222222';
+update public.memberships set role='trainer' where id='cccccccc-0000-0000-0000-000000000002';
+\echo '--- 13c. The owner hands the gym to Maria (must SUCCEED) ---'
+select 'transferred, new owner = '||(public.transfer_ownership('cccccccc-0000-0000-0000-000000000001') ->> 'new_owner');
+reset role;
+select 'after transfer: '||display_name||' = '||role from public.memberships
+ where gym_id='aaaaaaaa-0000-0000-0000-000000000001' order by display_name;
+select 'active owners in the gym: '||count(*) from public.memberships
+ where gym_id='aaaaaaaa-0000-0000-0000-000000000001' and role='owner' and status='active' and deleted_at is null;

@@ -814,11 +814,19 @@ begin
   -- The partial unique index guarantees AT MOST one active owner. Nothing
   -- guarantees at least one, and a gym with zero owners can never be repaired
   -- from inside the app — no one is left who can promote anybody.
-  if old.role = 'owner' and old.status = 'active' and old.deleted_at is null
+  --
+  -- transfer_ownership() is the one legitimate exception, and it needs the same
+  -- flag: the index forbids two owners, so a transfer MUST pass through a
+  -- moment of zero. It is privileged, runs both updates in one transaction, and
+  -- has already checked that the successor is an active member with a linked
+  -- account — so the gym is ownerless only between two statements that cannot
+  -- be interrupted by a client.
+  if coalesce(current_setting('trainhub.privileged', true), '') <> 'on'
+     and old.role = 'owner' and old.status = 'active' and old.deleted_at is null
      and (new.role is distinct from 'owner'
           or new.status is distinct from 'active'
           or new.deleted_at is not null) then
-    raise exception 'a gym must keep one active owner — promote a successor first'
+    raise exception 'a gym must keep one active owner — transfer ownership first'
       using errcode = '23514';
   end if;
 
@@ -1176,6 +1184,63 @@ exception
     raise exception 'invalid or expired invite' using errcode = '42501';
 end;
 $$;
+
+
+-- Ownership was previously a one-way door, and the two halves of the lock each
+-- pointed at the other: promoting a successor first hit
+-- memberships_one_active_owner ("at most one"), and stepping down first hit
+-- memberships_guard_privilege ("promote a successor first"). A gym whose owner
+-- left was unrecoverable without the service_role key — the month-eight
+-- failure, not the week-five one.
+--
+-- The transfer has to be one transaction with an intermediate state of zero
+-- owners, which the partial index permits and the trigger does not, so it runs
+-- privileged. It cannot be two client calls: a client that dies between them
+-- leaves the gym ownerless and permanently unfixable.
+create or replace function public.transfer_ownership(p_to uuid)
+returns jsonb
+language plpgsql
+security definer
+set search_path = public, pg_temp
+as $$
+declare
+  v_gym  uuid := app.my_gym();
+  v_self uuid := app.my_membership();
+  v_to   public.memberships;
+begin
+  if v_gym is null or v_self is null then
+    raise exception 'sign in first' using errcode = '42501';
+  end if;
+  if app.my_role() is distinct from 'owner' then
+    raise exception 'only the current owner may transfer ownership' using errcode = '42501';
+  end if;
+
+  select * into v_to from public.memberships
+   where id = p_to and gym_id = v_gym and status = 'active' and deleted_at is null;
+  if not found then
+    raise exception 'the successor must be an active member of this gym' using errcode = '42501';
+  end if;
+  if v_to.id = v_self then
+    raise exception 'you already own this gym' using errcode = '42501';
+  end if;
+  -- A membership with no linked account cannot sign in, so handing it the gym
+  -- is the same as having no owner at all.
+  if v_to.user_id is null then
+    raise exception 'the successor has not accepted their invite yet' using errcode = '42501';
+  end if;
+
+  perform set_config('trainhub.privileged', 'on', true);
+  -- Step down FIRST. The partial index allows zero active owners; it is "at
+  -- most one" that it enforces, so the reverse order cannot work.
+  update public.memberships set role = 'trainer' where id = v_self;
+  update public.memberships set role = 'owner'   where id = v_to.id;
+  perform set_config('trainhub.privileged', 'off', true);
+
+  return jsonb_build_object('gym_id', v_gym, 'previous_owner', v_self, 'new_owner', v_to.id);
+end;
+$$;
+
+revoke all on function public.transfer_ownership(uuid) from public;
 
 
 -- ---------------------------------------------------------------------------
@@ -1648,6 +1713,7 @@ revoke all on function public.apply_op(uuid, jsonb) from public;
 revoke all on function public.apply_ops(uuid, jsonb) from public;
 
 grant execute on function public.bootstrap_gym(text, text, text) to authenticated;
+grant execute on function public.transfer_ownership(uuid) to authenticated;
 grant execute on function public.create_invite(text, public.member_role, interval, integer) to authenticated;
 grant execute on function public.revoke_invite(uuid) to authenticated;
 grant execute on function public.list_invites() to authenticated;
