@@ -1059,8 +1059,7 @@ begin
   if not found
      or v_inv.deleted_at is not null
      or v_inv.revoked_at is not null
-     or v_inv.expires_at <= now()
-     or v_inv.uses >= v_inv.max_uses then
+     or v_inv.expires_at <= now() then
     raise exception 'invalid or expired invite' using errcode = '42501';
   end if;
 
@@ -1073,21 +1072,27 @@ begin
     raise exception 'invalid or expired invite' using errcode = '42501';
   end if;
 
-  -- See memberships_guard_privilege(): the joiner has no role yet, so without
-  -- this flag their own activation looks like self-promotion.
-  perform set_config('trainhub.privileged', 'on', true);
-
   select * into v_ms
     from public.memberships m
    where m.gym_id = v_inv.gym_id and lower(m.email::text) = lower(v_email::text);
 
-  if found then
-    -- Idempotent: a second redemption by the same account returns the same
-    -- membership and does not burn another use.
-    if v_ms.status = 'active' and v_ms.user_id = v_uid then
-      perform set_config('trainhub.privileged', 'off', true);
-      return jsonb_build_object('membership_id', v_ms.id, 'gym_id', v_ms.gym_id, 'role', v_ms.role);
-    end if;
+  -- Idempotency, and it has to come BEFORE the uses check: the invite is
+  -- single-use, so a client that retries after a lost response would otherwise
+  -- be told its own successful redemption was invalid, and would sit on a
+  -- working account it believes it does not have.
+  if found and v_ms.status = 'active' and v_ms.user_id = v_uid then
+    return jsonb_build_object('membership_id', v_ms.id, 'gym_id', v_ms.gym_id, 'role', v_ms.role);
+  end if;
+
+  if v_inv.uses >= v_inv.max_uses then
+    raise exception 'invalid or expired invite' using errcode = '42501';
+  end if;
+
+  -- See memberships_guard_privilege(): the joiner has no role yet, so without
+  -- this flag their own activation looks like self-promotion.
+  perform set_config('trainhub.privileged', 'on', true);
+
+  if v_ms.id is not null then
     update public.memberships
        set user_id = v_uid,
            status  = 'active',
