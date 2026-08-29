@@ -538,3 +538,25 @@ describe('lastPerformance', () => {
     expect(lastPerformance(d, ATHLETE, 'ex-bench', 'cur')?.authorName).toBeNull()
   })
 })
+
+describe('soft-deleted sets never reach a number a coach sees', () => {
+  // Regression: toSets() filtered tombstones on the SessionTree branch but returned
+  // the flat WorkoutSet[] branch untouched. Callers hand rows straight from the
+  // cache, where deleted rows still live, so a removed set was counted twice over —
+  // once as itself and once as the row that replaced it.
+  const live = wset('live', 'b1', 'weight_reps', { loadKg: 100, reps: 10 })
+  const dead = wset('dead', 'b1', 'weight_reps', {
+    loadKg: 100,
+    reps: 10,
+    deletedAt: '2026-08-02T00:00:00.000Z',
+  })
+
+  it('excludes them from volume', () => {
+    expect(sessionVolume([live])).toBe(1000)
+    expect(sessionVolume([live, dead])).toBe(1000)
+  })
+
+  it('excludes them from the set count', () => {
+    expect(sessionSets([live, dead])).toBe(1)
+  })
+})

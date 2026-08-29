@@ -39,6 +39,34 @@ function parseDeclarations(css: string): Array<[string, string]> {
   return out
 }
 
+/**
+ * Which selectors each theme is allowed to bind its tokens to.
+ *
+ * Daylight also takes bare `:root` so the very first paint is themed before ThemeProvider has
+ * stamped the element; Slate is reachable only once it has. Asserting the selector matters as
+ * much as asserting the keys: parseDeclarations() below finds `--th-x: y` anywhere in the file,
+ * so a malformed selector leaves every key present and every value correct while the browser
+ * applies none of it. Mutating `:root,` to `:root-TYPO,` used to keep this suite green.
+ */
+const EXPECTED_SELECTORS: Record<ThemeName, string[]> = {
+  daylight: [':root', ":root[data-theme='daylight']"],
+  slate: [":root[data-theme='slate']"],
+}
+
+/** Selectors of every rule block that defines at least one `--th-` custom property. */
+function tokenBindingSelectors(css: string): string[] {
+  const withoutComments = css.replace(/\/\*[\s\S]*?\*\//g, '')
+  const out: string[] = []
+  for (const m of withoutComments.matchAll(/([^{}]+)\{([^{}]*)\}/g)) {
+    if (!/--th-[a-z0-9-]+\s*:/.test(m[2])) continue
+    for (const sel of m[1].split(',')) {
+      const trimmed = sel.trim()
+      if (trimmed) out.push(trimmed)
+    }
+  }
+  return out
+}
+
 const PARSED: Record<ThemeName, Array<[string, string]>> = {
   daylight: parseDeclarations(readTheme('daylight')),
   slate: parseDeclarations(readTheme('slate')),
@@ -152,5 +180,22 @@ describe('theme text pairs', () => {
   it.each(['daylight', 'slate'] as const)('%s avatar ink clears AA on its own chip', (name) => {
     const ratio = contrastRatio(tokenValue(name, '--th-avatar-ink'), tokenValue(name, '--th-avatar-bg'))
     expect(ratio as number).toBeGreaterThanOrEqual(CONTRAST_AA)
+  })
+})
+
+describe('themes bind their tokens to the right selectors', () => {
+  // The keys can all be present and correct while the browser applies none of them.
+  it.each(['daylight', 'slate'] as const)('%s binds exactly the expected selectors', (name) => {
+    expect(tokenBindingSelectors(readTheme(name)).sort()).toEqual(
+      [...EXPECTED_SELECTORS[name]].sort(),
+    )
+  })
+
+  it('daylight also answers to bare :root, so the first paint is themed', () => {
+    expect(tokenBindingSelectors(readTheme('daylight'))).toContain(':root')
+  })
+
+  it('slate never claims bare :root, or it would beat daylight on an unstamped document', () => {
+    expect(tokenBindingSelectors(readTheme('slate'))).not.toContain(':root')
   })
 })

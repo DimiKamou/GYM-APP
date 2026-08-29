@@ -189,7 +189,10 @@ function toSets(input: readonly WorkoutSet[] | SessionTree): readonly WorkoutSet
   if ('blocks' in input) {
     return input.blocks.filter(isLive).flatMap((block) => block.sets.filter(isLive))
   }
-  return input
+  // The flat branch filters too. Deletion is soft everywhere in this schema, so a
+  // caller handing over rows straight from the cache is handing over tombstones,
+  // and an unfiltered branch silently double-counts every set a coach removed.
+  return input.filter(isLive)
 }
 
 /** Σ load×reps over a session's sets. Accepts a rehydrated tree or a flat set list. */
