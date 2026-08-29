@@ -1,0 +1,15 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" role="img" aria-label="TrainHub">
+  <rect width="512" height="512" rx="114" fill="#5E7355"/>
+  <!-- the sheet: what this app replaces -->
+  <rect x="132" y="104" width="248" height="304" rx="26" fill="#FBF8F1"/>
+  <!-- the clip: it is a shared sheet, passed between coaches -->
+  <rect x="212" y="76" width="88" height="46" rx="18" fill="#3F4F39"/>
+  <!-- ruled lines, then the trend the sheet is actually there to carry -->
+  <g fill="#DDD6C4">
+    <rect x="168" y="170" width="120" height="15" rx="7.5"/>
+    <rect x="168" y="212" width="176" height="15" rx="7.5"/>
+  </g>
+  <polyline points="172,352 224,318 268,330 316,278 344,258"
+    fill="none" stroke="#5E7355" stroke-width="21" stroke-linecap="round" stroke-linejoin="round"/>
+  <circle cx="344" cy="258" r="17" fill="#5E7355"/>
+</svg>
