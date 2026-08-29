@@ -1,0 +1,78 @@
+/**
+ * Theme A — DAYLIGHT (warm paper, editorial). The default, and the light half of the pair.
+ *
+ * Also bound to bare `:root` so the first paint is themed before ThemeProvider has stamped
+ * data-theme. Slate only ever arrives via an explicit stamp, so it needs no such fallback.
+ *
+ * Contract: every property here is in src/theme/tokens.contract.ts, and nothing else may be —
+ * src/theme/theme.test.ts fails the build if this file and slate.css drift apart.
+ * Contrast figures in comments are measured WCAG 2.1 ratios (see the derivation note per group).
+ */
+
+:root,
+:root[data-theme='daylight'] {
+  /* ---- surfaces ---- */
+  --th-bg: #F4F0E7;
+  --th-bg-image: radial-gradient(120% 75% at 50% -8%, #FBF8F1 0%, #F1ECE1 60%);
+  --th-surface: #FFFFFF;
+  --th-surface-2: #F7F4ED;
+  --th-surface-3: #EFEADC;
+  --th-ink: #25231D;
+  --th-muted: #847F70;
+  --th-faint: #A9A393;
+  --th-line: #E9E3D5;
+  --th-line-soft: #F4F1EA;
+
+  /* ---- accent ----
+     accent-ink is dark-on-light's opposite here: #FBF8F1 on the sage measures 4.88:1, over the
+     4.5:1 floor. See slate.css for why this is set per theme instead of computed from luminance. */
+  --th-accent: #5E7355;
+  --th-accent-ink: #FBF8F1;
+  /* Surface wash, not a text pair — accent on it is only 4.38:1, so text on accent-soft is --th-ink. */
+  --th-accent-soft: #E9EEE2;
+
+  /* ---- avatar ---- monochrome by design: athlete identity is the initials, not a colour. */
+  --th-avatar-bg: #EFEADC;
+  --th-avatar-ink: #5B5647; /* 6.09:1 on the chip */
+
+  /* ---- semantic ---- measured on --th-surface-3 #EFEADC, the chip these render on ---- */
+  --th-danger: #D1151B;      /* 4.56:1 */
+  --th-danger-ink: #FBF8F1;  /* 5.16:1 on the danger fill */
+  --th-danger-soft: #F4E7DD; /* danger text on it: 4.52:1 */
+  --th-success: #027852;     /* 4.58:1 */
+  --th-warning: #856405;     /* 4.57:1 */
+
+  /* ---- category ----
+     The prototype's five hues were picked against near-black and are illegible on warm paper
+     (#3B82F6 on #EFEADC is 3.1:1). Re-derived in OKLCH: hue held exactly, lightness walked down
+     until each cleared 4.5:1 on the CHIP (#EFEADC), which is darker than the card — clearing the
+     card alone would still fail on the surface these actually sit on. Ratios are vs #EFEADC. */
+  --th-cat-upper: #1C64D5;    /* 4.56:1  (was #3B82F6) */
+  --th-cat-lower: #BE3B05;    /* 4.58:1  (was #FF5A1F) */
+  --th-cat-core: #9039DC;     /* 4.59:1  (was #A855F7) */
+  --th-cat-cardio: #027852;   /* 4.58:1  (was #10B981) */
+  --th-cat-mobility: #856405; /* 4.57:1  (was #EAB308 — yellow cannot reach 4.5:1 on paper without
+                                 going olive; hue is intact, the brownness is the price of the floor) */
+
+  /* ---- appointment type ---- same derivation, ratios vs #EFEADC.
+     `personal` follows the theme accent (the prototype's #C6FF3D was the discarded Arena lime),
+     and `assessment` is a cyan rather than the prototype's #3B82F6 so it stays separable from
+     Slate's blue accent — the two themes must not disagree about which hue means what. */
+  --th-appt-personal: #5A6F51;   /* 4.57:1 — the sage, one step down to clear the chip */
+  --th-appt-assessment: #0470A0; /* 4.56:1 */
+  --th-appt-group: #9039DC;      /* 4.59:1 */
+  --th-appt-program: #BE3B05;    /* 4.58:1 */
+
+  /* ---- type ---- */
+  --th-font-display: 'Newsreader', Georgia, 'Times New Roman', serif;
+  --th-font-ui: 'Hanken Grotesk', system-ui, -apple-system, 'Segoe UI', sans-serif;
+  --th-display-weight: 500;
+  --th-display-tracking: -0.01em;
+
+  /* ---- elevation ---- tinted with the paper's warmth; neutral black reads as dirt on cream. */
+  --th-shadow: 0 14px 34px -22px rgba(58, 52, 36, 0.45);
+  --th-shadow-soft: 0 8px 20px -14px rgba(58, 52, 36, 0.3);
+
+  /* ---- chrome ---- read back by ThemeProvider into <meta name="theme-color">. */
+  --th-theme-color: #F4F0E7;
+}
