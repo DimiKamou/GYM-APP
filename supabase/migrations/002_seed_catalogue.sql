@@ -73,7 +73,11 @@ on conflict (id) do update set
 -- ~110 rows below stay readable and a re-run inserts nothing twice. md5 is a
 -- naming scheme here, not a security claim.
 insert into public.exercise_aliases (id, exercise_id, gym_id, norm_alias)
-select md5('trainhub.alias:' || v.exercise_id || ':' || v.norm_alias)::uuid,
+-- Both the id and the value are derived from the FOLDED alias, so the row id
+-- stays stable no matter how the literal below is typed. The trigger
+-- normalize_alias() folds the stored value anyway; deriving the id from the
+-- same form is what keeps `on conflict (id) do nothing` genuinely idempotent.
+select md5('trainhub.alias:' || v.exercise_id || ':' || translate(v.norm_alias, 'ς', 'σ'))::uuid,
        v.exercise_id::uuid,
        null,
        v.norm_alias

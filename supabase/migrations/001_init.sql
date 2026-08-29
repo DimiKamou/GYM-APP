@@ -628,6 +628,32 @@ begin
 end;
 $$;
 
+-- exercise_aliases.norm_alias must hold the SAME canonical form the client
+-- compares against, or the row is dead weight: it is only ever matched by
+-- equality against normalizeText() output. That function folds final sigma
+-- (U+03C2 -> U+03C3), because JS lowercases "ΠΑΠΑΔΑΚΗΣ" to a final sigma while
+-- a coach typing mid-word produces a medial one. An alias stored as
+-- "πιεσεις στηθους" can therefore never be found by a search for
+-- "πιεσεισ στηθουσ". Normalising here rather than trusting every caller means
+-- a trainer adding an exercise from the picker cannot create an unreachable
+-- alias either.
+create or replace function public.normalize_alias()
+returns trigger
+language plpgsql
+as $$
+begin
+  new.norm_alias := btrim(regexp_replace(translate(lower(new.norm_alias), 'ς', 'σ'), '\s+', ' ', 'g'));
+  if new.norm_alias = '' then
+    raise exception 'exercise_aliases.norm_alias cannot be blank' using errcode = '23514';
+  end if;
+  return new;
+end;
+$$;
+
+create trigger exercise_aliases_normalize
+  before insert or update of norm_alias on public.exercise_aliases
+  for each row execute function public.normalize_alias();
+
 create trigger sets_stamp_created_by
   before insert on public.sets
   for each row execute function public.stamp_created_by();

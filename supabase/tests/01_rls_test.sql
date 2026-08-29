@@ -91,3 +91,15 @@ select 'set author = '||m.display_name||' (client claimed Dimitris)'
 select 'decimal comma survived: load_kg = '||load_kg from public.sets
  where id='88888888-0000-0000-0000-000000000001';
 reset role;
+
+-- ===== 12. Every seeded alias is reachable by the client's canonical form =====
+\echo '--- 12. No alias may store a final sigma: normalizeText() folds it, so such a row is dead ---'
+select case when count(*) = 0
+            then 'all '||(select count(*) from public.exercise_aliases)||' aliases are foldable-clean'
+            else 'UNREACHABLE ALIASES: '||count(*) end
+  from public.exercise_aliases where norm_alias like '%ς%';
+\echo '    (and a trainer-added alias is folded on the way in)'
+insert into public.exercise_aliases (id, exercise_id, gym_id, norm_alias)
+select gen_random_uuid(), id, null, '  ΠΙΕΣΕΙΣ   ΩΜΩΝ  ' from public.exercises where gym_id is null limit 1;
+select 'trainer alias stored as: "'||norm_alias||'"' from public.exercise_aliases
+ where norm_alias like '%ωμων%';
