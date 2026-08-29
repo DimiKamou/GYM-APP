@@ -10,3 +10,6 @@ coverage
 test-results
 playwright-report
 .vite
+
+# tsc -b incremental state
+*.tsbuildinfo
