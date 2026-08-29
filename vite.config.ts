@@ -1,4 +1,6 @@
-import { defineConfig } from 'vite'
+// `defineConfig` comes from vitest/config, not vite: vite's own overload does not
+// know the `test` key, so the config below would not typecheck against it.
+import { defineConfig } from 'vitest/config'
 import react from '@vitejs/plugin-react'
 import { fileURLToPath, URL } from 'node:url'
 
