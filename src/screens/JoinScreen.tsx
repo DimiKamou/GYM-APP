@@ -38,7 +38,11 @@ function readInviteSecretFromHash(): string | null {
 function stripFragment(): void {
   try {
     const { pathname, search } = window.location
-    window.history.replaceState(null, '', `${pathname}${search}`)
+    // Preserve whatever state is already on the entry. React Router keeps its own
+    // `{usr, key, idx}` bookkeeping there, and passing null erases it — after which
+    // its history has no index and back/forward stop behaving. We are here to remove
+    // the fragment, not the router's memory of how the user arrived.
+    window.history.replaceState(window.history.state, '', `${pathname}${search}`)
   } catch {
     // Some embedded webviews refuse replaceState. The invite still works; the URL is just
     // uglier and the secret stays visible, which is why this is a fragment and not a query.
