@@ -14,8 +14,12 @@ insert into public.memberships (id, gym_id, user_id, display_name, email, role, 
 insert into public.athletes (id, gym_id, full_name) values
   ('dddddddd-0000-0000-0000-000000000001','aaaaaaaa-0000-0000-0000-000000000001','Νίκος Παπαδόπουλος');
 
-grant usage on schema public to authenticated;
-grant select, insert, update on all tables in schema public to authenticated;
+-- NO grants here, deliberately. 001_init.sql issues the real ones, including
+-- column-level UPDATE grants that are part of the security model
+-- (notes may only have pinned/dismissed_at/dismissed_by updated). An earlier
+-- version of this file re-granted `update on all tables`, which silently
+-- widened those column grants and made the test pass against a configuration
+-- that will never exist in production.
 
 -- ===== Act as Maria (trainer, Iron Lab) =====
 set role authenticated;

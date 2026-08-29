@@ -607,8 +607,7 @@ begin
 end;
 $$;
 
-alter table public.notes  alter column author set default app.my_membership();
-alter table public.sets   alter column done_at set default now();
+alter table public.notes alter column author set default app.my_membership();
 
 
 -- ---------------------------------------------------------------------------
@@ -678,15 +677,20 @@ returns trigger
 language plpgsql
 as $$
 begin
-  -- Notes are append-only, and RLS alone cannot express that: a policy gates
-  -- whole rows, not columns, so `using (gym_id = app.my_gym())` happily permits
-  -- rewriting `body`. Only the two consumption flags may move.
+  -- Second lock on append-only notes. The FIRST — and the one that actually
+  -- fires for `authenticated` — is the column-level
+  -- `grant update (pinned, dismissed_at, dismissed_by) on public.notes` further
+  -- down this file, which denies at permission-check time, before RLS or any
+  -- trigger runs. RLS cannot do this job: a policy gates whole rows, not
+  -- columns.
   --
-  -- This is load-bearing rather than tidy. Everything else in the schema merges
-  -- as a union of rows, but a note is the one field two coaches contend for on
-  -- the same row: without this, a trainer whose device holds a three-week-old
-  -- copy republishes it over a colleague's warning and last-write-wins loses
-  -- the warning silently. Append-only is what makes that unrepresentable.
+  -- This trigger exists because that grant is one careless
+  -- `grant update on all tables` away from evaporating, in a future migration
+  -- or a support script, and the failure would be silent. Append-only is
+  -- load-bearing: everything else in the schema merges as a union of rows, but
+  -- a note is the one field two coaches contend for on the SAME row. Without
+  -- it, a trainer whose device holds a three-week-old copy republishes it over
+  -- a colleague's warning and last-write-wins drops the warning with no error.
   if new.body is distinct from old.body then
     raise exception 'notes.body is append-only — add a new note instead'
       using errcode = '42501';
@@ -1159,8 +1163,10 @@ begin
     raise exception 'op has no id' using errcode = '22023';
   end if;
 
-  -- Carried into session_events by audit_session_entity(). Transaction-local,
-  -- so it cannot leak into the next op.
+  -- Carried into session_events by audit_session_entity(). Set on every op —
+  -- including to '' when the op omits it — so one op's client_at cannot be
+  -- attributed to the next, and transaction-local so it never outlives the
+  -- batch.
   perform set_config('trainhub.client_at', coalesce(p_op ->> 'client_at', ''), true);
 
   if v_action = 'delete' then
