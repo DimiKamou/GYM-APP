@@ -609,6 +609,33 @@ $$;
 
 alter table public.notes alter column author set default app.my_membership();
 
+-- A DEFAULT only fires when the client OMITS the column, so on its own it makes
+-- created_by a suggestion rather than a fact: a direct PostgREST insert can name
+-- anyone. That is tolerable on rows nobody reads for attribution, and not
+-- tolerable on sets and blocks, where "who wrote this line" IS the product — it
+-- is the one thing the paper sheet already did and the reason this app exists.
+-- apply_ops already refuses to carry created_by (see c_frozen); this closes the
+-- same hole on the direct path, so per-set author badges can be trusted.
+create or replace function public.stamp_created_by()
+returns trigger
+language plpgsql
+security definer
+set search_path = public, pg_temp
+as $$
+begin
+  new.created_by := app.my_membership();
+  return new;
+end;
+$$;
+
+create trigger sets_stamp_created_by
+  before insert on public.sets
+  for each row execute function public.stamp_created_by();
+
+create trigger blocks_stamp_created_by
+  before insert on public.blocks
+  for each row execute function public.stamp_created_by();
+
 
 -- ---------------------------------------------------------------------------
 -- 5. Session triggers

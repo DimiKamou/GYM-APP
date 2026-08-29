@@ -307,16 +307,27 @@ test.describe('M1 gate: two trainers, one session, no signal', () => {
       expect(authors).toContain(trainerA.membershipId)
       expect(authors).toContain(trainerB.membershipId)
 
-      // And the server's own trail agrees — `created_by` is client-written, `actor` is not.
-      const events = await admin
-        .from('session_events')
-        .select('entity, entity_id, action, actor')
-        .eq('session_id', sessionId)
-        .eq('entity', 'set')
-        .eq('action', 'insert')
-      expect(events.error).toBeNull()
-      const actors = ((events.data ?? []) as Array<{ actor: string | null }>).map((e) => e.actor)
-      expect(new Set(actors)).toEqual(new Set([trainerA.membershipId, trainerB.membershipId]))
+      // And those authors are the server's word, not the client's. session_events audits
+      // sessions and notes only — never sets, by design: a trail row per set would double
+      // writes on the hottest table in the app. What makes sets.created_by trustworthy
+      // instead is the sets_stamp_created_by trigger, which overwrites whatever arrived.
+      // Proven rather than assumed: trainer B names trainer A as the author and the server
+      // refuses the substitution.
+      const forged = await asTrainer(trainerB)
+        .from('sets')
+        .insert({
+          gym_id: trainerB.gymId,
+          block_id: blockId,
+          position: 99,
+          kind: 'weight_reps',
+          load_kg: 60,
+          reps: 5,
+          created_by: trainerA.membershipId,
+        })
+        .select('id, created_by')
+        .single()
+      expect(forged.error).toBeNull()
+      expect((forged.data as { created_by: string }).created_by).toBe(trainerB.membershipId)
 
       // 6. Both devices, reloaded cold, show both sets in `(position, id)` order with the right
       //    name on each line. A number without its author is what this app exists to replace.

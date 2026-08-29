@@ -72,3 +72,22 @@ select 'spy sees global exercises: '||count(*) from public.exercises where gym_i
 insert into public.sessions (id, gym_id, athlete_id, title)
 values ('eeeeeeee-0000-0000-0000-000000000099','aaaaaaaa-0000-0000-0000-000000000001','dddddddd-0000-0000-0000-000000000001','Intrusion');
 reset role;
+
+-- ===== 11. Per-set attribution is the server's word, not the client's =====
+reset role; set role authenticated;
+set request.jwt.claim.sub = '11111111-1111-1111-1111-111111111111';
+\echo '--- 11. Maria inserts a set naming DIMITRIS as its author (must be overwritten to Maria) ---'
+insert into public.blocks (id, gym_id, session_id, exercise_id, position)
+select '77777777-0000-0000-0000-000000000001','aaaaaaaa-0000-0000-0000-000000000001',
+       'eeeeeeee-0000-0000-0000-000000000001', id, 0
+  from public.exercises where gym_id is null limit 1;
+insert into public.sets (id, gym_id, block_id, position, kind, load_kg, reps, created_by)
+values ('88888888-0000-0000-0000-000000000001','aaaaaaaa-0000-0000-0000-000000000001',
+        '77777777-0000-0000-0000-000000000001', 0, 'weight_reps', 82.5, 8,
+        'cccccccc-0000-0000-0000-000000000002');
+select 'set author = '||m.display_name||' (client claimed Dimitris)'
+  from public.sets s join public.memberships m on m.id = s.created_by
+ where s.id='88888888-0000-0000-0000-000000000001';
+select 'decimal comma survived: load_kg = '||load_kg from public.sets
+ where id='88888888-0000-0000-0000-000000000001';
+reset role;
