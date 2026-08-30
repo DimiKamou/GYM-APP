@@ -1,6 +1,7 @@
 import type { CSSProperties, ReactNode } from 'react'
 import {
   createBrowserRouter,
+  createHashRouter,
   Link,
   Navigate,
   Outlet,
@@ -265,4 +266,12 @@ export const routes: RouteObject[] = [
   },
 ]
 
-export const router = createBrowserRouter(routes)
+/**
+ * Hash routing exists for one job: the single-file preview build, which is opened straight from
+ * a file or a static host with no rewrite rule, where a deep link to /athletes would 404 before
+ * React ever loads. The deployed app uses real paths — the URL a coach shares should not carry a
+ * hash — so this is a build flag, not a runtime choice.
+ */
+export const router = import.meta.env.VITE_HASH_ROUTER
+  ? createHashRouter(routes)
+  : createBrowserRouter(routes)

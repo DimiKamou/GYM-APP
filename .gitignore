@@ -13,3 +13,6 @@ playwright-report
 
 # tsc -b incremental state
 *.tsbuildinfo
+
+# single-file preview build
+dist-preview
