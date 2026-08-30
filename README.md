@@ -84,17 +84,31 @@ gets wired in M5, once the code stops changing daily, with the waiting worker he
 
 ```bash
 npm install
-cp .env.example .env      # fill in your Supabase URL + anon key
 npm run dev
 ```
 
-The app boots without Supabase configured and shows an explicit "not configured" state, so the UI can be
-worked on before the project exists.
+That is the whole setup. **No Supabase project is required to run the app.** With no credentials
+configured it starts against a local IndexedDB repository seeded with a realistic gym — Iron Lab,
+two trainers, five athletes, three months of sessions — signs you in as Δημήτρης, and works
+end to end. Settings says so plainly rather than implying the data is synced anywhere.
+
+That seam exists because an app nobody can open is an app nobody can judge. A trainer deciding
+whether this beats their clipboard has to be able to hold it first.
+
+To point it at a real server instead:
+
+```bash
+cp .env.example .env      # Supabase URL + anon key; see supabase/README.md
+npm run dev
+```
+
+`VITE_OFFLINE_FIXTURE=1` forces the local repository even when Supabase *is* configured, which is
+how you demo without touching the gym's data.
 
 ```bash
 npm run check     # typecheck + unit tests
 npm run test      # vitest
-npm run e2e       # Playwright — needs a live Supabase project
+npm run e2e       # Playwright — smoke suite runs locally; the two-device gate needs a project
 npm run build
 ```
 
