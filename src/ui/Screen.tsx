@@ -24,6 +24,18 @@ export interface ScreenProps {
   label?: string
   /** Extra styles for the scrolling body, for a screen that needs its own gap or padding. */
   bodyStyle?: CSSProperties
+  /**
+   * Docked below the scrolling body — the Log's "Finish session" bar, a sheet-less commit row.
+   * Outside the scroller for the same reason the header is: a commit action that scrolls away
+   * is one the trainer has to hunt for with a barbell waiting.
+   */
+  footer?: ReactNode
+  /**
+   * Whether the footer carries the home-indicator inset. True by default, because a screen with
+   * its own footer is one of the untabbed routes and there is no `<TabBar>` below to own it.
+   * Set false on a tabbed route, where adding it here puts a second gap above the tab bar.
+   */
+  footerSafeArea?: boolean
 }
 
 const frame: CSSProperties = {
@@ -62,7 +74,22 @@ const bodyBase: CSSProperties = {
   gap: 'var(--th-gap)',
 }
 
-export function Screen({ children, header, label, bodyStyle }: ScreenProps) {
+const footerStyle: CSSProperties = {
+  ...sidePadding,
+  flex: '0 0 auto',
+  paddingTop: 'var(--th-gap)',
+  borderTop: '1px solid var(--th-line-soft)',
+  background: 'var(--th-surface)',
+}
+
+export function Screen({
+  children,
+  header,
+  label,
+  bodyStyle,
+  footer,
+  footerSafeArea = true,
+}: ScreenProps) {
   return (
     <div style={frame}>
       {header ? <div style={headerStyle}>{header}</div> : null}
@@ -73,6 +100,18 @@ export function Screen({ children, header, label, bodyStyle }: ScreenProps) {
       >
         {children}
       </div>
+      {footer ? (
+        <div
+          style={{
+            ...footerStyle,
+            paddingBottom: footerSafeArea
+              ? 'calc(var(--th-pad) + env(safe-area-inset-bottom, 0px))'
+              : 'var(--th-pad)',
+          }}
+        >
+          {footer}
+        </div>
+      ) : null}
     </div>
   )
 }
