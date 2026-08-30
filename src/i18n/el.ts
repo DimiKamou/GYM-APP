@@ -57,6 +57,16 @@ export const el = {
     time: 'Ώρα',
     unassigned: 'Χωρίς ανάθεση',
     undo: 'Αναίρεση',
+    archive: 'Αρχειοθέτηση',
+    confirm: 'Επιβεβαίωση',
+    copy: 'Αντιγραφή',
+    copied: 'Αντιγράφηκε',
+    optional: 'Προαιρετικό',
+    /** A write that left the device but has not reached a server. Not an error, and never
+        rendered as one — the coach's set is safe, it is just not shared yet. */
+    queued: 'Στην ουρά — θα σταλεί μόλις υπάρξει σύνδεση.',
+    remove: 'Αφαίρεση',
+    you: 'Εσύ',
   },
 
   nav: {
@@ -91,6 +101,8 @@ export const el = {
     coach_other: '{{count}} προπονητές',
     appointment_one: '{{count}} ραντεβού',
     appointment_other: '{{count}} ραντεβού',
+    minute_one: '{{count}} λεπτό',
+    minute_other: '{{count}} λεπτά',
   },
 
   auth: {
@@ -114,6 +126,24 @@ export const el = {
     haveInvite: 'Έχεις σύνδεσμο πρόσκλησης;',
     notConfiguredTitle: 'Ο διακομιστής δεν έχει ρυθμιστεί',
     notConfiguredBody: 'Λείπουν οι μεταβλητές περιβάλλοντος: {{vars}}.',
+    /** Why there is no Google button. A coach who has used one asks, and the answer is the
+        reason this product exists: an OAuth redirect leaves the installed app signed out. */
+    otpOnly: 'Χωρίς κωδικό πρόσβασης. Σου στέλνουμε 6ψήφιο κωδικό στο email κάθε φορά.',
+    demoTitle: 'Λειτουργία επίδειξης',
+    demoBody:
+      'Δεν έχει ρυθμιστεί διακομιστής, οπότε η εφαρμογή τρέχει με δεδομένα-δείγμα αποθηκευμένα μόνο σε αυτή τη συσκευή. Μπορείς να τη δοκιμάσεις κανονικά.',
+    demoEnter: 'Είσοδος στην εφαρμογή',
+    emailRequired: 'Γράψε το email σου.',
+    emailInvalid: 'Αυτό δεν μοιάζει με διεύθυνση email.',
+    codeRequired: 'Γράψε τον 6ψήφιο κωδικό.',
+    codeHint: 'Ο κωδικός ισχύει για λίγα λεπτά. Κοίτα και τα ανεπιθύμητα.',
+    codeInvalid: 'Ο κωδικός δεν είναι σωστός. Έλεγξε τα ψηφία ή ζήτα νέον.',
+    codeExpired: 'Ο κωδικός έληξε. Ζήτα νέον κωδικό.',
+    codeResent: 'Στάλθηκε νέος κωδικός.',
+    rateLimited: 'Πολλές προσπάθειες. Περίμενε ένα λεπτό και ξαναδοκίμασε.',
+    offline: 'Δεν υπάρχει σύνδεση με τον διακομιστή. Έλεγξε το δίκτυο και δοκίμασε ξανά.',
+    sendFailed: 'Ο κωδικός δεν στάλθηκε.',
+    verifyFailed: 'Η επιβεβαίωση απέτυχε.',
   },
 
   join: {
@@ -137,6 +167,10 @@ export const el = {
     lastSession: 'Τελευταία',
     noPrevious: 'Καμία προηγούμενη προπόνηση',
     open: 'Άνοιγμα',
+    noMatches: 'Καμία αντιστοιχία',
+    /** Says out loud that accents are optional — half the roster is typed without them. */
+    noMatchesHint: 'Δοκίμασε μέρος του επωνύμου. Η αναζήτηση αγνοεί τόνους.',
+    clearSearch: 'Καθαρισμός αναζήτησης',
   },
 
   athlete: {
@@ -157,6 +191,15 @@ export const el = {
     startFirst: 'Ξεκίνα την πρώτη προπόνηση',
     edit: 'Επεξεργασία αθλητή',
     deleteConfirm: 'Διαγραφή αθλητή και προπονήσεων;',
+    statSessions: 'Προπονήσεις',
+    lastSessionTitle: 'Τελευταία προπόνηση',
+    notFound: 'Ο αθλητής δεν βρέθηκε',
+    notFoundHint: 'Ίσως διαγράφηκε ή ο σύνδεσμος είναι λάθος.',
+    openLog: 'Άνοιγμα προπόνησης',
+    archive: 'Διαγραφή αθλητή',
+    deleteExplain: 'Ο αθλητής φεύγει από τη λίστα. Το ιστορικό του μένει καταγεγραμμένο.',
+    noCoach: 'Χωρίς προπονητή',
+    phone: 'Τηλέφωνο',
   },
 
   log: {
@@ -190,6 +233,42 @@ export const el = {
     personalRecord: 'PR',
     currentSession: 'Τρέχουσα προπόνηση',
     deleteConfirm: 'Διαγραφή προπόνησης;',
+    /** "Ίδιο με πριν" is the one-tap path: it clones the previous set without opening the pad. */
+    sameAsPrevious: 'Ίδιο με πριν',
+    minutes: 'Λεπτά',
+    noExercises: 'Καμία άσκηση ακόμα',
+    noExercisesHint: 'Πρόσθεσε την πρώτη άσκηση της προπόνησης.',
+    noSets: 'Κανένα σετ ακόμα',
+    firstTime: 'Πρώτη φορά σε αυτή την άσκηση',
+    setNumber: 'Σετ {{number}}',
+    editValue: '{{field}} — {{exercise}}',
+    thisSession: 'Σε αυτή την προπόνηση',
+    setDeleted: 'Το σετ διαγράφηκε',
+    exerciseRemoved: 'Η άσκηση αφαιρέθηκε',
+    removeBlocked: 'Διάγραψε πρώτα τα σετ',
+    sessionMissing: 'Η προπόνηση δεν βρέθηκε',
+    sessionMissingHint: 'Ίσως διαγράφηκε από άλλον προπονητή.',
+    finished: 'Ολοκληρώθηκε',
+    finishTitle: 'Ολοκλήρωση προπόνησης',
+    /** Finishing is not a lock. Say so, or a coach retypes the last set on paper. */
+    finishHint: 'Μπορείς να προσθέσεις σετ και μετά την ολοκλήρωση.',
+    sessionFinished: 'Η προπόνηση ολοκληρώθηκε',
+    howDidItGo: 'Πώς πήγε;',
+    optional: 'Προαιρετικό',
+    noteForNext: 'Σημείωση για τον επόμενο',
+    notePlaceholder: 'Τι πρέπει να ξέρει ο επόμενος προπονητής;',
+    pinNote: 'Καρφίτσωμα στην κορυφή',
+    quickIncrease: 'Αύξησε',
+    quickHold: 'Κράτα',
+    quickPain: 'Ανέφερε πόνο',
+    quickIncreaseText: 'Αύξησε 2,5 kg την επόμενη φορά.',
+    quickHoldText: 'Κράτα το ίδιο βάρος, δούλεψε την τεχνική.',
+    quickPainText: 'Ανέφερε πόνο — έλεγξε πριν φορτώσεις.',
+    restIdle: 'Χωρίς χρονόμετρο',
+    restStart: 'Ξεκούραση {{seconds}} δευτ.',
+    restExtend: '+15 δευτ.',
+    restStop: 'Σταμάτα',
+    restRemaining: 'Υπόλοιπο ξεκούρασης',
   },
 
   picker: {
@@ -198,6 +277,11 @@ export const el = {
     noMatches: 'Καμία αντιστοιχία',
     addCustomHint: 'Πρόσθεσέ τη ως δική σου άσκηση',
     create: 'Δημιουργία',
+    recent: 'Πρόσφατες',
+    allExercises: 'Όλες οι ασκήσεις',
+    createTitle: 'Νέα άσκηση',
+    /** The Greek name is the required one; English is the courtesy. */
+    createHint: 'Το ελληνικό όνομα είναι υποχρεωτικό.',
   },
 
   library: {
@@ -214,6 +298,33 @@ export const el = {
     defaultRest: 'Προεπιλεγμένη ξεκούραση',
     archived: 'Αρχειοθετημένη',
     deleteConfirm: 'Διαγραφή άσκησης;',
+    subtitle: 'Ο κοινός κατάλογος και οι δικές σας ασκήσεις, μαζί.',
+    searchPlaceholder: 'Αναζήτηση άσκησης',
+    noMatches: 'Καμία άσκηση δεν ταιριάζει',
+    noMatchesHint: 'Η αναζήτηση αγνοεί τόνους. Δοκίμασε λιγότερα γράμματα ή άλλαξε φίλτρο.',
+    empty: 'Ο κατάλογος είναι άδειος',
+    emptyHint: 'Πάτα «Νέα άσκηση» για να προσθέσεις την πρώτη.',
+    /** Which rows this gym may change and which belong to everyone. A trainer who does not
+        know the difference tries to archive a shared row and reads the refusal as a bug. */
+    shared: 'Κοινός κατάλογος',
+    own: 'Δική μας',
+    source: 'Προέλευση',
+    showArchived: 'Και οι αρχειοθετημένες',
+    archiveAction: 'Αρχειοθέτηση άσκησης',
+    archiveHint:
+      'Φεύγει από τη λίστα και από τον επιλογέα. Οι παλιές προπονήσεις που τη χρησιμοποιούν μένουν ανέπαφες — γι᾽ αυτό αρχειοθετούμε αντί να διαγράφουμε.',
+    archiveOneWay: 'Η αρχειοθέτηση δεν αναιρείται μέσα από την εφαρμογή.',
+    archiveConfirm: 'Αρχειοθέτηση;',
+    archiveDone: 'Η άσκηση αρχειοθετήθηκε.',
+    archiveFailed: 'Η αρχειοθέτηση δεν αποθηκεύτηκε. Δοκίμασε ξανά.',
+    sharedLocked: 'Ο κοινός κατάλογος ανήκει σε όλα τα γυμναστήρια και δεν αλλάζει από εδώ.',
+    createTitle: 'Νέα άσκηση',
+    createSubmit: 'Προσθήκη άσκησης',
+    nameElRequired: 'Το ελληνικό όνομα είναι υποχρεωτικό — αυτό βλέπουν οι προπονητές.',
+    createFailed: 'Η άσκηση δεν αποθηκεύτηκε. Ίσως υπάρχει ήδη άσκηση με αυτό το όνομα.',
+    createDone: 'Η άσκηση προστέθηκε.',
+    loadFailed: 'Ο κατάλογος ασκήσεων δεν φορτώθηκε.',
+    restSeconds: '{{seconds}} δευτ.',
   },
 
   team: {
@@ -233,6 +344,46 @@ export const el = {
     revoke: 'Ανάκληση',
     removeConfirm: 'Διαγραφή προπονητή;',
     lastOwner: 'Πρέπει να μείνει ένας ιδιοκτήτης.',
+    subtitle: 'Ποιος γράφει στο φύλλο του γυμναστηρίου.',
+    loadFailed: 'Η ομάδα δεν φορτώθηκε.',
+    ownerOnly: 'Μόνο ο ιδιοκτήτης',
+    ownerOnlyHint:
+      'Μόνο ο ιδιοκτήτης προσκαλεί προπονητές, αλλάζει ρόλους και αφαιρεί μέλη. Μπορείς να καταγράφεις προπονήσεις για κάθε αθλητή του γυμναστηρίου.',
+    inviteRole: 'Ρόλος στο γυμναστήριο',
+    inviteLink: 'Σύνδεσμος πρόσκλησης',
+    inviteCreated: 'Η πρόσκληση δημιουργήθηκε',
+    /** The server stores sha256(secret). There is no second read, so the copy has to say it
+        before the coach closes the sheet, not after. */
+    inviteOnceWarning:
+      'Ο διακομιστής κρατά μόνο τη σύνοψή του. Αυτή είναι η μοναδική φορά που εμφανίζεται — αν χαθεί, ανακάλεσε την πρόσκληση και φτιάξε νέα.',
+    inviteEmailRequired: 'Γράψε το email του προπονητή.',
+    inviteEmailInvalid: 'Αυτό δεν μοιάζει με διεύθυνση email.',
+    inviteFailed: 'Η πρόσκληση δεν δημιουργήθηκε. Χρειάζεται σύνδεση με τον διακομιστή.',
+    copyFailed: 'Ο browser δεν επέτρεψε την αντιγραφή. Επίλεξε τον σύνδεσμο και αντίγραψέ τον.',
+    expires: 'Λήγει {{date}}',
+    openInvite: 'Ανοιχτός σύνδεσμος (χωρίς email)',
+    revokeDone: 'Η πρόσκληση ανακλήθηκε.',
+    revokeFailed: 'Η ανάκληση δεν αποθηκεύτηκε. Δοκίμασε ξανά.',
+    removeTrainer: 'Αφαίρεση προπονητή',
+    removeExplain:
+      'Χάνει την πρόσβαση στο γυμναστήριο. Ό,τι έχει καταγράψει μένει στο όνομά του — η ιστορία δεν ξαναγράφεται.',
+    removeDone: 'Ο προπονητής αφαιρέθηκε.',
+    removeFailed: 'Η αφαίρεση δεν αποθηκεύτηκε. Δοκίμασε ξανά.',
+    transfer: 'Μεταβίβαση ιδιοκτησίας',
+    transferTo: 'Μεταβίβαση σε {{name}}',
+    transferChoose: 'Νέος ιδιοκτήτης',
+    transferExplain:
+      'Ο/Η {{name}} γίνεται ιδιοκτήτης και εσύ γίνεσαι προπονητής. Δεν μπορείς να το αναιρέσεις μόνος σου — μόνο ο νέος ιδιοκτήτης μπορεί να σου δώσει πίσω τον ρόλο.',
+    transferConfirmWord: 'ΜΕΤΑΒΙΒΑΣΗ',
+    transferTypeHint: 'Γράψε «{{word}}» για να επιβεβαιώσεις.',
+    transferMismatch: 'Η λέξη δεν ταιριάζει.',
+    transferNoCandidates: 'Δεν υπάρχει άλλο ενεργό μέλος για να αναλάβει το γυμναστήριο.',
+    transferDone: 'Η ιδιοκτησία μεταβιβάστηκε.',
+    transferFailed: 'Η μεταβίβαση δεν ολοκληρώθηκε. Τίποτα δεν άλλαξε.',
+    /** The two-step transfer can land half-applied. Saying so is the only way the ex-owner
+        knows the gym now has two owners and who has to fix it. */
+    transferHalfDone:
+      'Ο/Η {{name}} έγινε ιδιοκτήτης, αλλά ο δικός σου ρόλος δεν άλλαξε. Ζήτησέ του να τον αλλάξει.',
   },
 
   calendar: {
@@ -254,6 +405,17 @@ export const el = {
     completed: 'Ολοκληρώθηκε',
     scheduled: 'Προγραμματισμένο',
     startSession: 'Έναρξη προπόνησης',
+    week: 'Εβδομάδα',
+    previousWeek: 'Προηγούμενη εβδομάδα',
+    nextWeek: 'Επόμενη εβδομάδα',
+    jumpToToday: 'Μετάβαση στη σημερινή μέρα',
+    athlete: 'Αθλητής',
+    coach: 'Προπονητής',
+    dayEmpty: 'Τίποτα κλεισμένο αυτή τη μέρα',
+    openAppointment: 'Άνοιγμα ραντεβού',
+    openSession: 'Άνοιγμα προπόνησης',
+    deleted: 'Το ραντεβού διαγράφηκε',
+    noAthletes: 'Πρόσθεσε πρώτα έναν αθλητή.',
   },
 
   settings: {
@@ -273,6 +435,34 @@ export const el = {
     exportJson: 'Εξαγωγή JSON',
     about: 'Σχετικά',
     version: 'Έκδοση',
+    ownerOnlyGym: 'Μόνο ο ιδιοκτήτης αλλάζει τα στοιχεία του γυμναστηρίου.',
+    gymNameRequired: 'Το γυμναστήριο χρειάζεται όνομα.',
+    gymSaved: 'Αποθηκεύτηκε.',
+    gymSaveFailed: 'Το όνομα δεν αποθηκεύτηκε. Δοκίμασε ξανά.',
+    unitKg: 'kg',
+    unitLb: 'lb',
+    storageTitle: 'Πού μένουν τα δεδομένα',
+    /** Honesty, not a disclaimer: with no server there is nothing to sync, and a coach who
+        believes otherwise loses three months of sheets when the browser clears its storage. */
+    storageLocalBody:
+      'Δεν έχει ρυθμιστεί διακομιστής. Ό,τι καταγράφεις μένει μόνο σε αυτή τη συσκευή και σε αυτόν τον browser — δεν συγχρονίζεται και δεν το βλέπει άλλος προπονητής.',
+    storageLocalHint: 'Κάνε εξαγωγή πριν καθαρίσεις τα δεδομένα του browser.',
+    storageServerBody:
+      'Τα δεδομένα αποθηκεύονται στον διακομιστή του γυμναστηρίου. Ό,τι γράφεις εκτός δικτύου μπαίνει σε ουρά και στέλνεται μόλις επανέλθει η σύνδεση.',
+    resetDemo: 'Επαναφορά δεδομένων επίδειξης',
+    resetDemoHint:
+      'Σβήνει ό,τι έχεις καταγράψει εδώ και ξαναφτιάχνει το γυμναστήριο-δείγμα με τους 5 αθλητές του.',
+    resetDemoConfirm: 'Επαναφορά; Ό,τι έγραψες σε αυτή τη συσκευή χάνεται.',
+    resetDone: 'Τα δεδομένα επίδειξης επανήλθαν.',
+    resetFailed: 'Η επαναφορά απέτυχε.',
+    exportCsvHint:
+      'Για Excel: UTF-8 με BOM και ερωτηματικό ως διαχωριστικό, ώστε να ανοίγει σε στήλες σε ελληνικά Windows.',
+    exportJsonHint: 'Πλήρες αντίγραφο κάθε γραμμής του γυμναστηρίου.',
+    exportDone: 'Το αρχείο {{file}} κατέβηκε.',
+    exportEmpty: 'Δεν υπάρχει καμία καταγεγραμμένη προπόνηση για εξαγωγή.',
+    exportFailed: 'Η εξαγωγή απέτυχε. Δοκίμασε ξανά ή άνοιξε την εφαρμογή εκτός ιδιωτικής περιήγησης.',
+    accountDemo: 'Σε λειτουργία επίδειξης δεν υπάρχει λογαριασμός.',
+    signOutHint: 'Καθαρίζει τα προσωρινά δεδομένα αυτής της συσκευής.',
   },
 
   progress: {
@@ -288,6 +478,33 @@ export const el = {
     trend: 'Τάση',
     needMoreData: 'Κατέγραψε μερικές προπονήσεις για να δεις τάσεις.',
     oneDataPoint: 'Μία προπόνηση — η τάση εμφανίζεται μετά την επόμενη.',
+    /** The prototype called this "κατανομή όγκου" while plotting set counts. It plots sets. */
+    setShare: 'Σετ ανά μυϊκή ομάδα',
+    setShareHint: 'Μετράει σετ, όχι κιλά.',
+    weeklyVolume: 'Όγκος ανά εβδομάδα',
+    weekOf: 'Εβδομάδα {{date}}',
+    noExercises: 'Καμία καταγεγραμμένη άσκηση',
+    noExercisesHint: 'Οι τάσεις εμφανίζονται μετά την πρώτη προπόνηση.',
+  },
+
+  /**
+   * Notes are append-only, and the copy has to say so: a trainer who expects to edit one
+   * writes half a correction and leaves the wrong half standing.
+   */
+  notes: {
+    title: 'Σημειώσεις',
+    add: 'Προσθήκη σημείωσης',
+    placeholder: 'Τι πρέπει να ξέρει ο επόμενος προπονητής;',
+    save: 'Καταχώριση',
+    pin: 'Καρφίτσωμα',
+    pinned: 'Καρφιτσωμένη',
+    unpin: 'Ξεκαρφίτσωμα',
+    dismiss: 'Απόκρυψη',
+    dismissed: 'Αποκρύφθηκε',
+    empty: 'Καμία σημείωση ακόμα',
+    appendOnly: 'Οι σημειώσεις δεν αλλάζουν. Μια διόρθωση γράφεται ως νέα σημείωση.',
+    /** Ten seconds, wet hands, athlete still on the bench. */
+    dictationHint: 'Βρεγμένα χέρια; Πάτα το μικρόφωνο στο πληκτρολόγιο και υπαγόρευσέ τη.',
   },
 
   /**
@@ -359,6 +576,11 @@ export const el = {
     kg: 'Κιλά',
     reps: 'Επαν.',
     notes: 'Σημειώσεις',
+    /** Without these two columns a treadmill or a plank exports as a blank row — the same
+        silent loss the four `SetKind`s exist to prevent. */
+    seconds: 'Δευτ.',
+    meters: 'Μέτρα',
+    rpe: 'RPE',
   },
 
   /** Copy for the routed stubs. It says what is missing and when it arrives — never fake data. */
