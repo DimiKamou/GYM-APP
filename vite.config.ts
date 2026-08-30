@@ -15,6 +15,25 @@ export default defineConfig({
     alias: { '@': fileURLToPath(new URL('./src', import.meta.url)) },
   },
   server: { host: true, port: 5173 },
+  build: {
+    rollupOptions: {
+      output: {
+        // Trainers open this on gym wifi, and the parts that change are not the parts that are
+        // large. Splitting the three big dependencies off the app chunk means a redeploy — which
+        // during the pilot happens between clients — re-downloads the app code alone and leaves
+        // ~400 kB of vendor code in the browser cache.
+        manualChunks: {
+          supabase: ['@supabase/supabase-js'],
+          query: [
+            '@tanstack/react-query',
+            '@tanstack/react-query-persist-client',
+            '@tanstack/query-async-storage-persister',
+          ],
+          i18n: ['i18next', 'react-i18next'],
+        },
+      },
+    },
+  },
   test: {
     globals: true,
     environment: 'jsdom',
