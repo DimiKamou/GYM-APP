@@ -170,7 +170,11 @@ export function createLocalRepo(options: LocalRepoOptions = {}): Repo {
   const storage = resilient(options.storage ?? createIdbStorage())
   const now = options.now ?? (() => new Date())
   const acting = options.actingMembershipId ?? SEED_IDS.owner
-  const makeSeed = (): SeedData => options.seed ?? buildSeed()
+  // Cloned, never handed out by reference: the store mutates its rows in place, so returning
+  // the same seed object twice would make resetDemoData() restore the copy it had already
+  // edited. The seed is a plain JSON tree, so a round-trip is a complete deep copy.
+  const makeSeed = (): SeedData =>
+    JSON.parse(JSON.stringify(options.seed ?? buildSeed())) as SeedData
 
   // Every load/save pair runs on this chain. Without it, "add set" and "rename session"
   // fired half a millisecond apart both read the pre-edit gym and the second save wins.
