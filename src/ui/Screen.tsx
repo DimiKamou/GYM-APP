@@ -1,6 +1,17 @@
 import type { CSSProperties, ReactNode } from 'react'
 
 /**
+ * The primitives' stylesheet, pulled in here as well as from `@/ui/index.ts`.
+ *
+ * Not belt-and-braces for its own sake: this codebase imports primitives BOTH ways — the nine
+ * screens reach for `@/ui/Screen` and `@/ui/Icon` directly — so a stylesheet that only rides in
+ * on the barrel is one direct import away from an app of 0px-tall buttons. Every route mounts
+ * exactly one `<Screen>`, which makes this the one module guaranteed to be in the graph. Both
+ * bundler and test runner dedupe it, so the second import costs nothing.
+ */
+import '@/styles/ui.css'
+
+/**
  * The scroll container every screen sits in.
  *
  * One scrolling element per screen, and it is this one. A screen that scrolls the document
