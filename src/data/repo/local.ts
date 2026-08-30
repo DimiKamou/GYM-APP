@@ -32,6 +32,7 @@ import type {
   LastPerformance,
   LocalDate,
   MemberRole,
+  Membership,
   Note,
   Session,
   SessionTree,
@@ -39,6 +40,10 @@ import type {
   Uuid,
   WorkoutSet,
 } from '@/domain/types'
+// A type-only import, so nothing at runtime points from the repository back up at the hooks
+// layer. The capability lives there because `Repo` cannot carry it: every method on that
+// interface takes the gym id a joiner does not have yet.
+import type { InviteRedeemer, RedeemOutcome } from '@/data/hooks/useTeam'
 import type {
   NewAppointmentInput,
   NewExerciseInput,
@@ -61,6 +66,13 @@ const BRIEFING_TOP_LINES = 3
 
 interface LocalDb extends SeedData {
   v: number
+  /**
+   * `digest(secret) -> invite id`. The secret itself is never written down, exactly as on the
+   * server: `create_invite` returns it once and stores only its sha256, so nothing — not the
+   * owner, not a database dump — can hand it back a second time. Optional because a record
+   * written before invites were redeemable here has none, and an absent map is an empty one.
+   */
+  inviteTokens?: Record<string, Uuid>
 }
 
 export interface LocalRepoOptions {
@@ -120,6 +132,37 @@ function hasMeasurement(input: Measurable): boolean {
 }
 
 /**
+ * A digest of an invite secret, so the local store keeps the one property that matters: the
+ * secret is returned once and cannot be read back out of the database afterwards.
+ *
+ * Deliberately NOT sha256. `crypto.subtle` is asynchronous and missing outside a secure
+ * context, and there is nothing here to defend anyway — this database sits in the same browser
+ * as the person reading it, who could edit their own membership row directly. It exists so the
+ * local path cannot quietly teach that invites are re-readable.
+ */
+function digest(secret: string): string {
+  let low = 0x811c9dc5
+  let high = 0x01000193
+  for (let i = 0; i < secret.length; i++) {
+    const code = secret.charCodeAt(i)
+    low = Math.imul(low ^ code, 0x01000193)
+    high = Math.imul(high + code, 0x85ebca6b) ^ (high >>> 13)
+  }
+  return (low >>> 0).toString(16).padStart(8, '0') + (high >>> 0).toString(16).padStart(8, '0')
+}
+
+/**
+ * The joiner's name on the roster. The server uses the account's `full_name` and falls back to
+ * the local part of the address; here there is no account at all, so the local part is all
+ * there is — and it lands next to "Δημήτρης Κ." on the Team screen, which is why it is at
+ * least capitalised.
+ */
+function nameFromEmail(email: string): string {
+  const local = email.split('@')[0] ?? email
+  return local.charAt(0).toUpperCase() + local.slice(1)
+}
+
+/**
  * Any store, made unable to break the app.
  *
  * `createIdbStorage()` already guards idb-keyval, but this wraps whatever it is given — an
@@ -166,7 +209,7 @@ function resilient(storage: OutboxStorage): OutboxStorage {
 
 // ---------------------------------------------------------------------------
 
-export function createLocalRepo(options: LocalRepoOptions = {}): Repo {
+export function createLocalRepo(options: LocalRepoOptions = {}): Repo & InviteRedeemer {
   const storage = resilient(options.storage ?? createIdbStorage())
   const now = options.now ?? (() => new Date())
   const acting = options.actingMembershipId ?? SEED_IDS.owner
@@ -265,7 +308,7 @@ export function createLocalRepo(options: LocalRepoOptions = {}): Repo {
   // Reads
   // -------------------------------------------------------------------------
 
-  const repo: Repo = {
+  const repo: Repo & InviteRedeemer = {
     kind: 'local',
 
     getGym: (gymId) => read((db) => gymOf(db, gymId)),
@@ -653,6 +696,16 @@ export function createLocalRepo(options: LocalRepoOptions = {}): Repo {
         touch(exercise, at)
       }),
 
+    unarchiveExercise: (gymId, exerciseId) =>
+      write(gymId, (db, at) => {
+        // Deliberately not filtered by `live`: an archived row is exactly what we are looking
+        // for here, and the archive flag is the only thing this undoes.
+        const exercise = db.exercises.find((e) => e.id === exerciseId && e.deletedAt === null)
+        if (!exercise || exercise.gymId === null) return false
+        exercise.isArchived = false
+        touch(exercise, at)
+      }),
+
     addNote: (gymId, noteId, athleteId, body, opts) =>
       write(gymId, (db, at) => {
         const text = body.trim()
@@ -756,8 +809,109 @@ export function createLocalRepo(options: LocalRepoOptions = {}): Repo {
           createdAt: at,
         }
         db.invites.push(invite)
+        // Only the digest. `redeemInvite` below looks the invite up by it, which is the whole
+        // of what the server's `token_hash` column does.
+        db.inviteTokens = { ...(db.inviteTokens ?? {}), [digest(secret)]: invite.id }
         await save(db)
         return { state: 'saved', secret }
+      }),
+
+    /**
+     * The joining half of the flow, with no server anywhere: it really does add a membership
+     * to the seeded gym, so the whole invite loop is demonstrable on a phone in a gym with no
+     * signal and no Supabase project.
+     *
+     * The order of the checks is `redeem_invite()`'s order, and it is load-bearing — see the
+     * idempotency note below.
+     */
+    redeemInvite: (secret) =>
+      serialize(async (): Promise<RedeemOutcome> => {
+        const db = await load()
+        const trimmed = secret.trim()
+        if (trimmed === '') return { ok: false }
+
+        const at = now().toISOString()
+        const invite = db.invites.find((row) => row.id === db.inviteTokens?.[digest(trimmed)])
+        // One answer for every failure: unknown secret, revoked, expired. Distinct ones would
+        // make this an oracle that confirms which invite codes exist.
+        //
+        // Parsed rather than compared as strings: two ISO instants only sort lexicographically
+        // while both are in UTC, and a stored row is not this module's to guarantee that about.
+        if (
+          !invite ||
+          invite.revokedAt !== null ||
+          Date.parse(invite.expiresAt) <= now().getTime()
+        ) {
+          return { ok: false }
+        }
+        // An open invite has no address to attach a membership to, and nothing here mints one.
+        const email = (invite.email ?? '').trim().toLowerCase()
+        if (email === '') return { ok: false }
+
+        const existing = db.memberships.find((m) => m.email.toLowerCase() === email)
+
+        // BEFORE the uses check, exactly as in SQL. The invite is single-use, so a second tap
+        // — or a retry after a lost response — would otherwise be told that a redemption that
+        // actually worked was invalid, leaving someone sitting on an account they believe
+        // they do not have.
+        if (
+          existing &&
+          existing.status === 'active' &&
+          existing.userId !== null &&
+          existing.deletedAt === null
+        ) {
+          return {
+            ok: true,
+            invite: {
+              gymId: existing.gymId,
+              membershipId: existing.id,
+              role: existing.role,
+              alreadyMember: true,
+            },
+          }
+        }
+
+        if (invite.uses >= invite.maxUses) return { ok: false }
+
+        let member: Membership
+        if (existing) {
+          // Re-linking the row the owner created when they invited this address keeps every
+          // session already credited to it attributed to the same person.
+          existing.role = existing.status === 'invited' ? invite.role : existing.role
+          existing.userId = existing.userId ?? newId()
+          existing.status = 'active'
+          existing.deletedAt = null
+          member = touch(existing, at)
+        } else {
+          member = {
+            id: newId(),
+            gymId: db.gym.id,
+            userId: newId(),
+            displayName: nameFromEmail(email),
+            email,
+            role: invite.role,
+            status: 'active',
+            createdAt: at,
+            updatedAt: at,
+            deletedAt: null,
+            createdBy: null,
+          }
+          db.memberships.push(member)
+        }
+
+        invite.uses += 1
+        invite.acceptedAt = invite.acceptedAt ?? at
+        invite.acceptedBy = invite.acceptedBy ?? member.id
+        await save(db)
+        return {
+          ok: true,
+          invite: {
+            gymId: member.gymId,
+            membershipId: member.id,
+            role: member.role,
+            alreadyMember: false,
+          },
+        }
       }),
 
     revokeInvite: (gymId, inviteId) =>
@@ -771,6 +925,25 @@ export function createLocalRepo(options: LocalRepoOptions = {}): Repo {
       write(gymId, (db, at) => {
         const member = live(db.memberships).find((m) => m.id === membershipId)
         if (!member) return false
+
+        // Promoting someone to owner IS the transfer, and it cannot be two client calls.
+        // The schema allows AT MOST one active owner, so promoting the successor first is
+        // refused, and stepping down first is refused as leaving the gym ownerless — which
+        // is why the server does both halves inside `transfer_ownership()`. Mirrored here:
+        // a client that died between two calls would leave a gym nobody can administer.
+        if (patch.role === 'owner' && member.role !== 'owner') {
+          const self = live(db.memberships).find((m) => m.id === acting)
+          if (!self || self.role !== 'owner' || self.status !== 'active') return false
+          // A membership with no linked account cannot sign in, so handing it the gym is the
+          // same as having no owner at all.
+          if (member.status !== 'active' || member.userId === null) return false
+          self.role = 'trainer'
+          touch(self, at)
+          Object.assign(member, patch)
+          touch(member, at)
+          return
+        }
+
         // A gym with no owner cannot be administered by anyone, ever again.
         const owners = live(db.memberships).filter((m) => m.role === 'owner' && m.status === 'active')
         const losingLastOwner =

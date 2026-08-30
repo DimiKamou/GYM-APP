@@ -156,6 +156,12 @@ export interface Repo {
 
   createExercise(gymId: Uuid, input: NewExerciseInput): Promise<WriteState>
   archiveExercise(gymId: Uuid, exerciseId: Uuid): Promise<WriteState>
+  /**
+   * The undo half of archiveExercise. Optional on the interface because the hook probes for it,
+   * but a repo without it forces a confirm dialog on every archive — and the rule here is undo,
+   * not confirm, everywhere except removing an athlete or a trainer.
+   */
+  unarchiveExercise?(gymId: Uuid, exerciseId: Uuid): Promise<WriteState>
 
   /** Append-only: there is no updateNote. A correction is a new note. */
   addNote(gymId: Uuid, noteId: Uuid, athleteId: Uuid, body: string, opts?: { pinned?: boolean; sessionId?: Uuid | null }): Promise<WriteState>

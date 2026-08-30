@@ -1,0 +1,243 @@
+/**
+ * The A4 sheet.
+ *
+ * This is the only stylesheet in the app that writes literal colours, and it has to. Every
+ * `--th-*` token is theme-dependent: `--th-ink` is near-white in Slate and `--th-bg` is
+ * near-black, so a themed printout is white ink on a black page — an empty cartridge and a
+ * sheet nobody can read. Paper has exactly one theme, so this file states it: black on white.
+ *
+ * Everything else here exists because the app is a phone UI and paper is not one. The frame is
+ * `100dvh` with `overflow: hidden` and the scroll body is a nested scroller, so printing the
+ * app itself yields the one screenful the trainer happened to be looking at. The printed sheet
+ * is therefore a separate element portalled to `<body>`, and print hides everything else.
+ */
+
+@page {
+  size: A4 portrait;
+  /* Bottom margin is deeper than the top: it is where the footer with the print date sits, and
+     a date clipped by the printer's unprintable edge is the same liability as no date at all. */
+  margin: 14mm 12mm 16mm;
+}
+
+/**
+ * The sheet never shows on screen. The element also carries `display: none` inline, so it stays
+ * invisible even if this file never arrives; the `!important` below is what lets the print rule
+ * win over that inline declaration (an important author rule beats a normal inline one).
+ */
+.th-print {
+  display: none;
+}
+
+@media print {
+  /* One rule instead of a list of controls to hide. The tab bar, the toasts and the bottom
+     sheets are separate roots on `<body>` — `#root` alone would leave an open sheet on the
+     page — and a list of selectors goes stale the first time a screen grows a button. */
+  body > *:not(.th-print) {
+    display: none !important;
+  }
+
+  html,
+  body {
+    background: #fff !important;
+    background-image: none !important;
+    color: #000 !important;
+    /* The app frame is a fixed-height, clipped column. Left alone it prints one page. */
+    height: auto !important;
+    min-height: 0 !important;
+    overflow: visible !important;
+    margin: 0 !important;
+    /* Slate leaves `color-scheme: dark` on the root, which repaints UA-drawn edges. */
+    color-scheme: light;
+    -webkit-print-color-adjust: exact;
+    print-color-adjust: exact;
+  }
+
+  .th-print {
+    display: block !important;
+    font-family: var(--th-font-ui, system-ui, -apple-system, 'Segoe UI', sans-serif);
+    font-size: 10.5pt;
+    line-height: 1.4;
+    color: #000;
+    background: #fff;
+  }
+
+  /* `:where()` so the reset adds no specificity: every block below sets its own spacing with
+     a plain class selector and wins on source order, without a file full of `!important`. */
+  .th-print :where(h1, h2, p, ul, ol, dl, dt, dd) {
+    margin: 0;
+    padding: 0;
+  }
+
+  .th-print :where(ul) {
+    list-style: none;
+  }
+
+  /* ---- masthead ---- */
+
+  .th-print__head {
+    display: flex;
+    align-items: flex-start;
+    justify-content: space-between;
+    gap: 8mm;
+    padding-bottom: 3mm;
+    border-bottom: 1.2pt solid #000;
+  }
+
+  .th-print__name {
+    font-size: 17pt;
+    font-weight: 700;
+    letter-spacing: -0.01em;
+  }
+
+  .th-print__meta {
+    margin-top: 1.5mm;
+    font-size: 10pt;
+  }
+
+  .th-print__gym {
+    font-size: 11pt;
+    font-weight: 600;
+    text-align: right;
+    white-space: nowrap;
+  }
+
+  /* ---- pinned warnings ---- */
+
+  /* A warning that lands on page two of a sheet a coach reads on the floor has not been read.
+     It is also the one block that must never be split away from its author. */
+  .th-print__notes {
+    margin-top: 5mm;
+    padding: 3mm 3.5mm;
+    border: 1.2pt solid #000;
+    page-break-inside: avoid;
+    break-inside: avoid;
+  }
+
+  .th-print__label {
+    font-size: 8pt;
+    font-weight: 700;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+  }
+
+  .th-print__notes li {
+    margin-top: 2mm;
+    font-size: 10.5pt;
+  }
+
+  /* The half of a note that says who to ask about it. Never set smaller than legible. */
+  .th-print__attr {
+    font-size: 9.5pt;
+    white-space: nowrap;
+  }
+
+  /* ---- the sessions table ---- */
+
+  .th-print__section {
+    margin-top: 5mm;
+  }
+
+  .th-print__table {
+    width: 100%;
+    margin-top: 2mm;
+    border-collapse: collapse;
+    font-size: 10pt;
+  }
+
+  /* Repeated on every page. A second page of loads under four unlabelled columns is a table
+     of numbers whose meaning the reader has to remember from the page before. */
+  .th-print__table thead {
+    display: table-header-group;
+  }
+
+  .th-print__table th,
+  .th-print__table td {
+    padding: 2mm;
+    border: 0.6pt solid #000;
+    text-align: left;
+    vertical-align: top;
+  }
+
+  .th-print__table thead th {
+    font-size: 8pt;
+    font-weight: 700;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+    border-bottom-width: 1.2pt;
+  }
+
+  /* One session is one unit of meaning: the date, the coach, and every set they logged. Split
+     across a page boundary its second half is a column of loads with no author on it. */
+  .th-print__session {
+    page-break-inside: avoid;
+    break-inside: avoid;
+  }
+
+  .th-print__when {
+    width: 26mm;
+    font-weight: 600;
+    white-space: nowrap;
+  }
+
+  .th-print__who {
+    width: 28mm;
+  }
+
+  .th-print__title {
+    display: block;
+    margin-top: 1mm;
+    font-size: 9pt;
+    font-weight: 400;
+  }
+
+  .th-print__sets {
+    /* Tabular figures keep "72,5×8" aligned with "100×3" down the column. */
+    font-variant-numeric: tabular-nums;
+  }
+
+  .th-print__empty {
+    margin-top: 3mm;
+    font-size: 10pt;
+  }
+
+  /* ---- the unfilled sheet ---- */
+
+  /* Written on with a pen, so every row is a ruled line tall enough to take handwriting. */
+  .th-print__fill {
+    display: flex;
+    gap: 10mm;
+    margin-top: 5mm;
+  }
+
+  .th-print__fill > div {
+    flex: 1 1 0;
+  }
+
+  .th-print__rule {
+    margin-top: 5mm;
+    border-bottom: 0.8pt solid #000;
+  }
+
+  .th-print__table--blank td {
+    height: 9mm;
+  }
+
+  .th-print__note {
+    margin-top: 3mm;
+    font-size: 9pt;
+  }
+
+  /* ---- footer ---- */
+
+  .th-print__foot {
+    display: flex;
+    justify-content: space-between;
+    gap: 8mm;
+    margin-top: 6mm;
+    padding-top: 2mm;
+    border-top: 0.8pt solid #000;
+    font-size: 9pt;
+    page-break-inside: avoid;
+    break-inside: avoid;
+  }
+}

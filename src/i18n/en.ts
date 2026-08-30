@@ -126,6 +126,14 @@ export const en: Translation = {
     linkStripped: 'It was stripped from the address bar immediately.',
     noSecret: 'This link carries no invite code.',
     signInFirst: 'Log in with your email first, then open the link again.',
+    held: 'The code is kept in this tab until you log in.',
+    codeHint: 'If the link opened in another browser, paste the code from the end of it — everything after the #.',
+    codeRequired: 'Paste the invite code.',
+    joined: 'You are in',
+    joinedBody: 'Your account is now part of the gym. Everything you log will carry your name.',
+    already: 'You are already in this gym.',
+    invalidHint:
+      'The link may have expired, been revoked, already been used, or be addressed to a different email. Ask the gym owner for a new invite.',
   },
 
   athletes: {
@@ -286,6 +294,9 @@ export const en: Translation = {
     createDone: 'Exercise added.',
     loadFailed: 'The exercise catalogue could not be loaded.',
     restSeconds: '{{seconds}}s',
+    archiveUndone: 'Exercise restored.',
+    archiveUndoFailed: 'The restore did not go through — the exercise is still archived.',
+    restoreAction: 'Restore exercise',
   },
 
   team: {
@@ -417,6 +428,18 @@ export const en: Translation = {
     exportFailed: 'The export failed. Try again, or open the app outside private browsing.',
     accountDemo: 'There is no account in demo mode.',
     signOutHint: 'Clears this device’s cached data.',
+    mode: 'Mode',
+    modeDemo: 'Demo — this device only',
+    modeConnected: 'Connected to the gym’s server',
+    project: 'Project',
+    projectUnknown: 'No project URL is configured.',
+    region: 'Region',
+    regionUnknown: 'The project URL does not state it.',
+    syncSection: 'Saving & sending',
+    resetTyped: 'Confirmation',
+    resetConfirmWord: 'RESET',
+    resetTypeHint: 'Type “{{word}}” to confirm.',
+    resetMismatch: 'That word does not match.',
   },
 
   progress: {
@@ -542,6 +565,35 @@ export const en: Translation = {
     },
   },
 
+  sync: {
+    label: 'Save status',
+    local: 'Saved on this phone',
+    localBody:
+      'Here only, in this browser. It is not sent anywhere, no other trainer can see it, and it is gone if this browser’s data is cleared.',
+    saved: 'Saved on the server',
+    savedBody: 'Nothing is waiting to be sent.',
+    sending: 'Sending…',
+    pending_one: '{{count}} change waiting',
+    pending_other: '{{count}} changes waiting',
+    pendingBody: 'Written on this phone, not on the server yet.',
+    offline: 'Offline',
+    offlineBody: 'Anything you write is queued and goes out as soon as the network is back.',
+    failed_one: '{{count}} change was not sent',
+    failed_other: '{{count}} changes were not sent',
+    failedBody:
+      'The server refused them. They stay here until you send them again: nothing is dropped on its own, and nothing is retried forever.',
+    retry: 'Send again',
+    retryAll: 'Send them again',
+    requeued_one: '{{count}} change is queued again.',
+    requeued_other: '{{count}} changes are queued again.',
+    discard: 'Discard for good',
+    discarded: 'The change was discarded for good.',
+    queueTitle: 'Send queue',
+    deadTitle: 'Refused by the server',
+    reason: 'Reason',
+    lastError: 'Last error',
+  },
+
   ui: {
     dismiss: 'Dismiss',
     notifications: 'Notifications',
@@ -566,5 +618,23 @@ export const en: Translation = {
     genericTitle: 'Something went wrong',
     genericBody: 'Try again. If it persists, close and reopen the app.',
     backToAthletes: 'Back to athletes',
+  },
+
+  print: {
+    action: 'Print',
+    chooseTitle: 'Print sheet',
+    filled: 'Athlete sheet',
+    filledHint: 'The last sessions, with the coach and the date on every line.',
+    blank: 'Blank sheet',
+    blankHint: 'Ruled, for the gym floor when a phone dies.',
+    blankTitle: 'Blank workout sheet',
+    setNo: 'Set {{index}}',
+    printedAt: 'Printed {{date}}',
+    transcribe: 'Copy the lines into TrainHub after the session.',
+  },
+
+  a11y: {
+    skipToContent: 'Skip to content',
+    mainContent: 'Screen content',
   },
 }

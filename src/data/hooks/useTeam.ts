@@ -18,7 +18,7 @@ import {
 import { useGymId } from '@/auth/useAuth'
 import { keys } from '@/data/keys'
 import { useRepo } from '@/data/repo/useRepo'
-import type { WriteState } from '@/data/repo/types'
+import type { Repo, WriteState } from '@/data/repo/types'
 import type { Gym, Invite, MemberRole, Membership, Uuid } from '@/domain/types'
 
 export function useGymProfile(): UseQueryResult<Gym | null> {
@@ -85,6 +85,68 @@ export function useRevokeInvite(): UseMutationResult<WriteState, Error, Uuid> {
   return useMutation({
     mutationFn: (inviteId: Uuid) => repo.revokeInvite(gymId, inviteId),
     onSuccess: () => client.invalidateQueries({ queryKey: keys.invites(gymId) }),
+  })
+}
+
+/**
+ * Redeeming an invite, which is the one call in the app that happens BEFORE the caller has a
+ * gym.
+ *
+ * It is a capability rather than a `Repo` method: every method on that interface takes the
+ * `gymId` the joiner does not have yet, and the interface is the contract nine screens are
+ * written against. Both implementations offer `redeemInvite`, and `redeemerOf` looks for it
+ * structurally — a repository that cannot redeem answers "invalid" instead of throwing at
+ * someone who is holding a working link.
+ */
+export interface RedeemedInvite {
+  gymId: Uuid
+  membershipId: Uuid
+  role: MemberRole
+  /**
+   * True only when the repository can PROVE this account was already active in that gym.
+   * Supabase never can: `redeem_invite` returns one identical payload for a first redemption
+   * and for a repeat of it, so the endpoint cannot be used as an oracle. The Join screen
+   * therefore also compares against the membership it was already holding.
+   */
+  alreadyMember: boolean
+}
+
+/**
+ * One failure value, no reason attached. That mirrors `redeem_invite`, which raises the same
+ * 'invalid or expired invite' for a wrong secret, an expired one, a revoked one, a used-up
+ * one and one addressed to a different mailbox — deliberately, so a stranger cannot probe it
+ * to learn which invites exist.
+ */
+export type RedeemOutcome = { ok: true; invite: RedeemedInvite } | { ok: false }
+
+export interface InviteRedeemer {
+  redeemInvite(secret: string): Promise<RedeemOutcome>
+}
+
+export function redeemerOf(repo: Repo): InviteRedeemer | null {
+  const candidate = repo as Repo & Partial<InviteRedeemer>
+  return typeof candidate.redeemInvite === 'function' ? (candidate as InviteRedeemer) : null
+}
+
+/**
+ * No `useGymId()` anywhere in here, unlike every other hook in this file: the person redeeming
+ * an invite has no membership yet, and reaching for a gym id would throw on the one screen
+ * that must work without one.
+ */
+export function useRedeemInvite(): UseMutationResult<RedeemOutcome, Error, string> {
+  const repo = useRepo()
+  const client = useQueryClient()
+  return useMutation({
+    mutationFn: async (secret: string): Promise<RedeemOutcome> => {
+      const redeemer = redeemerOf(repo)
+      return redeemer ? redeemer.redeemInvite(secret) : { ok: false }
+    },
+    onSuccess: (outcome) => {
+      // A successful redemption changes who the caller IS. Everything cached was read as
+      // someone else — including the empty answers a gym-less account got back — and none of
+      // it may be reused under the new membership.
+      if (outcome.ok) client.clear()
+    },
   })
 }
 

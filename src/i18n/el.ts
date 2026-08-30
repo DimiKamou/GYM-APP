@@ -156,6 +156,16 @@ export const el = {
     linkStripped: 'Αφαιρέθηκε αμέσως από τη γραμμή διευθύνσεων.',
     noSecret: 'Ο σύνδεσμος δεν περιέχει κωδικό πρόσκλησης.',
     signInFirst: 'Συνδέσου πρώτα με το email σου και μετά ξαναπάτα τον σύνδεσμο.',
+    held: 'Ο κωδικός φυλάσσεται σε αυτή την καρτέλα μέχρι να συνδεθείς.',
+    codeHint: 'Αν ο σύνδεσμος άνοιξε σε άλλο πρόγραμμα περιήγησης, επικόλλησε εδώ τον κωδικό από το τέλος του — ό,τι ακολουθεί το #.',
+    codeRequired: 'Επικόλλησε τον κωδικό πρόσκλησης.',
+    joined: 'Μπήκες στην ομάδα',
+    joinedBody: 'Ο λογαριασμός σου είναι πλέον μέλος του γυμναστηρίου. Κάθε τι που καταγράφεις θα φέρει το όνομά σου.',
+    already: 'Είσαι ήδη μέλος αυτού του γυμναστηρίου.',
+    /** `redeem_invite` δίνει έναν και μόνο λόγο αποτυχίας, επίτηδες. Λέμε τι μπορεί να φταίει
+        και ποια είναι η κίνηση που λύνει και τις τέσσερις περιπτώσεις. */
+    invalidHint:
+      'Ο σύνδεσμος μπορεί να έχει λήξει, να ανακλήθηκε, να χρησιμοποιήθηκε ήδη ή να αφορά άλλο email. Ζήτα νέα πρόσκληση από τον ιδιοκτήτη του γυμναστηρίου.',
   },
 
   athletes: {
@@ -325,6 +335,12 @@ export const el = {
     createDone: 'Η άσκηση προστέθηκε.',
     loadFailed: 'Ο κατάλογος ασκήσεων δεν φορτώθηκε.',
     restSeconds: '{{seconds}} δευτ.',
+    /** The archive is soft, so the way back is an undo — but only where the repository can
+        genuinely restore the row. Where it cannot, the screen keeps the confirm and says
+        `archiveOneWay` instead of offering a button that does nothing. */
+    archiveUndone: 'Η άσκηση επανήλθε.',
+    archiveUndoFailed: 'Η επαναφορά δεν έγινε — η άσκηση παραμένει αρχειοθετημένη.',
+    restoreAction: 'Επαναφορά άσκησης',
   },
 
   team: {
@@ -463,6 +479,25 @@ export const el = {
     exportFailed: 'Η εξαγωγή απέτυχε. Δοκίμασε ξανά ή άνοιξε την εφαρμογή εκτός ιδιωτικής περιήγησης.',
     accountDemo: 'Σε λειτουργία επίδειξης δεν υπάρχει λογαριασμός.',
     signOutHint: 'Καθαρίζει τα προσωρινά δεδομένα αυτής της συσκευής.',
+    /** Which backend is live, said in words a coach can act on. "Επίδειξη" is not a
+        disclaimer here: it is the difference between data that exists in one browser and data
+        the gym owns. */
+    mode: 'Λειτουργία',
+    modeDemo: 'Επίδειξη — μόνο σε αυτή τη συσκευή',
+    modeConnected: 'Συνδεδεμένο στον διακομιστή του γυμναστηρίου',
+    project: 'Έργο',
+    projectUnknown: 'Δεν έχει δηλωθεί διεύθυνση έργου.',
+    region: 'Περιοχή',
+    /** Said, never guessed: a `*.supabase.co` URL does not carry a region, and a guess here
+        would be a data-residency claim nobody checked. */
+    regionUnknown: 'Δεν δηλώνεται από τη διεύθυνση του έργου.',
+    syncSection: 'Αποθήκευση & αποστολή',
+    /** Typed, not tapped: the reset erases everything written on this device, and no toast
+        can undo it afterwards. */
+    resetTyped: 'Επιβεβαίωση',
+    resetConfirmWord: 'ΕΠΑΝΑΦΟΡΑ',
+    resetTypeHint: 'Γράψε «{{word}}» για να επιβεβαιώσεις.',
+    resetMismatch: 'Η λέξη δεν ταιριάζει.',
   },
 
   progress: {
@@ -604,6 +639,47 @@ export const el = {
   },
 
   /**
+   * What has and has not been saved.
+   *
+   * Every string here is read as a promise, so none of them may be generous. "Αποθηκεύτηκε"
+   * appears only where a write is genuinely at rest — on the server, or, in demo mode, on the
+   * one phone that holds it — and never next to work still sitting in a queue. The prototype's
+   * "Auto-saved" toast fired from a button that saved nothing; that is the one lie this app
+   * cannot afford, because a coach who believes it stops re-checking.
+   */
+  sync: {
+    label: 'Κατάσταση αποθήκευσης',
+    /** No server exists in this mode. The sentence names the phone and stops there. */
+    local: 'Αποθηκεύτηκε σε αυτό το κινητό',
+    localBody:
+      'Μόνο εδώ, σε αυτόν τον browser. Δεν στέλνεται πουθενά, δεν το βλέπει άλλος προπονητής και χάνεται αν καθαριστούν τα δεδομένα του browser.',
+    saved: 'Αποθηκεύτηκε στον διακομιστή',
+    savedBody: 'Δεν εκκρεμεί καμία αλλαγή.',
+    sending: 'Αποστολή…',
+    pending_one: '{{count}} αλλαγή σε αναμονή',
+    pending_other: '{{count}} αλλαγές σε αναμονή',
+    pendingBody: 'Γραμμένες σε αυτό το κινητό, όχι ακόμη στον διακομιστή.',
+    offline: 'Εκτός σύνδεσης',
+    offlineBody: 'Ό,τι γράφεις μπαίνει στην ουρά και φεύγει μόλις επανέλθει το δίκτυο.',
+    failed_one: '{{count}} αλλαγή δεν στάλθηκε',
+    failed_other: '{{count}} αλλαγές δεν στάλθηκαν',
+    /** An op is applied or it is here, where a human can see it. It is never dropped and never
+        retried forever — a queue that does either stops working without saying so. */
+    failedBody:
+      'Ο διακομιστής τις απέρριψε. Μένουν εδώ μέχρι να τις ξαναστείλεις: τίποτα δεν σβήνεται από μόνο του και τίποτα δεν ξαναδοκιμάζεται στο άπειρο.',
+    retry: 'Ξαναστείλε',
+    retryAll: 'Ξαναστείλε τες',
+    requeued_one: '{{count}} αλλαγή μπήκε ξανά στην ουρά.',
+    requeued_other: '{{count}} αλλαγές μπήκαν ξανά στην ουρά.',
+    discard: 'Οριστική απόρριψη',
+    discarded: 'Η αλλαγή απορρίφθηκε οριστικά.',
+    queueTitle: 'Ουρά αποστολής',
+    deadTitle: 'Απορρίφθηκαν από τον διακομιστή',
+    reason: 'Αιτία',
+    lastError: 'Τελευταίο σφάλμα',
+  },
+
+  /**
    * Strings the primitives in `src/ui/` own.
    *
    * They live here rather than as component defaults for the usual reason, plus one specific to
@@ -635,6 +711,35 @@ export const el = {
     genericTitle: 'Κάτι πήγε στραβά',
     genericBody: 'Δοκίμασε ξανά. Αν επιμείνει, κλείσε και ξανάνοιξε την εφαρμογή.',
     backToAthletes: 'Πίσω στους αθλητές',
+  },
+
+  /**
+   * The A4 sheet. Printing is what the gym falls back to when a phone dies mid-session, so the
+   * blank variant is a first-class choice and not a consolation prize: it is the one thing the
+   * paper sheet still does better.
+   */
+  print: {
+    action: 'Εκτύπωση',
+    chooseTitle: 'Εκτύπωση φύλλου',
+    filled: 'Φύλλο αθλητή',
+    filledHint: 'Οι τελευταίες προπονήσεις, με προπονητή και ημερομηνία σε κάθε γραμμή.',
+    blank: 'Κενό φύλλο',
+    blankHint: 'Γραμμογραφημένο, για το πάτωμα όταν πέσει το κινητό.',
+    blankTitle: 'Κενό φύλλο προπόνησης',
+    setNo: 'Σετ {{index}}',
+    printedAt: 'Εκτυπώθηκε {{date}}',
+    transcribe: 'Μετάφερε τις γραμμές στο TrainHub μετά την προπόνηση.',
+  },
+
+  /**
+   * Strings that exist only for assistive tech and the keyboard. Nothing here is decoration:
+   * the skip link is the one control a coach on a keyboard needs before any other, because a
+   * screen's header — back, search, print — otherwise sits between them and the list.
+   */
+  a11y: {
+    skipToContent: 'Μετάβαση στο περιεχόμενο',
+    /** The scroll region's name on a screen that passed no title of its own. */
+    mainContent: 'Περιεχόμενο οθόνης',
   },
 }
 

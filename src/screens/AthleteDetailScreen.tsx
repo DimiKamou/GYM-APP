@@ -1,8 +1,9 @@
-import { useMemo, useState, type CSSProperties } from 'react'
+import { useEffect, useMemo, useState, type CSSProperties } from 'react'
+import { createPortal, flushSync } from 'react-dom'
 import { useLocation, useNavigate, useParams } from 'react-router-dom'
 import { useTranslation } from 'react-i18next'
 
-import { useGymId } from '@/auth/useAuth'
+import { useAuth, useGymId } from '@/auth/useAuth'
 import { newId } from '@/data/ids'
 import {
   useAddBlock,
@@ -19,12 +20,14 @@ import { sessionSets, sessionVolume } from '@/domain/analytics'
 import { formatVolume } from '@/domain/format'
 import { currentLocale } from '@/i18n'
 import type { Uuid } from '@/domain/types'
-import { Button, Card, EmptyState, Icon, Screen, Spinner } from '@/ui'
+import { Button, Card, EmptyState, Icon, Screen, Sheet, Spinner } from '@/ui'
 import { BriefingCard } from '@/screens/athlete/BriefingCard'
 import { HistoryList } from '@/screens/athlete/HistoryList'
 import { NoteComposer, NoteFeed } from '@/screens/athlete/NoteComposer'
 import { AthleteSheet } from '@/screens/athlete/AthleteSheet'
+import { PrintSheet, type PrintVariant } from '@/screens/athlete/PrintSheet'
 import { ProgressSection } from '@/screens/progress/ProgressSection'
+import { todayIn } from '@/screens/calendar/WeekStrip'
 
 /**
  * One athlete.
@@ -38,6 +41,10 @@ import { ProgressSection } from '@/screens/progress/ProgressSection'
  * "Επανάληψη" copies the last session's EXERCISES into a new one and none of its sets. Copying
  * the loads would write numbers nobody performed under today's date and under this coach's
  * name, which is the one thing this app must never do.
+ *
+ * Printing hangs off the header rather than off anything near the bottom of the frame. It is a
+ * desk action — a coach prints the sheet before the day starts, or when a phone has died — and
+ * the bottom third of this screen is where a thumb lands all session long.
  */
 
 const backButton: CSSProperties = {
@@ -84,6 +91,17 @@ const sectionHeading: CSSProperties = {
 
 const section: CSSProperties = { display: 'flex', flexDirection: 'column', gap: 'var(--th-gap)' }
 
+const headerActions: CSSProperties = { display: 'flex', alignItems: 'center', gap: 8 }
+
+const printOptions: CSSProperties = { display: 'flex', flexDirection: 'column', gap: 10 }
+
+const printHint: CSSProperties = {
+  margin: '0 0 6px',
+  fontSize: 'var(--th-text-sm)',
+  color: 'var(--th-muted)',
+  lineHeight: 1.4,
+}
+
 export function AthleteDetailScreen() {
   const { t } = useTranslation()
   const locale = currentLocale()
@@ -92,6 +110,11 @@ export function AthleteDetailScreen() {
   const location = useLocation()
   const gymId = useGymId()
   const repo = useRepo()
+  // `useGymId()` throws unless a membership is resolved, so the gym is present by this line;
+  // the fallbacks below are what the nullable type demands, not a state that can occur.
+  const { gym } = useAuth()
+  const gymName = gym?.name ?? ''
+  const timeZone = gym?.timezone ?? ''
 
   const briefing = useBriefing(athleteId)
   const athlete = useAthlete(athleteId)
@@ -104,6 +127,50 @@ export function AthleteDetailScreen() {
   const addBlock = useAddBlock()
   const [starting, setStarting] = useState(false)
   const [editing, setEditing] = useState(false)
+
+  const [printChoice, setPrintChoice] = useState(false)
+  const [printVariant, setPrintVariant] = useState<PrintVariant>('filled')
+  const [printedOn, setPrintedOn] = useState(() => todayIn(timeZone))
+  // Bumped rather than set: printing the same sheet twice in a row is a normal thing to want.
+  const [printJob, setPrintJob] = useState(0)
+
+  const startPrint = (variant: PrintVariant) => {
+    setPrintVariant(variant)
+    setPrintedOn(todayIn(timeZone))
+    setPrintChoice(false)
+    setPrintJob((job) => job + 1)
+  }
+
+  /**
+   * The dialog is opened from a task, not from the click handler: the chosen variant has to be
+   * in the DOM and the bottom sheet gone from it before the browser snapshots the page.
+   */
+  useEffect(() => {
+    if (printJob === 0) return
+    const timer = window.setTimeout(() => {
+      try {
+        window.print()
+      } catch {
+        // A browser with printing disabled. Nothing to say that a missing dialog does not.
+      }
+    }, 0)
+    return () => window.clearTimeout(timer)
+  }, [printJob])
+
+  /**
+   * The footer must carry the day the paper came out of the printer, including when the print
+   * came from the browser's own menu. A screen left open overnight would otherwise date the
+   * sheet yesterday, and a printout dated wrong is worse than one not dated at all.
+   *
+   * `flushSync` because the dialog reads the DOM the moment this listener returns; a batched
+   * update lands after the snapshot. Safari does not fire the event at all, which is why
+   * `startPrint` sets the date as well.
+   */
+  useEffect(() => {
+    const refresh = () => flushSync(() => setPrintedOn(todayIn(timeZone)))
+    window.addEventListener('beforeprint', refresh)
+    return () => window.removeEventListener('beforeprint', refresh)
+  }, [timeZone])
 
   // `key === 'default'` is the router's first history entry: the trainer opened this URL cold
   // (a shared link, a home-screen shortcut), so there is nothing behind it to pop.
@@ -160,11 +227,24 @@ export function AthleteDetailScreen() {
       <button type="button" onClick={goBack} aria-label={t('common.back')} style={backButton}>
         <Icon name="back" strokeWidth={1.8} />
       </button>
-      {athlete.data ? (
-        <Button variant="quiet" icon="edit" onClick={() => setEditing(true)}>
-          {t('common.edit')}
-        </Button>
-      ) : null}
+      <div style={headerActions}>
+        {briefing.data ? (
+          <Button
+            variant="quiet"
+            onClick={() => setPrintChoice(true)}
+            // The sheet prints the sessions and their coaches, so offering it before those
+            // have arrived would print an athlete whose history looks empty.
+            disabled={progress.isPending || team.isPending}
+          >
+            {t('print.action')}
+          </Button>
+        ) : null}
+        {athlete.data ? (
+          <Button variant="quiet" icon="edit" onClick={() => setEditing(true)}>
+            {t('common.edit')}
+          </Button>
+        ) : null}
+      </div>
     </div>
   )
 
@@ -251,6 +331,45 @@ export function AthleteDetailScreen() {
         athlete={athlete.data}
         onArchived={() => navigate('/athletes', { replace: true })}
       />
+
+      <Sheet
+        open={printChoice}
+        onClose={() => setPrintChoice(false)}
+        title={t('print.chooseTitle')}
+      >
+        <div style={printOptions}>
+          <Button block variant="primary" onClick={() => startPrint('filled')}>
+            {t('print.filled')}
+          </Button>
+          <p style={printHint}>{t('print.filledHint')}</p>
+          <Button block onClick={() => startPrint('blank')}>
+            {t('print.blank')}
+          </Button>
+          <p style={printHint}>{t('print.blankHint')}</p>
+        </div>
+      </Sheet>
+
+      {/* Portalled to `<body>` rather than rendered here, because the app frame is a clipped
+          `100dvh` column and a sheet inside it prints as the one screenful that fits. It stays
+          mounted so the browser's own Print command produces the athlete's sheet too, rather
+          than a blank page. `print.css` hides everything else. */}
+      {typeof document === 'undefined'
+        ? null
+        : createPortal(
+            <PrintSheet
+              gymName={gymName}
+              athlete={athlete.data ?? briefing.data.athlete}
+              coachName={briefing.data.coachName}
+              pinnedNotes={briefing.data.pinnedNotes}
+              sessions={sessions.data ?? []}
+              progress={progress.data}
+              memberships={team.data ?? []}
+              printedOn={printedOn}
+              variant={printVariant}
+              locale={locale}
+            />,
+            document.body,
+          )}
     </Screen>
   )
 }

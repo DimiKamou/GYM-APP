@@ -27,6 +27,7 @@ import type {
   WorkoutSet,
 } from '@/domain/types'
 import { Button, Card, Field, Icon, Input, Screen, Segmented } from '@/ui'
+import { readBackend, SyncStatus } from '@/ui/SyncStatus'
 
 /**
  * Gym, appearance, language, export, account.
@@ -243,11 +244,19 @@ export function SettingsScreen() {
   const [nameError, setNameError] = useState<string | null>(null)
   const [notice, setNotice] = useState<{ text: string; tone: 'ok' | 'bad' } | null>(null)
   const [confirmingReset, setConfirmingReset] = useState(false)
+  const [resetTyped, setResetTyped] = useState('')
+  const [resetError, setResetError] = useState<string | null>(null)
 
   // The field is seeded once per loaded gym; re-seeding on every render would fight the typist.
   useEffect(() => {
     if (gym.data) setName(gym.data.name)
   }, [gym.data])
+
+  const backend = readBackend(repoKind)
+  const resetWord = t('settings.resetConfirmWord')
+  // Accent- and case-insensitive, like the ownership transfer: the word is a deliberate act,
+  // not a spelling test, and a Greek keyboard set to lower case must not be a dead end.
+  const resetWordMatches = normalizeText(resetTyped) === normalizeText(resetWord)
 
   const roster = team.data ?? []
   const me = roster.find((row) => row.id === membership?.id) ?? membership ?? null
@@ -437,6 +446,38 @@ export function SettingsScreen() {
         </Card>
       </Section>
 
+      {/* What this install is, in the two facts a coach can act on: which backend holds their
+          work, and whether anything is still waiting to reach it. */}
+      <Section title={t('settings.syncSection')}>
+        <Card>
+          <div style={cardStack}>
+            <div style={detailRow}>
+              <span style={{ color: 'var(--th-muted)' }}>{t('settings.mode')}</span>
+              <span>{repoKind === 'local' ? t('settings.modeDemo') : t('settings.modeConnected')}</span>
+            </div>
+
+            {repoKind === 'supabase' ? (
+              <>
+                <div style={detailRow}>
+                  <span style={{ color: 'var(--th-muted)' }}>{t('settings.project')}</span>
+                  <span>{backend.host ?? t('settings.projectUnknown')}</span>
+                </div>
+                <div style={detailRow}>
+                  <span style={{ color: 'var(--th-muted)' }}>{t('settings.region')}</span>
+                  {/* Never inferred from the URL. `eu-central-1` is a data-residency commitment,
+                      and a guessed one is a claim nobody checked. */}
+                  <span>{backend.region ?? t('settings.regionUnknown')}</span>
+                </div>
+              </>
+            ) : null}
+          </div>
+        </Card>
+
+        <Card>
+          <SyncStatus detail />
+        </Card>
+      </Section>
+
       <Section title={t('settings.dataExport')}>
         <Card>
           <div style={cardStack}>
@@ -493,13 +534,37 @@ export function SettingsScreen() {
                   <p style={{ ...bodyText, color: 'var(--th-danger)' }}>
                     {t('settings.resetDemoConfirm')}
                   </p>
+                  {/* Typed, not tapped. Every other destructive action here is soft and undoable;
+                      this one deletes every session written on this device and no toast can bring
+                      them back, which is exactly the case a tap-through confirm does not cover. */}
+                  <Field
+                    label={t('settings.resetTyped')}
+                    hint={t('settings.resetTypeHint', { word: resetWord })}
+                    error={resetError ?? undefined}
+                  >
+                    <Input
+                      value={resetTyped}
+                      autoComplete="off"
+                      autoCapitalize="characters"
+                      spellCheck={false}
+                      onChange={(event) => {
+                        setResetTyped(event.target.value)
+                        if (resetError) setResetError(null)
+                      }}
+                    />
+                  </Field>
                   <Button
                     variant="danger"
                     icon="undo"
                     loading={resetDemo.isPending}
-                    disabled={resetDemo.isPending}
+                    disabled={resetDemo.isPending || !resetWordMatches}
                     onClick={async () => {
+                      if (!resetWordMatches) {
+                        setResetError(t('settings.resetMismatch'))
+                        return
+                      }
                       setConfirmingReset(false)
+                      setResetTyped('')
                       try {
                         await resetDemo.mutateAsync()
                         setNotice({ text: t('settings.resetDone'), tone: 'ok' })
@@ -510,7 +575,14 @@ export function SettingsScreen() {
                   >
                     {t('settings.resetDemo')}
                   </Button>
-                  <Button variant="quiet" onClick={() => setConfirmingReset(false)}>
+                  <Button
+                    variant="quiet"
+                    onClick={() => {
+                      setConfirmingReset(false)
+                      setResetTyped('')
+                      setResetError(null)
+                    }}
+                  >
                     {t('common.cancel')}
                   </Button>
                 </>
@@ -520,6 +592,8 @@ export function SettingsScreen() {
                   icon="undo"
                   onClick={() => {
                     setNotice(null)
+                    setResetTyped('')
+                    setResetError(null)
                     setConfirmingReset(true)
                   }}
                 >

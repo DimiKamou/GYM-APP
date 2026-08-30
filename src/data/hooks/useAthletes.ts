@@ -122,13 +122,31 @@ export function useUpdateAthlete(): UseMutationResult<WriteState, Error, UpdateA
   })
 }
 
-/** Soft delete. The only place in the app where a confirm dialog is still the right call. */
+/**
+ * Soft delete, and one of the two actions in the app that keeps a real confirm — the other is
+ * removing a trainer. An undo toast is the right affordance for one row of one's own work; it
+ * is the wrong one here, because this hides an athlete's whole history from every colleague and
+ * the way back is not a button the coach can find six seconds later. `AthleteSheet` owns that
+ * confirm.
+ *
+ * The invalidation is wider than the roster on purpose. The read cache is persisted to
+ * IndexedDB and outlives the tab, so invalidating only the list leaves this athlete's briefing,
+ * sessions and notes on disk: reopening a bookmarked `/athletes/:id` then serves a five-second
+ * read for someone the gym has removed, with no request in flight to correct it. Every one of
+ * those keys is under `keys.athlete(gymId, id)`, so one invalidation covers them all.
+ */
 export function useArchiveAthlete(): UseMutationResult<WriteState, Error, Uuid> {
   const gymId = useGymId()
   const repo = useRepo()
   const client = useQueryClient()
   return useMutation({
     mutationFn: (athleteId: Uuid) => repo.archiveAthlete(gymId, athleteId),
-    onSuccess: () => invalidateRoster(client, gymId),
+    onSuccess(state, athleteId) {
+      // Nothing changed on a refused write, and invalidating would replace a correct screen
+      // with a spinner and then the same rows.
+      if (state === 'failed') return
+      void invalidateRoster(client, gymId)
+      void client.invalidateQueries({ queryKey: keys.athlete(gymId, athleteId) })
+    },
   })
 }

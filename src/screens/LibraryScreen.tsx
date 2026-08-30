@@ -2,7 +2,14 @@ import { useState, type CSSProperties } from 'react'
 import { useTranslation } from 'react-i18next'
 
 import { newId } from '@/data/ids'
-import { useArchiveExercise, useCreateExercise, useExercises } from '@/data/hooks'
+import {
+  useArchiveExercise,
+  useCanUnarchiveExercise,
+  useCreateExercise,
+  useExercises,
+  useUnarchiveExercise,
+  useUndoableDelete,
+} from '@/data/hooks'
 import { matches } from '@/domain/text'
 import { currentLocale } from '@/i18n'
 import type { Locale } from '@/domain/format'
@@ -25,7 +32,10 @@ import {
   Screen,
   Sheet,
   Spinner,
+  ToastProvider,
+  useToast,
 } from '@/ui'
+import { SyncStatus } from '@/ui/SyncStatus'
 
 /**
  * The exercise catalogue.
@@ -184,12 +194,36 @@ function names(exercise: Exercise, locale: Locale): { primary: string; secondary
   return { primary, secondary }
 }
 
+/**
+ * The screen owns its own `ToastProvider`, exactly as the Log and Calendar screens do: the undo
+ * that stands in for a confirm dialog has to be mounted inside the route that fires it.
+ */
 export function LibraryScreen() {
+  return (
+    <ToastProvider>
+      <LibraryBody />
+    </ToastProvider>
+  )
+}
+
+function LibraryBody() {
   const { t } = useTranslation()
   const locale = currentLocale()
+  const toast = useToast()
   const catalogue = useExercises()
   const create = useCreateExercise()
   const archive = useArchiveExercise()
+  const unarchive = useUnarchiveExercise()
+  /**
+   * Whether this repository can actually clear `is_archived` again. Where it cannot, the sheet
+   * keeps its confirm: `useUndoableDelete` hands back `undo: null`, and offering an undo button
+   * that resolves to nothing would be the same lie as the prototype's "Auto-saved" toast.
+   */
+  const canUndoArchive = useCanUnarchiveExercise()
+  const archiveExercise = useUndoableDelete<Uuid>({
+    remove: (exerciseId) => archive.mutateAsync(exerciseId),
+    restore: canUndoArchive ? (exerciseId) => unarchive.mutateAsync(exerciseId) : undefined,
+  })
 
   const [search, setSearch] = useState('')
   const [category, setCategory] = useState<CategoryFilter>(ALL)
@@ -255,6 +289,11 @@ export function LibraryScreen() {
 
   return (
     <Screen label={t('library.title')} header={header} footerSafeArea={false}>
+      {/* Above the filters rather than in the header: it must be readable without a tap and
+          without pushing the search field off the first screenful. A dead-lettered op turns it
+          into a banner here, which is the first thing the eye lands on. */}
+      <SyncStatus />
+
       <div style={filterStack}>
         <div style={chipRow} role="group" aria-label={t('library.category')}>
           <Chip selected={category === ALL} onClick={() => setCategory(ALL)}>
@@ -384,16 +423,53 @@ export function LibraryScreen() {
       <ExerciseSheet
         exercise={open}
         locale={locale}
-        busy={archive.isPending}
+        canUndo={canUndoArchive}
+        busy={archive.isPending || unarchive.isPending || archiveExercise.isPending}
         onClose={() => setOpenId(null)}
         onArchive={async (exerciseId) => {
-          const state = await archive.mutateAsync(exerciseId)
+          const handle = await archiveExercise.remove(exerciseId)
+          setOpenId(null)
+
+          if (handle.state === 'failed') {
+            setNotice({ text: t('library.archiveFailed'), tone: 'bad' })
+            return
+          }
+
+          // `queued` is not `saved`, and the toast says which one it was: the row has left this
+          // screen either way, but only one of the two has reached the gym's server.
+          const message = handle.state === 'queued' ? t('common.queued') : t('library.archiveDone')
+          const undo = handle.undo
+          if (!undo) {
+            setNotice({ text: message, tone: 'ok' })
+            return
+          }
+
+          toast.show({
+            message,
+            action: {
+              label: t('common.undo'),
+              onAction: () => {
+                void undo().then((state) =>
+                  setNotice(
+                    state === 'failed'
+                      ? { text: t('library.archiveUndoFailed'), tone: 'bad' }
+                      : { text: t('library.archiveUndone'), tone: 'ok' },
+                  ),
+                )
+              },
+            },
+          })
+        }}
+        onRestore={async (exerciseId) => {
+          // The undo toast lasts six seconds; a coach who finds the mistake tomorrow needs the
+          // same way back, so the archived row carries it too.
+          const state = await unarchive.mutateAsync(exerciseId)
           setOpenId(null)
           setNotice(
             state === 'failed'
-              ? { text: t('library.archiveFailed'), tone: 'bad' }
+              ? { text: t('library.archiveUndoFailed'), tone: 'bad' }
               : {
-                  text: state === 'queued' ? t('common.queued') : t('library.archiveDone'),
+                  text: state === 'queued' ? t('common.queued') : t('library.archiveUndone'),
                   tone: 'ok',
                 },
           )
@@ -540,12 +616,23 @@ function CreateExerciseSheet({ open, onClose, busy, onCreate }: CreateExerciseSh
 interface ExerciseSheetProps {
   exercise: Exercise | null
   locale: Locale
+  /** True when the archive has a route back, which is what decides undo-toast versus confirm. */
+  canUndo: boolean
   busy: boolean
   onClose: () => void
   onArchive: (exerciseId: Uuid) => Promise<void>
+  onRestore: (exerciseId: Uuid) => Promise<void>
 }
 
-function ExerciseSheet({ exercise, locale, busy, onClose, onArchive }: ExerciseSheetProps) {
+function ExerciseSheet({
+  exercise,
+  locale,
+  canUndo,
+  busy,
+  onClose,
+  onArchive,
+  onRestore,
+}: ExerciseSheetProps) {
   const { t } = useTranslation()
   const [confirming, setConfirming] = useState(false)
 
@@ -588,16 +675,46 @@ function ExerciseSheet({ exercise, locale, busy, onClose, onArchive }: ExerciseS
       </div>
 
       {exercise.isArchived ? (
-        <p style={bodyText}>
-          {t('library.archived')} · {t('library.archiveOneWay')}
-        </p>
+        <div style={dangerZone}>
+          <p style={bodyText}>
+            {t('library.archived')}
+            {canUndo ? '' : ` · ${t('library.archiveOneWay')}`}
+          </p>
+          {canUndo && own ? (
+            <Button
+              variant="secondary"
+              block
+              icon="undo"
+              loading={busy}
+              disabled={busy}
+              onClick={() => void onRestore(exercise.id)}
+            >
+              {t('library.restoreAction')}
+            </Button>
+          ) : null}
+        </div>
       ) : !own ? (
         <p style={bodyText}>{t('library.sharedLocked')}</p>
       ) : (
         <div style={dangerZone}>
           <p style={bodyText}>{t('library.archiveHint')}</p>
-          {confirming ? (
+          {canUndo ? (
+            /* One tap, then an undo toast. A confirm dialog on a phone held at arm's length in
+               a gym is tapped through without being read, so it prevents nothing and costs a tap
+               every time; the undo costs nothing until it is needed. */
+            <Button
+              variant="dangerQuiet"
+              block
+              icon="library"
+              loading={busy}
+              disabled={busy}
+              onClick={() => void onArchive(exercise.id)}
+            >
+              {t('library.archiveAction')}
+            </Button>
+          ) : confirming ? (
             <>
+              {/* No way back on this repository, so the confirm stays and says so. */}
               <p style={bodyText}>
                 <strong>{t('library.archiveConfirm')}</strong> {t('library.archiveOneWay')}
               </p>

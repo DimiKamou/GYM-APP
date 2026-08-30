@@ -164,7 +164,10 @@ export function SessionHeader({
         {athlete ? <Avatar fullName={athlete.fullName} size={40} /> : null}
 
         <div style={{ minWidth: 0, flex: '1 1 auto' }}>
-          <p style={athleteName}>{athlete?.fullName ?? ''}</p>
+          {/* An h1, not a p: this is the log's heading, and every other screen has exactly one.
+              Without it a screen reader's heading list for the core screen is empty, so there is
+              no way to jump to "whose session is this" — the first thing anyone needs here. */}
+          <h1 style={athleteName}>{athlete?.fullName ?? ''}</h1>
           <div style={metaRow}>
             <span className="num">{formatDate(session.localDate, locale, { withYear: true })}</span>
             <span>·</span>

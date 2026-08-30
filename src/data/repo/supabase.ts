@@ -28,6 +28,10 @@ import type { PostgrestError } from '@supabase/supabase-js'
 import { lastPerformance as lastPerformanceOf } from '@/domain/analytics'
 import { matches } from '@/domain/text'
 import { createOutbox, createSupabaseTransport, type Outbox, type OutboxEntity } from '@/data/outbox'
+// Type-only, so nothing at runtime points from the repository back up at the hooks layer.
+// The capability cannot live on `Repo`: every method there takes a gym id that the person
+// redeeming an invite does not have yet.
+import type { InviteRedeemer } from '@/data/hooks/useTeam'
 import { supabase } from '@/data/supabase'
 import { briefingTopLines } from '@/data/repo/local'
 import type {
@@ -357,7 +361,7 @@ async function direct(run: () => Promise<{ error: PostgrestError | null }>): Pro
 
 // ---------------------------------------------------------------------------
 
-export function createSupabaseRepo(): Repo {
+export function createSupabaseRepo(): Repo & InviteRedeemer {
   async function liveSessions(gymId: Uuid, athleteId: Uuid, limit?: number): Promise<Session[]> {
     let query = supabase
       .from('sessions')
@@ -416,7 +420,7 @@ export function createSupabaseRepo(): Repo {
     )
   }
 
-  const repo: Repo = {
+  const repo: Repo & InviteRedeemer = {
     kind: 'supabase',
 
     // ---- reads ----
@@ -437,7 +441,14 @@ export function createSupabaseRepo(): Repo {
       // token hash. `list_invites()` is the read path and it cannot return that column.
       const { data, error } = await supabase.rpc('list_invites')
       if (error) throw new Error(error.message)
-      return ((data ?? []) as Row[]).map((row) => toInvite({ ...row, gym_id: gymId }))
+      return (
+        ((data ?? []) as Row[])
+          .map((row) => toInvite({ ...row, gym_id: gymId }))
+          // The RPC is the audit view and returns spent invites too. The screen's list is a
+          // list of things still to act on, and it carries a Revoke button next to every row:
+          // offering to revoke an invite somebody already accepted is an offer to do nothing.
+          .filter((invite) => invite.revokedAt === null && invite.acceptedAt === null)
+      )
     },
 
     async listAthletes(gymId, search) {
@@ -833,6 +844,9 @@ export function createSupabaseRepo(): Repo {
     archiveExercise: (gymId, exerciseId) =>
       enqueue(gymId, 'exercises', exerciseId, { is_archived: true }),
 
+    unarchiveExercise: (gymId, exerciseId) =>
+      enqueue(gymId, 'exercises', exerciseId, { is_archived: false }),
+
     addNote(gymId, noteId, athleteId, body, opts) {
       return enqueue(gymId, 'notes', noteId, {
         id: noteId,
@@ -914,15 +928,54 @@ export function createSupabaseRepo(): Repo {
       return error ? 'failed' : 'saved'
     },
 
-    updateMember(gymId, membershipId, patch) {
+    /**
+     * No gym id: the caller does not have one yet, and the server takes the identity from
+     * `auth.uid()` and the gym from the invite. The RPC answers `invalid or expired invite`
+     * for every failure mode there is, so there is nothing to inspect on the error — only
+     * whether one arrived.
+     */
+    async redeemInvite(secret) {
+      const { data, error } = await supabase.rpc('redeem_invite', { p_secret: secret.trim() })
+      if (error) return { ok: false }
+      const row = (data ?? null) as {
+        membership_id?: string
+        gym_id?: string
+        role?: MemberRole
+      } | null
+      if (!row?.gym_id || !row.membership_id) return { ok: false }
+      return {
+        ok: true,
+        invite: {
+          gymId: row.gym_id,
+          membershipId: row.membership_id,
+          role: row.role ?? 'trainer',
+          // The response is byte-identical whether this was the first redemption or a repeat
+          // of one, on purpose. The Join screen compares against the membership it already
+          // held instead of asking the server to tell it apart.
+          alreadyMember: false,
+        },
+      }
+    },
+
+    async updateMember(gymId, membershipId, patch) {
+      // Promotion to owner is `transfer_ownership()`, never a PATCH — and this is not a
+      // convenience. `memberships_one_active_owner` allows at most one active owner, so an
+      // UPDATE that promotes the successor is refused; `memberships_guard_privilege` refuses
+      // an owner stepping down before a successor exists. The two halves only work as one
+      // server-side transaction, which also means a client cannot die halfway and leave a
+      // gym nobody can administer.
+      if (patch.role === 'owner') {
+        const { error } = await supabase.rpc('transfer_ownership', { p_to: membershipId })
+        if (error) return 'failed'
+      }
+      const rest = defined({
+        display_name: patch.displayName,
+        status: patch.status,
+        role: patch.role === 'owner' ? undefined : patch.role,
+      })
+      if (Object.keys(rest).length === 0) return 'saved'
       return direct(async () =>
-        supabase
-          .from('memberships')
-          .update(
-            defined({ display_name: patch.displayName, role: patch.role, status: patch.status }),
-          )
-          .eq('gym_id', gymId)
-          .eq('id', membershipId),
+        supabase.from('memberships').update(rest).eq('gym_id', gymId).eq('id', membershipId),
       )
     },
 

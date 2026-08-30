@@ -245,9 +245,16 @@ describe('the exercise library', () => {
 
     const ownRow = buttonWithText(host, 'Δικό μας Squat')
     await click(ownRow)
-    await click(buttonWithText(sheet(), i18n.t('library.archiveAction')))
+    // One tap, not two. The repositories can unarchive now, so this takes the undo path rather
+    // than the two-tap confirm it used to need — a modal taxes every archive to prevent a rare
+    // mis-tap, and trainers learn to dismiss modals blind.
     await click(buttonWithText(sheet(), i18n.t('library.archiveAction')))
     await settle()
+
+    // The way back is offered instead.
+    expect(buttons(host).some((button) => textOf(button).includes(i18n.t('common.undo')))).toBe(
+      true,
+    )
 
     // Gone from the list, but still a row — three months of blocks point at it.
     expect(textOf(host)).not.toContain('Δικό μας Squat')

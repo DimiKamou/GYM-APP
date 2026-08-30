@@ -183,6 +183,9 @@ export function TeamScreen() {
           variant="primary"
           icon="plus"
           disabled={!isOwner}
+          // The card below says who can, in a sentence. This is the same answer attached to
+          // the control itself, for the trainer who taps it before reading anything.
+          title={isOwner ? undefined : t('team.ownerOnly')}
           onClick={() => {
             setNotice(null)
             setInviting(true)
@@ -349,6 +352,7 @@ export function TeamScreen() {
                   variant="dangerQuiet"
                   size="sm"
                   disabled={!isOwner || revoke.isPending}
+                  title={isOwner ? undefined : t('team.ownerOnly')}
                   onClick={async () => {
                     const state = await revoke.mutateAsync(row.id)
                     setNotice(
@@ -380,29 +384,20 @@ export function TeamScreen() {
         onClose={() => setTransferring(false)}
         onTransfer={async (successor) => {
           if (!me) return
-          // Promote first. A gym is allowed two owners for the length of this pair of writes,
-          // but never zero — the reverse order leaves a gym nobody can administer if the
-          // second write fails.
-          const promoted = await updateMember.mutateAsync({
+          // ONE call, which promotes the successor and steps the current owner down together.
+          // It cannot be two: the schema keeps at most one active owner, so promoting first is
+          // refused and stepping down first is refused as leaving the gym ownerless — and a
+          // client that died between two writes would leave a gym nobody can administer, which
+          // is unfixable from inside the app. `transfer_ownership()` does both in one
+          // transaction; the local repository mirrors it.
+          const state = await updateMember.mutateAsync({
             membershipId: successor.id,
             patch: { role: 'owner' },
           })
-          if (promoted === 'failed') {
-            setTransferring(false)
-            setNotice({ text: t('team.transferFailed'), tone: 'bad' })
-            return
-          }
-          const demoted = await updateMember.mutateAsync({
-            membershipId: me.id,
-            patch: { role: 'trainer' },
-          })
           setTransferring(false)
           setNotice(
-            demoted === 'failed'
-              ? {
-                  text: t('team.transferHalfDone', { name: successor.displayName }),
-                  tone: 'bad',
-                }
+            state === 'failed'
+              ? { text: t('team.transferFailed'), tone: 'bad' }
               : { text: t('team.transferDone'), tone: 'ok' },
           )
         }}
