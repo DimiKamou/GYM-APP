@@ -344,6 +344,24 @@ export const en: Translation = {
     },
   },
 
+  ui: {
+    dismiss: 'Dismiss',
+    notifications: 'Notifications',
+    rowActions: 'Row actions',
+    increase: 'Increase',
+    decrease: 'Decrease',
+    increaseBy: 'Increase by {{amount}}',
+    decreaseBy: 'Decrease by {{amount}}',
+    keypad: 'Number pad',
+    digit: 'Digit {{digit}}',
+    decimalComma: 'Decimal comma',
+    backspace: 'Delete last digit',
+    recentLoads: 'Recent',
+    commit: 'Enter',
+    invalidNumber: 'Not a valid number',
+    noValue: 'No value',
+  },
+
   errors: {
     notFoundTitle: 'Page not found',
     notFoundBody: 'That link does not match a screen in the app.',

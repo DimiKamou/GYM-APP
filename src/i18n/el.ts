@@ -381,6 +381,32 @@ export const el = {
     },
   },
 
+  /**
+   * Strings the primitives in `src/ui/` own.
+   *
+   * They live here rather than as component defaults for the usual reason, plus one specific to
+   * them: an `aria-label` is a UI string that never appears on screen, so a hardcoded English
+   * one is invisible in review and audible only to the trainer using VoiceOver in Greek.
+   */
+  ui: {
+    dismiss: 'Απόρριψη',
+    notifications: 'Ειδοποιήσεις',
+    rowActions: 'Ενέργειες γραμμής',
+    increase: 'Αύξηση',
+    decrease: 'Μείωση',
+    increaseBy: 'Αύξηση κατά {{amount}}',
+    decreaseBy: 'Μείωση κατά {{amount}}',
+    keypad: 'Αριθμητικό πληκτρολόγιο',
+    digit: 'Ψηφίο {{digit}}',
+    /** The Greek decimal separator. The pad emits a comma because that is what is typed here. */
+    decimalComma: 'Υποδιαστολή',
+    backspace: 'Διαγραφή ψηφίου',
+    recentLoads: 'Πρόσφατα',
+    commit: 'Καταχώριση',
+    invalidNumber: 'Μη έγκυρος αριθμός',
+    noValue: 'Χωρίς τιμή',
+  },
+
   errors: {
     notFoundTitle: 'Η σελίδα δεν βρέθηκε',
     notFoundBody: 'Ο σύνδεσμος δεν αντιστοιχεί σε οθόνη της εφαρμογής.',
