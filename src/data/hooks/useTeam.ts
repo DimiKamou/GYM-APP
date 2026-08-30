@@ -106,3 +106,28 @@ export function useUpdateMember(): UseMutationResult<WriteState, Error, UpdateMe
     },
   })
 }
+
+/** The owner's copy of everything this gym holds, as JSON. */
+export function useExportGym(): UseMutationResult<string, Error, void> {
+  const gymId = useGymId()
+  const repo = useRepo()
+  return useMutation({ mutationFn: () => repo.exportGym(gymId) })
+}
+
+/**
+ * Re-seeds the demo gym. Present only on the local repository — on Supabase the server owns
+ * the data and there is nothing to reset — so the Settings screen gates the button on
+ * `repo.kind === 'local'` rather than on this hook existing.
+ */
+export function useResetDemoData(): UseMutationResult<void, Error, void> {
+  const repo = useRepo()
+  const client = useQueryClient()
+  return useMutation({
+    mutationFn: async () => {
+      if (!repo.resetDemoData) throw new Error('this repository has no demo data to reset')
+      await repo.resetDemoData()
+    },
+    // Everything on screen came from the rows that were just replaced.
+    onSuccess: () => client.clear(),
+  })
+}
