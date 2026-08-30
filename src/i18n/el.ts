@@ -736,6 +736,39 @@ export const el = {
    * the skip link is the one control a coach on a keyboard needs before any other, because a
    * screen's header — back, search, print — otherwise sits between them and the list.
    */
+  /**
+   * The μυϊκή ομάδα axis — the finer one the gym owner asked for, sitting BESIDE the coarse
+   * `categories` group rather than replacing it. Both appear on the same row in the picker,
+   * which is why the two vocabularies have to stay visibly different: a category is where on
+   * the body, a muscle group is which muscle.
+   *
+   * The group NAMES themselves are data, not strings — they live in `muscle_groups.name_el`
+   * because a gym adds its own. Nothing here names a muscle.
+   */
+  muscles: {
+    title: 'Μυϊκές ομάδες',
+    group: 'Μυϊκή ομάδα',
+    filter: 'Φίλτρο μυϊκής ομάδας',
+    /** The `muscleGroupId === null` bucket. Never dropped, never silently hidden. */
+    unclassified: 'Χωρίς μυϊκή ομάδα',
+    unclassifiedHint: 'Ασκήσεις που δεν έχουν μπει ακόμα σε μυϊκή ομάδα.',
+    primary: 'Κύρια',
+    secondary: 'Δευτερεύουσα',
+    roleHint: 'Ένα πάτημα: κύρια. Δεύτερο: δευτερεύουσα. Τρίτο: καμία.',
+    file: 'Ταξινόμηση',
+    fileTitle: 'Σε ποια μυϊκή ομάδα;',
+    /** Says out loud why one exercise may sit under two headings, before it looks like a bug. */
+    fileHint:
+      'Μια άσκηση μπορεί να ανήκει σε πολλές ομάδες: οι πιέσεις πάγκου είναι στήθος κύρια και τρικέφαλοι δευτερεύουσα.',
+    fileDone: 'Η άσκηση ταξινομήθηκε.',
+    fileFailed: 'Η ταξινόμηση δεν αποθηκεύτηκε. Δοκίμασε ξανά.',
+    sharedLocked: 'Ο κοινός κατάλογος έρχεται ταξινομημένος και δεν αλλάζει από εδώ.',
+    /** Shown while the trainer is mid-session, which is the only moment this gets done. */
+    createHint: 'Διάλεξέ τη τώρα — μετά την προπόνηση δεν την ταξινομεί κανείς.',
+    empty: 'Καμία άσκηση σε αυτή τη μυϊκή ομάδα.',
+    loadFailed: 'Οι μυϊκές ομάδες δεν φορτώθηκαν. Οι ασκήσεις φαίνονται αταξινόμητες.',
+  },
+
   a11y: {
     skipToContent: 'Μετάβαση στο περιεχόμενο',
     /** The scroll region's name on a screen that passed no title of its own. */

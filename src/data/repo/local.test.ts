@@ -1,8 +1,12 @@
+import { readFileSync } from 'node:fs'
+import { resolve } from 'node:path'
+
 import { describe, expect, it } from 'vitest'
 
 import { isUuid } from '@/data/ids'
 import { createLocalRepo } from '@/data/repo/local'
 import { buildSeed, SEED_IDS } from '@/data/repo/seed'
+import { muscleGroupShare } from '@/domain/analytics'
 import type { OutboxStorage } from '@/data/outbox'
 import type { Repo } from '@/data/repo/types'
 
@@ -290,6 +294,260 @@ describe('writes', () => {
 
     await repo.resetDemoData?.()
     expect((await repo.listNotes(GYM, katerina)).map((n) => n.id)).not.toContain(noteId)
+  })
+})
+
+describe('the muscle-group taxonomy', () => {
+  it('ships the sixteen shared groups in display order, not alphabetical order', async () => {
+    const groups = await repoWithSeed().listMuscleGroups(GYM)
+    expect(groups).toHaveLength(16)
+    // Greek sorts Τρικέφαλοι above Στήθος. A picker that opens on Τρικέφαλοι is wrong for
+    // every push day ever programmed, which is what `position` exists to prevent.
+    expect(groups.map((g) => g.nameEl).slice(0, 5)).toEqual([
+      'Στήθος',
+      'Πλάτη',
+      'Ώμοι',
+      'Δικέφαλοι',
+      'Τρικέφαλοι',
+    ])
+    expect(groups.every((g) => g.gymId === null)).toBe(true)
+    expect(groups.every((g) => isUuid(g.id))).toBe(true)
+    // Distinct ids and distinct slugs: either collision silently merges two muscle groups.
+    expect(new Set(groups.map((g) => g.id)).size).toBe(16)
+    expect(new Set(groups.map((g) => g.slug)).size).toBe(16)
+  })
+
+  it('classifies every one of the 28 catalogue exercises with at least one primary', async () => {
+    const seed = buildSeed({ today: TODAY })
+    const primaries = new Set(
+      seed.exerciseMuscles.filter((m) => m.role === 'primary').map((m) => m.exerciseId),
+    )
+    // An exercise with no primary falls into the unclassified bucket forever, and the whole
+    // point of the axis is that "how much chest work" has an answer that adds up.
+    const unclassified = seed.exercises.filter((e) => !primaries.has(e.id)).map((e) => e.nameEl)
+    expect(unclassified).toEqual([])
+  })
+
+  it('points every link at a group and an exercise that exist', async () => {
+    const seed = buildSeed({ today: TODAY })
+    const groupIds = new Set(seed.muscleGroups.map((g) => g.id))
+    const exerciseIds = new Set(seed.exercises.map((e) => e.id))
+    expect(
+      seed.exerciseMuscles.filter(
+        (m) => !groupIds.has(m.muscleGroupId) || !exerciseIds.has(m.exerciseId),
+      ),
+    ).toEqual([])
+    // No pairing twice: `(exercise, group)` is the primary key on the server, and a duplicate
+    // here would double-count that muscle in every share.
+    const pairs = seed.exerciseMuscles.map((m) => `${m.exerciseId}/${m.muscleGroupId}`)
+    expect(new Set(pairs).size).toBe(pairs.length)
+  })
+
+  it('files the bench press under Στήθος, which is what the owner actually asked for', async () => {
+    const repo = repoWithSeed()
+    const groups = await repo.listMuscleGroups(GYM)
+    const chest = groups.find((g) => g.nameEl === 'Στήθος')
+    const triceps = groups.find((g) => g.nameEl === 'Τρικέφαλοι')
+    const seed = buildSeed({ today: TODAY })
+    const ofBench = seed.exerciseMuscles.filter((m) => m.exerciseId === BENCH)
+
+    expect(ofBench.find((m) => m.muscleGroupId === chest?.id)?.role).toBe('primary')
+    // Secondary, not primary: a bench press trains triceps, but nobody programmes one for them.
+    expect(ofBench.find((m) => m.muscleGroupId === triceps?.id)?.role).toBe('secondary')
+  })
+
+  it('hands the Progress screen a payload it can draw the muscle axis from', async () => {
+    const repo = repoWithSeed()
+    const progress = await repo.getProgressData(GYM, nikos)
+    const slices = muscleGroupShare(
+      {
+        sessions: progress.sessions,
+        blocks: progress.blocks.map((b) => ({
+          ...b,
+          gymId: GYM,
+          createdAt: '',
+          updatedAt: '',
+          createdBy: null,
+        })),
+        sets: progress.sets,
+        exercises: progress.exercises,
+        muscleGroups: progress.muscleGroups,
+        exerciseMuscles: progress.exerciseMuscles,
+      },
+      nikos,
+    )
+    expect(slices.length).toBeGreaterThan(0)
+    // Nothing unfiled in the demo gym, because every catalogue row is classified.
+    expect(slices.some((s) => s.muscleGroupId === null)).toBe(false)
+  })
+})
+
+/**
+ * The taxonomy the server ships, read out of the migration itself.
+ *
+ * Parsed rather than duplicated: a second hand-written copy of sixteen groups and ninety-odd
+ * links would drift, and the drift is invisible until a gym creates a Supabase project and an
+ * athlete's chest share changes overnight with nothing in the app able to explain why.
+ */
+function sqlTaxonomy(): { groups: Array<[string, string]>; links: Array<[string, string, string]> } {
+  // Vitest runs from the repo root; import.meta.url is not a file URL under jsdom.
+  const sql = readFileSync(resolve(process.cwd(), 'supabase/migrations/003_muscle_groups.sql'), 'utf8')
+  const groups: Array<[string, string]> = []
+  for (const [, id, slug] of sql.matchAll(
+    /\('(ca7a2000-[0-9a-f-]+)',\s*null,\s*'([^']+)'/g,
+  )) {
+    groups.push([id, slug])
+  }
+  const links: Array<[string, string, string]> = []
+  for (const [, exerciseId, slug, role] of sql.matchAll(
+    /\('(ca7a1000-[0-9a-f-]+)',\s*'([^']+)',\s*'(primary|secondary)'\)/g,
+  )) {
+    links.push([exerciseId, slug, role])
+  }
+  return { groups, links }
+}
+
+describe('the local seed and the SQL seed are the same taxonomy', () => {
+  it('agrees on every group id and slug', () => {
+    const seed = buildSeed({ today: TODAY })
+    const { groups } = sqlTaxonomy()
+    expect(groups).toHaveLength(16)
+    expect(seed.muscleGroups.map((g) => [g.id, g.slug])).toEqual(groups)
+  })
+
+  it('agrees on every link and its role', () => {
+    const seed = buildSeed({ today: TODAY })
+    const { groups, links } = sqlTaxonomy()
+    const slugOf = new Map(groups.map(([id, slug]) => [id, slug]))
+    const key = (row: [string, string, string]) => row.join('/')
+    const mine = seed.exerciseMuscles.map((m): [string, string, string] => [
+      m.exerciseId,
+      slugOf.get(m.muscleGroupId) ?? m.muscleGroupId,
+      m.role,
+    ])
+    // Compared as sets: the insert order in a migration carries no meaning, but a link
+    // present on one side and not the other silently moves an athlete's volume.
+    expect(new Set(mine.map(key))).toEqual(new Set(links.map(key)))
+    expect(mine).toHaveLength(links.length)
+  })
+})
+
+describe('filing an exercise into a muscle group', () => {
+  const MACHINE_PRESS = '01920000-0000-7000-8000-00000000000a'
+  const OWN_GROUP = '01920000-0000-7000-8000-00000000000b'
+
+  it('creates the exercise and files it in one call, from inside the log', async () => {
+    const repo = repoWithSeed()
+    const chest = (await repo.listMuscleGroups(GYM)).find((g) => g.nameEl === 'Στήθος')!
+
+    expect(
+      await repo.createExercise(GYM, {
+        id: MACHINE_PRESS,
+        nameEl: 'Πιέσεις Στήθους σε Μηχάνημα',
+        category: 'upper',
+        equipment: 'machine',
+        muscles: [{ muscleGroupId: chest.id, role: 'primary' }],
+      }),
+    ).toBe('saved')
+
+    const progress = await repo.getProgressData(GYM, nikos)
+    expect(
+      progress.exerciseMuscles?.filter((m) => m.exerciseId === MACHINE_PRESS),
+    ).toMatchObject([{ muscleGroupId: chest.id, role: 'primary', gymId: GYM }])
+  })
+
+  it('replaces the whole link set rather than adding to it, and soft-deletes the rest', async () => {
+    const repo = repoWithSeed()
+    const groups = await repo.listMuscleGroups(GYM)
+    const chest = groups.find((g) => g.nameEl === 'Στήθος')!
+    const triceps = groups.find((g) => g.nameEl === 'Τρικέφαλοι')!
+
+    await repo.createExercise(GYM, {
+      id: MACHINE_PRESS,
+      nameEl: 'Πιέσεις Στήθους σε Μηχάνημα',
+      category: 'upper',
+      equipment: 'machine',
+      muscles: [
+        { muscleGroupId: chest.id, role: 'primary' },
+        { muscleGroupId: triceps.id, role: 'secondary' },
+      ],
+    })
+    expect(
+      await repo.setExerciseMuscles(GYM, MACHINE_PRESS, [
+        { muscleGroupId: chest.id, role: 'primary' },
+      ]),
+    ).toBe('saved')
+
+    const progress = await repo.getProgressData(GYM, nikos)
+    const live = progress.exerciseMuscles?.filter((m) => m.exerciseId === MACHINE_PRESS)
+    // Soft-deleted, so `getProgressData` no longer returns it at all — a hard delete would be
+    // invisible to sync and the link would come back on the next read.
+    expect(live).toHaveLength(1)
+    expect(live?.[0].muscleGroupId).toBe(chest.id)
+
+    // ...and re-filing it is an undelete, not a second row: `(exercise, group)` is the key.
+    expect(
+      await repo.setExerciseMuscles(GYM, MACHINE_PRESS, [
+        { muscleGroupId: chest.id, role: 'primary' },
+        { muscleGroupId: triceps.id, role: 'primary' },
+      ]),
+    ).toBe('saved')
+    const after = (await repo.getProgressData(GYM, nikos)).exerciseMuscles?.filter(
+      (m) => m.exerciseId === MACHINE_PRESS,
+    )
+    expect(after).toHaveLength(2)
+    expect(after?.every((m) => m.role === 'primary')).toBe(true)
+  })
+
+  it('refuses to refile a shared catalogue row, exactly as archiving one is refused', async () => {
+    const repo = repoWithSeed()
+    const chest = (await repo.listMuscleGroups(GYM)).find((g) => g.nameEl === 'Στήθος')!
+    expect(
+      await repo.setExerciseMuscles(GYM, BENCH, [{ muscleGroupId: chest.id, role: 'primary' }]),
+    ).toBe('failed')
+  })
+
+  it('adds a gym group after the shared ones, and will not mint a second Στήθος', async () => {
+    const repo = repoWithSeed()
+    expect(
+      await repo.createMuscleGroup(GYM, {
+        id: OWN_GROUP,
+        nameEl: 'Περιστροφείς Ώμου',
+        nameEn: 'Rotator cuff',
+        region: 'upper',
+      }),
+    ).toBe('saved')
+
+    const groups = await repo.listMuscleGroups(GYM)
+    expect(groups).toHaveLength(17)
+    // Appended: a gym's own group never displaces Στήθος from the top of the picker.
+    expect(groups[groups.length - 1].id).toBe(OWN_GROUP)
+    expect(groups[groups.length - 1].slug).toBe('περιστροφεισ ωμου')
+
+    // A second "Στήθος" beside the shared one splits an athlete's chest work across two rows
+    // and is unfixable from the picker.
+    expect(
+      await repo.createMuscleGroup(GYM, {
+        id: '01920000-0000-7000-8000-00000000000c',
+        nameEl: 'Στήθος',
+        region: 'upper',
+      }),
+    ).toBe('failed')
+  })
+
+  it('refuses a link to a group this gym cannot see, rather than half-applying it', async () => {
+    const repo = repoWithSeed()
+    await repo.createExercise(GYM, {
+      id: MACHINE_PRESS,
+      nameEl: 'Πιέσεις Στήθους σε Μηχάνημα',
+      category: 'upper',
+      equipment: 'machine',
+    })
+    expect(
+      await repo.setExerciseMuscles(GYM, MACHINE_PRESS, [
+        { muscleGroupId: '01920000-0000-7000-8000-0000000000ff', role: 'primary' },
+      ]),
+    ).toBe('failed')
   })
 })
 

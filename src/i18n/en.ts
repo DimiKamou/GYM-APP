@@ -633,6 +633,27 @@ export const en: Translation = {
     transcribe: 'Copy the lines into TrainHub after the session.',
   },
 
+  muscles: {
+    title: 'Muscle groups',
+    group: 'Muscle group',
+    filter: 'Filter by muscle group',
+    unclassified: 'No muscle group',
+    unclassifiedHint: 'Exercises that have not been filed under a muscle group yet.',
+    primary: 'Primary',
+    secondary: 'Secondary',
+    roleHint: 'One tap: primary. Twice: secondary. Again: none.',
+    file: 'File',
+    fileTitle: 'Which muscle group?',
+    fileHint:
+      'An exercise can belong to several groups: a bench press is chest primary and triceps secondary.',
+    fileDone: 'The exercise was filed.',
+    fileFailed: 'The change was not saved. Try again.',
+    sharedLocked: 'The shared catalogue ships classified and is not edited from here.',
+    createHint: 'Choose it now — after the session nobody files it.',
+    empty: 'No exercise in this muscle group.',
+    loadFailed: 'Muscle groups did not load. Exercises appear unclassified.',
+  },
+
   a11y: {
     skipToContent: 'Skip to content',
     mainContent: 'Screen content',

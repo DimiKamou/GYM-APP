@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Applies both migrations to a throwaway Postgres and asserts the ten security
+# Applies every migration to a throwaway Postgres and asserts the security
 # properties the design depends on. Run it after ANY change to 001_init.sql.
 #
 # RLS is the one part of this app that cannot be checked by reading it: a policy
@@ -23,8 +23,12 @@ run "pg_ctl -D $WORK/data -l $WORK/pg.log -o \"-k $WORK/sock -h ''\" start" >/de
 for _ in $(seq 1 30); do psql -h "$WORK/sock" -U trainhub -d postgres -c 'select 1' >/dev/null 2>&1 && break; sleep 0.5; done
 
 psql -h "$WORK/sock" -U trainhub -d postgres -v ON_ERROR_STOP=1 -q -f "$HERE/00_supabase_shim.sql"
-psql -h "$WORK/sock" -U trainhub -d postgres -v ON_ERROR_STOP=1 -q -f "$HERE/../migrations/001_init.sql"
-psql -h "$WORK/sock" -U trainhub -d postgres -v ON_ERROR_STOP=1 -q -f "$HERE/../migrations/002_seed_catalogue.sql"
+# Every migration, in filename order. Naming them one by one is how 003 came to be written,
+# committed and silently never applied here — the suite passed because it was testing a schema
+# that did not include it.
+for migration in "$HERE"/../migrations/*.sql; do
+  psql -h "$WORK/sock" -U trainhub -d postgres -v ON_ERROR_STOP=1 -q -f "$migration"
+done
 psql -h "$WORK/sock" -U trainhub -d postgres -q -f "$HERE/01_rls_test.sql" 2>&1 \
   | grep -v '^NOTICE' | sed 's/^psql:[^ ]*sql:[0-9]*: //'
 

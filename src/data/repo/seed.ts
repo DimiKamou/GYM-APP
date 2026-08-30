@@ -32,10 +32,13 @@ import type {
   Equipment,
   Exercise,
   ExerciseCategory,
+  ExerciseMuscle,
   Gym,
   Invite,
   LocalDate,
   Membership,
+  MuscleGroup,
+  MuscleRole,
   Note,
   Session,
   SetKind,
@@ -78,6 +81,16 @@ const KIND = {
 /** The catalogue's literal ids, byte-for-byte what `002_seed_catalogue.sql` inserts. */
 function catalogueId(n: number): Uuid {
   return `ca7a1000-0000-4000-8000-${String(n).padStart(12, '0')}`
+}
+
+/**
+ * The shared taxonomy's literal ids, in the same family as the catalogue's and for the same
+ * reason: they ship in a migration, tests reference them, and an id that moved on a re-seed
+ * would orphan every link that points at it. `ca7a2000` reads as "the catalogue's second
+ * table" and is deliberately impossible to confuse with an exercise id at a glance.
+ */
+function muscleGroupId(n: number): Uuid {
+  return `ca7a2000-0000-4000-8000-${String(n).padStart(12, '0')}`
 }
 
 export const SEED_IDS = {
@@ -225,6 +238,157 @@ function exerciseOf(slug: string): CatalogueRow {
 }
 
 // ---------------------------------------------------------------------------
+// The shared muscle-group taxonomy
+// ---------------------------------------------------------------------------
+
+interface MuscleGroupRow {
+  n: number
+  slug: string
+  el: string
+  en: string
+  region: ExerciseCategory
+}
+
+/**
+ * The sixteen shared groups, in DISPLAY order — which is anatomical, not alphabetical.
+ * Greek sorts Τρικέφαλοι above Στήθος, and a picker that opens on Τρικέφαλοι is a picker
+ * whose first screen is wrong for every push day ever programmed.
+ *
+ * Ids, slugs, names and positions are byte-for-byte what `003_muscle_groups.sql` inserts.
+ * The local repository's whole job is to be indistinguishable from the server, and a slug
+ * that differs by one character is a group the picker can find on one and not the other.
+ *
+ * The slugs are the canonical form `normalizeText()` produces — accentless, lowercase,
+ * FINAL SIGMA FOLDED — because they are matched against what a coach types, exactly like an
+ * exercise alias. That is why Στήθος is stored as "στηθοσ" and not "στηθος": a coach typing
+ * the name produces the σ form, and without the fold the two are simply different strings.
+ */
+const MUSCLE_GROUPS: readonly MuscleGroupRow[] = [
+  { n: 1, slug: 'στηθοσ', el: 'Στήθος', en: 'Chest', region: 'upper' },
+  { n: 2, slug: 'πλατη', el: 'Πλάτη', en: 'Back', region: 'upper' },
+  { n: 3, slug: 'ωμοι', el: 'Ώμοι', en: 'Shoulders', region: 'upper' },
+  { n: 4, slug: 'δικεφαλοι', el: 'Δικέφαλοι', en: 'Biceps', region: 'upper' },
+  { n: 5, slug: 'τρικεφαλοι', el: 'Τρικέφαλοι', en: 'Triceps', region: 'upper' },
+  { n: 6, slug: 'τραπεζοειδεισ', el: 'Τραπεζοειδείς', en: 'Traps', region: 'upper' },
+  { n: 7, slug: 'τετρακεφαλοι', el: 'Τετρακέφαλοι', en: 'Quadriceps', region: 'lower' },
+  { n: 8, slug: 'οπισθιοι', el: 'Οπίσθιοι Μηριαίοι', en: 'Hamstrings', region: 'lower' },
+  { n: 9, slug: 'γλουτοι', el: 'Γλουτοί', en: 'Glutes', region: 'lower' },
+  { n: 10, slug: 'γαμπεσ', el: 'Γάμπες', en: 'Calves', region: 'lower' },
+  { n: 11, slug: 'προσαγωγοι', el: 'Προσαγωγοί', en: 'Adductors', region: 'lower' },
+  { n: 12, slug: 'κοιλιακοι', el: 'Κοιλιακοί', en: 'Abdominals', region: 'core' },
+  { n: 13, slug: 'ραχιαιοι', el: 'Ραχιαίοι', en: 'Lower back', region: 'core' },
+  { n: 14, slug: 'σταθεροποιηση', el: 'Σταθεροποίηση', en: 'Stability', region: 'core' },
+  { n: 15, slug: 'καρδιοαναπνευστικο', el: 'Καρδιοαναπνευστικό', en: 'Cardio', region: 'cardio' },
+  { n: 16, slug: 'κινητικοτητα', el: 'Κινητικότητα', en: 'Mobility', region: 'mobility' },
+]
+
+const GROUP_BY_SLUG = new Map(MUSCLE_GROUPS.map((row) => [row.slug, row]))
+
+function groupOf(slug: string): MuscleGroupRow {
+  const row = GROUP_BY_SLUG.get(slug)
+  if (!row) throw new Error(`seed references an unknown muscle group: ${slug}`)
+  return row
+}
+
+export function buildMuscleGroups(): MuscleGroup[] {
+  return MUSCLE_GROUPS.map((row) => ({
+    id: muscleGroupId(row.n),
+    // Null gym, like the catalogue: the shared taxonomy every gym reads and none can write.
+    gymId: null,
+    slug: row.slug,
+    nameEl: row.el,
+    nameEn: row.en,
+    region: row.region,
+    position: row.n,
+    createdAt: CATALOGUE_AT,
+    updatedAt: CATALOGUE_AT,
+    deletedAt: null,
+    createdBy: null,
+  }))
+}
+
+/**
+ * The anatomy of the 28 catalogue movements.
+ *
+ * `primary` is the mover the exercise is programmed FOR; `secondary` is everything that
+ * works hard enough to be worth counting but is not the reason the exercise is in the plan.
+ * A bench press is chest primary, triceps and front delts secondary — which is precisely why
+ * this is a link table with a role and not a column on the exercise.
+ *
+ * Every row here mirrors `003_muscle_groups.sql` exactly, link for link and role for role.
+ * The two seeds disagreeing would mean an athlete's chest share changing the day the gym
+ * finally created a Supabase project, with nothing in the app able to explain why.
+ *
+ * Every row has at least one primary. Without that guarantee an exercise falls into the
+ * unclassified bucket in `muscleGroupShare`, and the whole point of the axis is that a
+ * coach can ask "how much chest work" and get an answer that adds up.
+ */
+interface MuscleMapRow {
+  exercise: string
+  primary: readonly string[]
+  secondary?: readonly string[]
+}
+
+const EXERCISE_MUSCLES: readonly MuscleMapRow[] = [
+  { exercise: 'bench', primary: ['στηθοσ'], secondary: ['τρικεφαλοι', 'ωμοι'] },
+  { exercise: 'pulldown', primary: ['πλατη'], secondary: ['δικεφαλοι'] },
+  { exercise: 'squat', primary: ['τετρακεφαλοι'], secondary: ['γλουτοι', 'οπισθιοι', 'ραχιαιοι'] },
+  { exercise: 'rdl', primary: ['οπισθιοι'], secondary: ['γλουτοι', 'ραχιαιοι'] },
+  // An isometric: the abs hold and the whole trunk braces, so both are primary.
+  { exercise: 'plank', primary: ['κοιλιακοι', 'σταθεροποιηση'], secondary: ['ραχιαιοι'] },
+  // The primary is the system actually being trained. Filing a 20-minute jog under quads
+  // would stack it into the same total as a leg press, which is a lie a coach would act on.
+  { exercise: 'treadmill', primary: ['καρδιοαναπνευστικο'], secondary: ['γαμπεσ', 'τετρακεφαλοι'] },
+  { exercise: 'ohp', primary: ['ωμοι'], secondary: ['τρικεφαλοι', 'τραπεζοειδεισ'] },
+  { exercise: 'legpress', primary: ['τετρακεφαλοι'], secondary: ['γλουτοι', 'οπισθιοι'] },
+  { exercise: 'incline', primary: ['στηθοσ'], secondary: ['ωμοι', 'τρικεφαλοι'] },
+  { exercise: 'seatedrow', primary: ['πλατη'], secondary: ['τραπεζοειδεισ', 'δικεφαλοι'] },
+  { exercise: 'pullup', primary: ['πλατη'], secondary: ['δικεφαλοι', 'τραπεζοειδεισ'] },
+  { exercise: 'curl', primary: ['δικεφαλοι'] },
+  { exercise: 'pushdown', primary: ['τρικεφαλοι'] },
+  { exercise: 'lateral', primary: ['ωμοι'], secondary: ['τραπεζοειδεισ'] },
+  // More upright than the back squat: the trunk works harder and the hamstrings less.
+  { exercise: 'frontsquat', primary: ['τετρακεφαλοι'], secondary: ['γλουτοι', 'ραχιαιοι', 'σταθεροποιηση'] },
+  // The one lift whose primary is genuinely the whole posterior chain.
+  { exercise: 'deadlift', primary: ['οπισθιοι', 'γλουτοι', 'ραχιαιοι'], secondary: ['τετρακεφαλοι', 'πλατη', 'τραπεζοειδεισ'] },
+  { exercise: 'legcurl', primary: ['οπισθιοι'], secondary: ['γαμπεσ'] },
+  { exercise: 'legext', primary: ['τετρακεφαλοι'] },
+  { exercise: 'lunge', primary: ['τετρακεφαλοι', 'γλουτοι'], secondary: ['οπισθιοι', 'προσαγωγοι', 'σταθεροποιηση'] },
+  { exercise: 'calf', primary: ['γαμπεσ'] },
+  { exercise: 'legraise', primary: ['κοιλιακοι'], secondary: ['σταθεροποιηση'] },
+  { exercise: 'cablecrunch', primary: ['κοιλιακοι'] },
+  { exercise: 'twist', primary: ['κοιλιακοι'], secondary: ['σταθεροποιηση'] },
+  { exercise: 'rower', primary: ['καρδιοαναπνευστικο'], secondary: ['πλατη', 'τετρακεφαλοι', 'ραχιαιοι'] },
+  { exercise: 'bike', primary: ['καρδιοαναπνευστικο'], secondary: ['τετρακεφαλοι', 'ωμοι'] },
+  { exercise: 'rope', primary: ['καρδιοαναπνευστικο'], secondary: ['γαμπεσ'] },
+  { exercise: 'hip', primary: ['κινητικοτητα'], secondary: ['προσαγωγοι', 'γλουτοι'] },
+  { exercise: 'thoracic', primary: ['κινητικοτητα'], secondary: ['πλατη', 'σταθεροποιηση'] },
+]
+
+export function buildExerciseMuscles(): ExerciseMuscle[] {
+  const links: ExerciseMuscle[] = []
+  const emit = (exercise: CatalogueRow, slug: string, role: MuscleRole): void => {
+    links.push({
+      exerciseId: catalogueId(exercise.n),
+      muscleGroupId: muscleGroupId(groupOf(slug).n),
+      // Null: both ends of this link are shared rows, so the link belongs to no gym either.
+      gymId: null,
+      role,
+      createdAt: CATALOGUE_AT,
+      updatedAt: CATALOGUE_AT,
+      deletedAt: null,
+      createdBy: null,
+    })
+  }
+  for (const row of EXERCISE_MUSCLES) {
+    const exercise = exerciseOf(row.exercise)
+    for (const slug of row.primary) emit(exercise, slug, 'primary')
+    for (const slug of row.secondary ?? []) emit(exercise, slug, 'secondary')
+  }
+  return links
+}
+
+// ---------------------------------------------------------------------------
 // The gym, its coaches and its athletes
 // ---------------------------------------------------------------------------
 
@@ -238,6 +402,8 @@ export interface SeedData {
   memberships: Membership[]
   athletes: Athlete[]
   exercises: Exercise[]
+  muscleGroups: MuscleGroup[]
+  exerciseMuscles: ExerciseMuscle[]
   sessions: Session[]
   blocks: Block[]
   sets: WorkoutSet[]
@@ -775,6 +941,8 @@ export function buildSeed(options: SeedOptions = {}): SeedData {
     memberships: buildMemberships(today),
     athletes: buildAthletes(today),
     exercises: buildExercises(),
+    muscleGroups: buildMuscleGroups(),
+    exerciseMuscles: buildExerciseMuscles(),
     sessions: history.sessions,
     blocks: history.blocks,
     sets: history.sets,

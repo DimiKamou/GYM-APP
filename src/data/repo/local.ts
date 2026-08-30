@@ -19,7 +19,7 @@
 
 import { lastPerformance as lastPerformanceOf } from '@/domain/analytics'
 import { formatSet } from '@/domain/format'
-import { matches } from '@/domain/text'
+import { matches, normalizeText } from '@/domain/text'
 import { newId } from '@/data/ids'
 import { createIdbStorage, type OutboxStorage } from '@/data/outbox'
 import { buildSeed, localDateIn, SEED_IDS, type SeedData } from '@/data/repo/seed'
@@ -33,6 +33,7 @@ import type {
   LocalDate,
   MemberRole,
   Membership,
+  MuscleRole,
   Note,
   Session,
   SessionTree,
@@ -45,8 +46,10 @@ import type {
 // interface takes the gym id a joiner does not have yet.
 import type { InviteRedeemer, RedeemOutcome } from '@/data/hooks/useTeam'
 import type {
+  ExerciseMuscleInput,
   NewAppointmentInput,
   NewExerciseInput,
+  NewMuscleGroupInput,
   NewSessionInput,
   NewSetInput,
   ProgressData,
@@ -55,8 +58,13 @@ import type {
   WriteState,
 } from '@/data/repo/types'
 
-/** Bumped only when the stored shape changes; an older record is discarded and re-seeded. */
-const DB_VERSION = 1
+/**
+ * Bumped only when the stored shape changes; an older record is discarded and re-seeded.
+ * v2 added `muscleGroups` and `exerciseMuscles`: a v1 record has no taxonomy at all, and
+ * migrating it in place would leave the demo's 28 exercises unclassified — the exact failure
+ * the feature exists to remove.
+ */
+const DB_VERSION = 2
 const DB_KEY = 'trainhub:local:v1'
 
 /** The exercise picker's first screen holds eight rows before it needs a scroll. */
@@ -406,7 +414,8 @@ export function createLocalRepo(options: LocalRepoOptions = {}): Repo & InviteRe
 
     getProgressData: (gymId, athleteId) =>
       read((db): ProgressData => {
-        if (!gymOf(db, gymId)) return { sessions: [], sets: [], blocks: [], exercises: [] }
+        if (!gymOf(db, gymId))
+          return { sessions: [], sets: [], blocks: [], exercises: [], muscleGroups: [], exerciseMuscles: [] }
         const sessions = live(db.sessions).filter((s) => s.athleteId === athleteId)
         const sessionIds = new Set(sessions.map((s) => s.id))
         const blocks = live(db.blocks).filter((b) => sessionIds.has(b.sessionId))
@@ -422,6 +431,10 @@ export function createLocalRepo(options: LocalRepoOptions = {}): Repo & InviteRe
           })),
           sets: live(db.sets).filter((s) => blockIds.has(s.blockId)),
           exercises: live(db.exercises),
+          // Shipped with the rest so the Progress screen can draw the muscle axis from the
+          // same payload it already has. `bodyPartShare` ignores both fields entirely.
+          muscleGroups: live(db.muscleGroups).filter((g) => g.gymId === null || g.gymId === gymId),
+          exerciseMuscles: live(db.exerciseMuscles),
         }
       }),
 
@@ -442,6 +455,24 @@ export function createLocalRepo(options: LocalRepoOptions = {}): Repo & InviteRe
           // The shared catalogue (`gymId === null`) plus this gym's own additions.
           .filter((e) => (e.gymId === null || e.gymId === gymId) && e.mergedIntoId === null)
           .sort((a, b) => (a.nameEl ?? a.nameEn ?? '').localeCompare(b.nameEl ?? b.nameEn ?? '', 'el')),
+      ),
+
+    listMuscleGroups: (gymId) =>
+      read((db) =>
+        live(db.muscleGroups)
+          // The shared taxonomy (`gymId === null`) plus this gym's own groups.
+          .filter((g) => g.gymId === null || g.gymId === gymId)
+          // `(position, id)` and never position alone: a gym that adds two groups offline can
+          // mint the same position twice, and the picker must not reshuffle between devices.
+          .sort(byPosition),
+      ),
+
+    listExerciseMuscles: (gymId) =>
+      read((db) =>
+        // Both scopes, exactly as `listMuscleGroups` does: a link between two shared rows
+        // carries no gym at all, and dropping those would leave the whole seeded catalogue
+        // looking unclassified.
+        live(db.exerciseMuscles).filter((m) => m.gymId === null || m.gymId === gymId),
       ),
 
     listRecentExercises: (gymId, athleteId, limit = DEFAULT_RECENT_LIMIT) =>
@@ -679,6 +710,104 @@ export function createLocalRepo(options: LocalRepoOptions = {}): Repo & InviteRe
           defaultRestS: 90,
           mergedIntoId: null,
           isArchived: false,
+          createdAt: at,
+          updatedAt: at,
+          deletedAt: null,
+          createdBy: acting,
+        })
+        // One write, not two. The trainer is mid-session; a second step to classify the
+        // movement is a second chance to never classify it at all.
+        for (const link of input.muscles ?? []) {
+          db.exerciseMuscles.push({
+            exerciseId: input.id,
+            muscleGroupId: link.muscleGroupId,
+            gymId,
+            role: link.role,
+            createdAt: at,
+            updatedAt: at,
+            deletedAt: null,
+            createdBy: acting,
+          })
+        }
+      }),
+
+    setExerciseMuscles: (gymId, exerciseId, links: readonly ExerciseMuscleInput[]) =>
+      write(gymId, (db, at) => {
+        const exercise = live(db.exercises).find((e) => e.id === exerciseId)
+        // The shared catalogue ships classified and no gym may rewrite it — the same refusal
+        // archiveExercise makes, and the same one the RLS policies make on the server.
+        if (!exercise || exercise.gymId !== gymId) return false
+
+        const visible = new Set(
+          live(db.muscleGroups)
+            .filter((g) => g.gymId === null || g.gymId === gymId)
+            .map((g) => g.id),
+        )
+        const wanted = new Map<Uuid, MuscleRole>()
+        for (const link of links) {
+          // A link to a group this gym cannot see would be invisible in the picker and
+          // uncountable in the share — refused whole rather than half-applied.
+          if (!visible.has(link.muscleGroupId)) return false
+          wanted.set(link.muscleGroupId, link.role)
+        }
+
+        for (const row of db.exerciseMuscles.filter((m) => m.exerciseId === exerciseId)) {
+          const role = wanted.get(row.muscleGroupId)
+          if (role === undefined) {
+            // Soft delete, never a splice. A hard delete is invisible to sync and the row
+            // comes back on the next read.
+            if (row.deletedAt === null) {
+              row.deletedAt = at
+              touch(row, at)
+            }
+            continue
+          }
+          // Re-filing a group that was removed earlier is an undelete: the primary key is
+          // `(exercise, group)`, so a second row for the same pairing cannot exist.
+          row.role = role
+          row.deletedAt = null
+          touch(row, at)
+          wanted.delete(row.muscleGroupId)
+        }
+
+        for (const [muscleGroupId, role] of wanted) {
+          db.exerciseMuscles.push({
+            exerciseId,
+            muscleGroupId,
+            gymId,
+            role,
+            createdAt: at,
+            updatedAt: at,
+            deletedAt: null,
+            createdBy: acting,
+          })
+        }
+      }),
+
+    createMuscleGroup: (gymId, input: NewMuscleGroupInput) =>
+      write(gymId, (db, at) => {
+        const nameEl = input.nameEl.trim()
+        if (nameEl === '') return false
+        const slug = normalizeText(input.slug ?? nameEl)
+        if (slug === '') return false
+
+        const visible = live(db.muscleGroups).filter((g) => g.gymId === null || g.gymId === gymId)
+        // Refused against BOTH scopes, although the database's partial unique index only
+        // covers the gym's own: a second "Στήθος" sitting beside the shared one is invisible
+        // to that constraint, unfixable from the picker, and splits an athlete's chest work
+        // across two rows. The caller's right move is to offer the group that already exists.
+        if (visible.some((g) => normalizeText(g.slug) === slug)) return false
+
+        db.muscleGroups.push({
+          id: input.id,
+          // Non-null: the gym's own group, not an edit to the shared taxonomy.
+          gymId,
+          slug,
+          nameEl,
+          nameEn: input.nameEn ?? null,
+          region: input.region,
+          // Appended, so a new group never displaces Στήθος from the top of the picker.
+          position: input.position ?? Math.max(0, ...visible.map((g) => g.position)) + 1,
           createdAt: at,
           updatedAt: at,
           deletedAt: null,
@@ -966,6 +1095,8 @@ export function createLocalRepo(options: LocalRepoOptions = {}): Repo & InviteRe
                 athletes: db.athletes,
                 // The gym's own exercises only: the shared catalogue is not this gym's data.
                 exercises: db.exercises.filter((e) => e.gymId === gymId),
+                muscleGroups: db.muscleGroups.filter((g) => g.gymId === gymId),
+                exerciseMuscles: db.exerciseMuscles.filter((m) => m.gymId === gymId),
                 sessions: db.sessions,
                 blocks: db.blocks,
                 sets: db.sets,

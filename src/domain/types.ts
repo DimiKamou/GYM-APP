@@ -84,6 +84,60 @@ export interface Athlete extends Auditable {
   email: string | null
 }
 
+export type MuscleRole = 'primary' | 'secondary'
+
+/**
+ * A μυϊκή ομάδα — the fine axis the gym owner asked for, sitting alongside
+ * `ExerciseCategory` rather than replacing it.
+ *
+ * `region` is that coarse category, denormalised here so the picker can group the groups
+ * ("Άνω κορμός" → Στήθος, Πλάτη, Ώμοι…) without joining the whole catalogue first. Category
+ * stays the body region on every historical block and keeps driving the pill colours; this is
+ * an additional column of the same sheet, not a rename of it.
+ *
+ * `slug` is the canonical form `normalizeText()` produces — accentless, lowercase, final
+ * sigma folded — because it is matched against what a coach types, exactly like an alias.
+ *
+ * `position` exists so the picker opens on Στήθος rather than on whatever sorts first: in
+ * Greek alphabetical order Τρικέφαλοι lands above Στήθος, which is nobody's mental model.
+ */
+export interface MuscleGroup extends Auditable {
+  id: Uuid
+  /** `null` = the shared taxonomy every gym reads. Non-null = this gym's own addition. */
+  gymId: Uuid | null
+  slug: string
+  /** Greek is required; English is the courtesy, as everywhere else in this schema. */
+  nameEl: string
+  nameEn: string | null
+  region: ExerciseCategory
+  position: number
+}
+
+/**
+ * Which muscles an exercise trains, and how directly.
+ *
+ * Many-to-many with a role rather than a column on `Exercise`, because a bench press is
+ * chest PRIMARY and triceps plus front delts SECONDARY. A single column forces a lie, and
+ * the lie defeats the only question the axis exists to answer: how much chest work has this
+ * athlete actually done.
+ *
+ * No `id`: the primary key is `(exerciseId, muscleGroupId)`, so the same pairing can never
+ * be inserted twice by two offline devices. `gymId` is denormalised as on every other table,
+ * and is `null` for a link between two shared rows.
+ */
+export interface ExerciseMuscle extends Auditable {
+  exerciseId: Uuid
+  muscleGroupId: Uuid
+  gymId: Uuid | null
+  role: MuscleRole
+}
+
+/** One line of `Exercise.muscles`: the group itself, not just its id. */
+export interface ResolvedMuscle {
+  group: MuscleGroup
+  role: MuscleRole
+}
+
 export interface Exercise extends Auditable {
   id: Uuid
   /** `null` = the shared bilingual catalogue. Non-null = this gym's own addition. */
@@ -97,6 +151,12 @@ export interface Exercise extends Auditable {
   /** Fold a duplicate into the canonical row without orphaning historical blocks. */
   mergedIntoId: Uuid | null
   isArchived: boolean
+  /**
+   * Optional and absent by default — `listExercises` returns bare rows and the picker joins
+   * the taxonomy itself. Making it required would break every construction site in the app
+   * and, worse, would make the type claim something the repositories do not actually return.
+   */
+  muscles?: ResolvedMuscle[]
 }
 
 export interface ExerciseAlias {

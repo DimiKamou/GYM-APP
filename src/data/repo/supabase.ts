@@ -26,7 +26,7 @@
 import type { PostgrestError } from '@supabase/supabase-js'
 
 import { lastPerformance as lastPerformanceOf } from '@/domain/analytics'
-import { matches } from '@/domain/text'
+import { matches, normalizeText } from '@/domain/text'
 import { createOutbox, createSupabaseTransport, type Outbox, type OutboxEntity } from '@/data/outbox'
 // Type-only, so nothing at runtime points from the repository back up at the hooks layer.
 // The capability cannot live on `Repo`: every method there takes a gym id that the person
@@ -40,11 +40,13 @@ import type {
   Block,
   Briefing,
   Exercise,
+  ExerciseMuscle,
   Gym,
   Invite,
   LastPerformance,
   MemberRole,
   Membership,
+  MuscleGroup,
   Note,
   Session,
   SessionTree,
@@ -52,8 +54,10 @@ import type {
   WorkoutSet,
 } from '@/domain/types'
 import type {
+  ExerciseMuscleInput,
   NewAppointmentInput,
   NewExerciseInput,
+  NewMuscleGroupInput,
   NewSessionInput,
   NewSetInput,
   ProgressData,
@@ -75,6 +79,8 @@ const GYM_COLS = `id, name, timezone, display_unit, ${AUDIT}`
 const MEMBER_COLS = `id, gym_id, user_id, display_name, email, role, status, ${AUDIT}`
 const ATHLETE_COLS = `id, gym_id, full_name, coach_membership_id, plan_phase, plan_focus, birth_date, phone, email, ${AUDIT}`
 const EXERCISE_COLS = `id, gym_id, name_el, name_en, category, equipment, default_set_kind, default_rest_s, merged_into_id, is_archived, ${AUDIT}`
+const MUSCLE_GROUP_COLS = `id, gym_id, slug, name_el, name_en, region, position, ${AUDIT}`
+const EXERCISE_MUSCLE_COLS = `exercise_id, muscle_group_id, gym_id, role, ${AUDIT}`
 const SESSION_COLS = `id, gym_id, athlete_id, logged_by, credited_to, appointment_id, title, notes, status, started_at, finished_at, local_date, ${AUDIT}`
 const BLOCK_COLS = `id, gym_id, session_id, exercise_id, position, ${AUDIT}`
 const SET_COLS = `id, gym_id, block_id, position, kind, target_kg, target_reps, load_kg, reps, seconds, meters, rpe, note, done_at, ${AUDIT}`
@@ -174,6 +180,29 @@ function toExercise(row: Row): Exercise {
     defaultRestS: num(row.default_rest_s) ?? 90,
     mergedIntoId: strOrNull(row.merged_into_id),
     isArchived: row.is_archived === true,
+    ...audit(row),
+  }
+}
+
+function toMuscleGroup(row: Row): MuscleGroup {
+  return {
+    id: str(row.id),
+    gymId: strOrNull(row.gym_id),
+    slug: str(row.slug),
+    nameEl: str(row.name_el),
+    nameEn: strOrNull(row.name_en),
+    region: row.region as MuscleGroup['region'],
+    position: num(row.position) ?? 0,
+    ...audit(row),
+  }
+}
+
+function toExerciseMuscle(row: Row): ExerciseMuscle {
+  return {
+    exerciseId: str(row.exercise_id),
+    muscleGroupId: str(row.muscle_group_id),
+    gymId: strOrNull(row.gym_id),
+    role: row.role === 'secondary' ? 'secondary' : 'primary',
     ...audit(row),
   }
 }
@@ -315,6 +344,31 @@ export function outboxFor(gymId: Uuid): Outbox {
   return created
 }
 
+/**
+ * The two taxonomy tables, as the outbox names them.
+ *
+ * Asserted rather than declared: `OUTBOX_ENTITIES` in `@/data/outbox` is the client mirror of
+ * `apply_op()`'s table allowlist, and neither that constant nor `apply_op()` is this change's
+ * to edit. Both are still missing the two names, so on a real Supabase project these ops are
+ * rejected with `unknown entity` and dead-letter.
+ *
+ * That is the RIGHT failure while the server side is outstanding — a dead letter is visible in
+ * the sync status and a human can replay it, whereas dropping the write would let a coach
+ * classify an exercise and watch it silently unclassify itself. It is not the finished state.
+ * Two things close it, and until both land the local repository is the only one that files an
+ * exercise into a muscle group for real:
+ *
+ *  1. `OUTBOX_ENTITIES` gains 'muscle_groups' and 'exercise_muscles', which deletes the two
+ *     casts below and nothing else.
+ *  2. `apply_op()` gains a branch for them. `muscle_groups` fits its generic column-upsert
+ *     path; `exercise_muscles` does NOT — it has no `id`, its key is
+ *     `(exercise_id, muscle_group_id)`, and `setExerciseMuscles` sends a whole link set as one
+ *     replace-all op, so it needs a branch that reads `payload -> 'muscles'`, upserts each
+ *     pair and soft-deletes the pairs that are no longer named.
+ */
+const MUSCLE_GROUPS = 'muscle_groups' as OutboxEntity
+const EXERCISE_MUSCLES = 'exercise_muscles' as OutboxEntity
+
 /** Every mutation takes this path. The op is durable before the caller is told anything. */
 async function enqueue(
   gymId: Uuid,
@@ -417,6 +471,30 @@ export function createSupabaseRepo(): Repo & InviteRedeemer {
         .or(`gym_id.is.null,gym_id.eq.${gymId}`)
         .is('deleted_at', null),
       toExercise,
+    )
+  }
+
+  async function taxonomy(gymId: Uuid): Promise<MuscleGroup[]> {
+    // The shared taxonomy (`gym_id is null`) plus this gym's own groups, in one round-trip.
+    return rows(
+      await supabase
+        .from('muscle_groups')
+        .select(MUSCLE_GROUP_COLS)
+        .or(`gym_id.is.null,gym_id.eq.${gymId}`)
+        .is('deleted_at', null),
+      toMuscleGroup,
+    )
+  }
+
+  async function muscleLinks(gymId: Uuid): Promise<ExerciseMuscle[]> {
+    // Same two scopes as `catalogue()`: a link between two shared rows carries no gym at all.
+    return rows(
+      await supabase
+        .from('exercise_muscles')
+        .select(EXERCISE_MUSCLE_COLS)
+        .or(`gym_id.is.null,gym_id.eq.${gymId}`)
+        .is('deleted_at', null),
+      toExerciseMuscle,
     )
   }
 
@@ -553,9 +631,11 @@ export function createSupabaseRepo(): Repo & InviteRedeemer {
     async getProgressData(gymId, athleteId): Promise<ProgressData> {
       const sessions = await liveSessions(gymId, athleteId)
       const blocks = await blocksFor(gymId, sessions.map((s) => s.id))
-      const [sets, exercises] = await Promise.all([
+      const [sets, exercises, muscleGroups, exerciseMuscles] = await Promise.all([
         setsFor(gymId, blocks.map((b) => b.id)),
         catalogue(gymId),
+        taxonomy(gymId),
+        muscleLinks(gymId),
       ])
       return {
         sessions,
@@ -568,6 +648,10 @@ export function createSupabaseRepo(): Repo & InviteRedeemer {
         })),
         sets,
         exercises,
+        // Shipped with the rest so the Progress screen draws the muscle axis from the payload
+        // it already holds. `bodyPartShare` reads neither field.
+        muscleGroups,
+        exerciseMuscles,
       }
     },
 
@@ -604,6 +688,18 @@ export function createSupabaseRepo(): Repo & InviteRedeemer {
       return (await catalogue(gymId))
         .filter((e) => e.mergedIntoId === null)
         .sort((a, b) => (a.nameEl ?? a.nameEn ?? '').localeCompare(b.nameEl ?? b.nameEn ?? '', 'el'))
+    },
+
+    async listMuscleGroups(gymId) {
+      // `(position, id)` and never position alone: two offline inserts can mint the same
+      // position, and an `order('position')` would let two devices draw the picker differently.
+      return (await taxonomy(gymId)).sort(
+        (a, b) => a.position - b.position || (a.id < b.id ? -1 : a.id > b.id ? 1 : 0),
+      )
+    },
+
+    async listExerciseMuscles(gymId) {
+      return muscleLinks(gymId)
     },
 
     async listRecentExercises(gymId, athleteId, limit = DEFAULT_RECENT_LIMIT) {
@@ -828,14 +924,59 @@ export function createSupabaseRepo(): Repo & InviteRedeemer {
 
     archiveAthlete: (gymId, athleteId) => enqueueDelete(gymId, 'athletes', athleteId),
 
-    createExercise(gymId, input: NewExerciseInput) {
-      return enqueue(gymId, 'exercises', input.id, {
+    async createExercise(gymId, input: NewExerciseInput) {
+      const created = await enqueue(gymId, 'exercises', input.id, {
         id: input.id,
         name_el: input.nameEl.trim(),
         name_en: input.nameEn ?? null,
         category: input.category,
         equipment: input.equipment,
         default_set_kind: input.defaultSetKind ?? 'weight_reps',
+      })
+      if (created === 'failed' || input.muscles === undefined) return created
+      // Enqueued second, so the queue's seq order puts the exercise on the server before the
+      // links that reference it — the same parent-before-child rule blocks and sets follow.
+      const filed = await repo.setExerciseMuscles(gymId, input.id, input.muscles)
+      // The exercise reaching the server unclassified is a worse answer than "failed": the
+      // coach would see it in the picker under no muscle group at all and believe it filed.
+      return filed === 'failed' ? 'failed' : created
+    },
+
+    /**
+     * The whole link set for one exercise, as ONE op.
+     *
+     * Not a row per link, for two reasons. `exercise_muscles` has no `id` — its key is
+     * `(exercise_id, muscle_group_id)` — so the outbox, which coalesces on `(kind, entityId)`,
+     * has nothing else to key on. And a replace-all op is the only shape that survives two
+     * coaches reclassifying the same movement offline: the last one to sync wins whole,
+     * rather than the two of them merging into a set neither of them chose.
+     */
+    setExerciseMuscles(gymId, exerciseId, links: readonly ExerciseMuscleInput[]) {
+      return enqueue(gymId, EXERCISE_MUSCLES, exerciseId, {
+        exercise_id: exerciseId,
+        muscles: links.map((link) => ({
+          muscle_group_id: link.muscleGroupId,
+          role: link.role,
+        })),
+        // `gym_id` and `created_by` are NOT sent: the first is derived from the exercise by
+        // the composite FK, the second is stamped from app.my_membership() by a trigger, and
+        // a client-chosen author is an attribution forgery.
+      })
+    },
+
+    createMuscleGroup(gymId, input: NewMuscleGroupInput) {
+      const nameEl = input.nameEl.trim()
+      return enqueue(gymId, MUSCLE_GROUPS, input.id, {
+        id: input.id,
+        // The canonical form `normalizeText()` produces, because the slug is matched against
+        // what a coach types, exactly like an exercise alias.
+        slug: normalizeText(input.slug ?? nameEl),
+        name_el: nameEl,
+        name_en: input.nameEn ?? null,
+        region: input.region,
+        // Null lets the server append it after the gym's existing groups. Guessing a position
+        // from a cache that may be three days stale would collide with a colleague's group.
+        position: input.position ?? null,
       })
     },
 
@@ -986,6 +1127,18 @@ export function createSupabaseRepo(): Repo & InviteRedeemer {
         rows(await supabase.from('athletes').select(ATHLETE_COLS).eq('gym_id', gymId), toAthlete),
         rows(await supabase.from('exercises').select(EXERCISE_COLS).eq('gym_id', gymId), toExercise),
       ])
+      // The gym's own rows only, exactly as with exercises: the shared taxonomy belongs to
+      // every gym and to none, so it is not this owner's data to take away.
+      const [muscleGroups, exerciseMuscles] = await Promise.all([
+        rows(
+          await supabase.from('muscle_groups').select(MUSCLE_GROUP_COLS).eq('gym_id', gymId),
+          toMuscleGroup,
+        ),
+        rows(
+          await supabase.from('exercise_muscles').select(EXERCISE_MUSCLE_COLS).eq('gym_id', gymId),
+          toExerciseMuscle,
+        ),
+      ])
       const sessions = rows(
         await supabase.from('sessions').select(SESSION_COLS).eq('gym_id', gymId),
         toSession,
@@ -1006,6 +1159,8 @@ export function createSupabaseRepo(): Repo & InviteRedeemer {
           memberships: members,
           athletes,
           exercises,
+          muscleGroups,
+          exerciseMuscles,
           sessions,
           blocks,
           sets,

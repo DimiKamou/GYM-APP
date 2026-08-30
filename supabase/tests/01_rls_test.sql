@@ -123,3 +123,87 @@ select 'after transfer: '||display_name||' = '||role from public.memberships
  where gym_id='aaaaaaaa-0000-0000-0000-000000000001' order by display_name;
 select 'active owners in the gym: '||count(*) from public.memberships
  where gym_id='aaaaaaaa-0000-0000-0000-000000000001' and role='owner' and status='active' and deleted_at is null;
+
+-- ===========================================================================
+-- 14-18. Muscle groups (003_muscle_groups.sql)
+--
+-- NOTE ON WHO IS WHO FROM HERE ON: check 13c handed Iron Lab to Maria, so
+-- MARIA IS NOW THE OWNER and DIMITRIS IS NOW THE TRAINER. The trainer-side
+-- checks below therefore act as Dimitris. Getting this backwards would test
+-- the owner path twice and prove nothing about the RESTRICTIVE policy.
+-- ===========================================================================
+
+-- A gym-B exercise to aim a cross-gym attach at. Seeded as the table owner,
+-- like the fixtures at the top of this file — no client could create it.
+reset role;
+insert into public.exercises (id, gym_id, name_el, category, equipment)
+values ('ffffffff-0000-0000-0000-000000000003','bbbbbbbb-0000-0000-0000-000000000002','Ξένη άσκηση','upper','other');
+
+-- ===== Act as Dimitris (trainer, Iron Lab, after the transfer) =====
+set role authenticated;
+set request.jwt.claim.sub = '22222222-2222-2222-2222-222222222222';
+
+\echo '--- 14. A trainer reads the shared taxonomy (must be 16) but cannot write to it ---'
+select 'trainer sees shared muscle groups: '||count(*) from public.muscle_groups where gym_id is null;
+select 'catalogue exercises with no primary muscle group: '||count(*)
+  from public.exercises e
+ where e.gym_id is null and e.deleted_at is null
+   and not exists (select 1 from public.exercise_muscles em
+                    where em.exercise_id = e.id and em.role = 'primary');
+\echo '    (writing a GLOBAL group, gym_id null, must FAIL)'
+insert into public.muscle_groups (id, gym_id, slug, name_el, region)
+values ('ca7a2000-0000-4000-8000-0000000000ff', null, 'ψευτικη', 'Ψεύτικη ομάδα', 'upper');
+\echo '    (renaming a shared group must FAIL — it matches no row, so 0 rows, not an error)'
+update public.muscle_groups set name_el = 'Κλεμμένο' where id = 'ca7a2000-0000-4000-8000-000000000001';
+select 'shared group 1 still reads: '||name_el from public.muscle_groups
+ where id = 'ca7a2000-0000-4000-8000-000000000001';
+
+\echo '--- 15. A trainer adds a group scoped to their own gym (must SUCCEED) ---'
+insert into public.muscle_groups (id, gym_id, slug, name_el, name_en, region, position)
+values ('ca7a2000-0000-4000-8000-0000000000a1','aaaaaaaa-0000-0000-0000-000000000001',
+        '  ΠΕΡΙΣΤΡΟΦΕΙΣ   ΩΜΟΥ  ', 'Περιστροφείς Ώμου', 'Rotator cuff', 'upper', 20);
+select 'gym group created, slug stored as: "'||slug||'"' from public.muscle_groups
+ where id = 'ca7a2000-0000-4000-8000-0000000000a1';
+
+\echo '--- 16. A trainer files their gym exercise under a SHARED group (must SUCCEED) ---'
+-- This is the acceptance test in one row: the exercise from check 5 belongs to
+-- Iron Lab, Στήθος belongs to nobody, and the mapping belongs to Iron Lab.
+insert into public.exercise_muscles (exercise_id, muscle_group_id, role, gym_id)
+values ('ffffffff-0000-0000-0000-000000000002','ca7a2000-0000-4000-8000-000000000001',
+        'primary','aaaaaaaa-0000-0000-0000-000000000001');
+select 'filed "'||e.name_el||'" under '||g.name_el||' ('||em.role||')'
+  from public.exercise_muscles em
+  join public.exercises e     on e.id = em.exercise_id
+  join public.muscle_groups g on g.id = em.muscle_group_id
+ where em.exercise_id = 'ffffffff-0000-0000-0000-000000000002';
+select 'scope stamped by the server: exercise_gym_id='||coalesce(exercise_gym_id::text,'null')
+       ||' muscle_gym_id='||coalesce(muscle_gym_id::text,'null')
+  from public.exercise_muscles where exercise_id = 'ffffffff-0000-0000-0000-000000000002';
+
+\echo '--- 17. Cross-gym attach: Iron Lab files ANOTHER GYM''S exercise (must FAIL) ---'
+-- exercise_muscles_stamp_scope() stamps exercise_gym_id from the parent row, so
+-- the row arrives at the constraints carrying gym B while claiming gym A.
+insert into public.exercise_muscles (exercise_id, muscle_group_id, role, gym_id)
+values ('ffffffff-0000-0000-0000-000000000003','ca7a2000-0000-4000-8000-000000000001',
+        'primary','aaaaaaaa-0000-0000-0000-000000000001');
+\echo '    (and claiming the other gym outright is refused by RLS)'
+insert into public.exercise_muscles (exercise_id, muscle_group_id, role, gym_id)
+values ('ffffffff-0000-0000-0000-000000000003','ca7a2000-0000-4000-8000-000000000001',
+        'primary','bbbbbbbb-0000-0000-0000-000000000002');
+select 'cross-gym mappings that landed: '||count(*) from public.exercise_muscles
+ where exercise_id = 'ffffffff-0000-0000-0000-000000000003';
+
+\echo '--- 18. A trainer archives a gym-own group (must FAIL: RESTRICTIVE owner-only) ---'
+update public.muscle_groups set deleted_at = now()
+ where id = 'ca7a2000-0000-4000-8000-0000000000a1';
+select 'group after the trainer tried to archive it: '
+       ||coalesce(deleted_at::text,'still live') from public.muscle_groups
+ where id = 'ca7a2000-0000-4000-8000-0000000000a1';
+\echo '    (the owner archiving the same group must SUCCEED — otherwise the policy is just broken)'
+set request.jwt.claim.sub = '11111111-1111-1111-1111-111111111111';
+update public.muscle_groups set deleted_at = now()
+ where id = 'ca7a2000-0000-4000-8000-0000000000a1';
+select 'group after the owner archived it: '
+       ||case when deleted_at is null then 'STILL LIVE — policy is broken' else 'archived' end
+  from public.muscle_groups where id = 'ca7a2000-0000-4000-8000-0000000000a1';
+reset role;

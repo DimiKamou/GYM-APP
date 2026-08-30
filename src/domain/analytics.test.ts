@@ -7,6 +7,9 @@ import {
   epley,
   exerciseTrend,
   lastPerformance,
+  muscleGroupShare,
+  muscleGroupVolume,
+  SECONDARY_MUSCLE_WEIGHT,
   sessionAuthorId,
   sessionSets,
   sessionVolume,
@@ -17,7 +20,10 @@ import type {
   Block,
   Exercise,
   ExerciseCategory,
+  ExerciseMuscle,
   Membership,
+  MuscleGroup,
+  MuscleRole,
   Session,
   SetKind,
   Uuid,
@@ -61,6 +67,19 @@ function exercise(id: Uuid, category: ExerciseCategory, defaultSetKind: SetKind 
     mergedIntoId: null,
     isArchived: false,
   }
+}
+
+function group(id: Uuid, position: number, region: ExerciseCategory = 'upper'): MuscleGroup {
+  return { ...audit, id, gymId: null, slug: id, nameEl: id, nameEn: id, region, position }
+}
+
+function link(
+  exerciseId: Uuid,
+  muscleGroupId: Uuid,
+  role: MuscleRole,
+  overrides: Partial<ExerciseMuscle> = {},
+): ExerciseMuscle {
+  return { ...audit, exerciseId, muscleGroupId, gymId: null, role, ...overrides }
 }
 
 function session(id: Uuid, localDate: string, startedAt: string, overrides: Partial<Session> = {}): Session {
@@ -558,5 +577,137 @@ describe('soft-deleted sets never reach a number a coach sees', () => {
 
   it('excludes them from the set count', () => {
     expect(sessionSets([live, dead])).toBe(1)
+  })
+})
+
+// --- the muscle axis --------------------------------------------------------
+
+const CHEST = 'mg-chest'
+const TRICEPS = 'mg-triceps'
+const BENCH = 'ex-bench'
+const MYSTERY = 'ex-mystery'
+
+/**
+ * One session: two sets of bench (chest primary, triceps secondary) and one set of a
+ * movement nobody has classified.
+ */
+function muscleFixture(overrides: Partial<AnalyticsData> = {}): AnalyticsData {
+  return data({
+    sessions: [session('s1', '2026-08-10', '2026-08-10T08:00:00Z')],
+    exercises: [exercise(BENCH, 'upper'), exercise(MYSTERY, 'upper')],
+    blocks: [block('b1', 's1', BENCH, 0), block('b2', 's1', MYSTERY, 1)],
+    sets: [
+      wset('t1', 'b1', 'weight_reps', { loadKg: 100, reps: 10 }),
+      wset('t2', 'b1', 'weight_reps', { loadKg: 100, reps: 10 }),
+      wset('t3', 'b2', 'weight_reps', { loadKg: 50, reps: 10 }),
+    ],
+    muscleGroups: [group(CHEST, 1), group(TRICEPS, 5)],
+    exerciseMuscles: [link(BENCH, CHEST, 'primary'), link(BENCH, TRICEPS, 'secondary')],
+    ...overrides,
+  })
+}
+
+function sliceFor(slices: ReturnType<typeof muscleGroupShare>, id: Uuid | null) {
+  return slices.find((s) => s.muscleGroupId === id)
+}
+
+describe('muscleGroupShare', () => {
+  it('counts a primary link in full and a secondary at the documented half', () => {
+    // Stated rather than derived: if this number ever moves, every chart in the app moves
+    // with it, and a test that recomputed it from the constant would notice nothing.
+    expect(SECONDARY_MUSCLE_WEIGHT).toBe(0.5)
+
+    const slices = muscleGroupShare(muscleFixture(), ATHLETE)
+    expect(sliceFor(slices, CHEST)).toMatchObject({ sets: 2, volume: 2000 })
+    expect(sliceFor(slices, TRICEPS)).toMatchObject({ sets: 1, volume: 1000 })
+  })
+
+  it('keeps the undiluted primary counts alongside the weighted ones', () => {
+    const slices = muscleGroupShare(muscleFixture(), ATHLETE)
+    // Triceps did work, but no exercise here was programmed FOR triceps — and a coach
+    // deciding whether to add pushdowns needs to be able to see that difference.
+    expect(sliceFor(slices, TRICEPS)).toMatchObject({ primarySets: 0, primaryVolume: 0 })
+    expect(sliceFor(slices, CHEST)).toMatchObject({ primarySets: 2, primaryVolume: 2000 })
+  })
+
+  it('buckets unclassified work instead of dropping it', () => {
+    const slices = muscleGroupShare(muscleFixture(), ATHLETE)
+    // The one set of an unfiled movement is the whole point: losing a coach's work silently
+    // is worse than an ugly row at the bottom of the chart.
+    expect(sliceFor(slices, null)).toMatchObject({ sets: 1, volume: 500 })
+    // ...and it is pinned last however big it grows. A bucket is not a muscle.
+    expect(slices[slices.length - 1].muscleGroupId).toBeNull()
+  })
+
+  it('shares add up to the whole', () => {
+    const slices = muscleGroupShare(muscleFixture(), ATHLETE)
+    expect(slices.reduce((total, s) => total + s.share, 0)).toBeCloseTo(1, 10)
+    expect(sliceFor(slices, CHEST)?.share).toBeCloseTo(0.5, 10)
+    expect(sliceFor(slices, TRICEPS)?.share).toBeCloseTo(0.25, 10)
+  })
+
+  it('ignores a soft-deleted link', () => {
+    const slices = muscleGroupShare(
+      muscleFixture({
+        exerciseMuscles: [
+          link(BENCH, CHEST, 'primary'),
+          link(BENCH, TRICEPS, 'secondary', { deletedAt: '2026-08-11T00:00:00Z' }),
+        ],
+      }),
+      ATHLETE,
+    )
+    expect(sliceFor(slices, TRICEPS)).toBeUndefined()
+    // The bench work does not move: it is still filed under chest.
+    expect(sliceFor(slices, CHEST)).toMatchObject({ sets: 2, volume: 2000 })
+  })
+
+  it('falls back to the bucket when every group an exercise points at is gone', () => {
+    const slices = muscleGroupShare(
+      muscleFixture({
+        muscleGroups: [group(CHEST, 1), { ...group(TRICEPS, 5), deletedAt: '2026-08-11T00:00:00Z' }],
+        exerciseMuscles: [link(BENCH, TRICEPS, 'primary')],
+      }),
+      ATHLETE,
+    )
+    // Bench + the unclassified movement: three sets, none of them lost.
+    expect(sliceFor(slices, null)).toMatchObject({ sets: 3, volume: 2500 })
+    expect(sliceFor(slices, TRICEPS)).toBeUndefined()
+  })
+
+  it('returns nothing rather than guessing when no taxonomy was passed', () => {
+    const bare = data({
+      sessions: [session('s1', '2026-08-10', '2026-08-10T08:00:00Z')],
+      exercises: [exercise(BENCH, 'upper')],
+      blocks: [block('b1', 's1', BENCH)],
+      sets: [wset('t1', 'b1', 'weight_reps', { loadKg: 100, reps: 10 })],
+    })
+    // Everything lands in the bucket: without links there is nothing to file it under, and
+    // inventing a group from the coarse category would be a number nobody wrote down.
+    expect(muscleGroupShare(bare, ATHLETE)).toEqual([
+      { muscleGroupId: null, sets: 1, volume: 1000, primarySets: 0, primaryVolume: 0, share: 1 },
+    ])
+  })
+
+  it('leaves bodyPartShare alone — this is an extra axis, not a replacement', () => {
+    const d = muscleFixture()
+    expect(bodyPartShare(d, ATHLETE)).toEqual([{ category: 'upper', sets: 3, volume: 2500 }])
+  })
+})
+
+describe('muscleGroupVolume', () => {
+  it('answers the same question for one session', () => {
+    const slices = muscleGroupVolume(muscleFixture(), 's1')
+    expect(sliceFor(slices, CHEST)).toMatchObject({ sets: 2, volume: 2000 })
+    expect(sliceFor(slices, null)).toMatchObject({ sets: 1 })
+  })
+
+  it('is empty for a session that is not there, or has been deleted', () => {
+    expect(muscleGroupVolume(muscleFixture(), 'nope')).toEqual([])
+    const removed = muscleFixture({
+      sessions: [
+        session('s1', '2026-08-10', '2026-08-10T08:00:00Z', { deletedAt: '2026-08-11T00:00:00Z' }),
+      ],
+    })
+    expect(muscleGroupVolume(removed, 's1')).toEqual([])
   })
 })

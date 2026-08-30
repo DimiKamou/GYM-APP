@@ -14,9 +14,11 @@ import type {
   Block,
   Exercise,
   ExerciseCategory,
+  ExerciseMuscle,
   LastPerformance,
   LocalDate,
   Membership,
+  MuscleGroup,
   Session,
   SessionTree,
   SetKind,
@@ -35,6 +37,13 @@ export interface AnalyticsData {
   sets: readonly WorkoutSet[]
   exercises: readonly Exercise[]
   memberships?: readonly Membership[]
+  /**
+   * The muscle axis. Optional, and absent for every caller that only wants volume or a
+   * body-part share: `muscleGroupShare` is the only thing that reads it, and requiring it
+   * would force nine screens to load a taxonomy they never draw.
+   */
+  muscleGroups?: readonly MuscleGroup[]
+  exerciseMuscles?: readonly ExerciseMuscle[]
 }
 
 export interface ExerciseUsage {
@@ -79,6 +88,30 @@ export interface BodyPartTrend {
   points: BodyPartPoint[]
 }
 
+/**
+ * One muscle group's slice of the work.
+ *
+ * `muscleGroupId` is `null` for the unclassified bucket — the exercises nobody has filed
+ * yet. It is rendered as "Αταξινόμητα" (the label lives in `src/i18n/`, never here) and it
+ * is deliberately a bucket rather than a filter: an athlete's twelve sets of a movement the
+ * gym invented last week must show up SOMEWHERE, because silently losing a coach's work is
+ * worse than an ugly row at the bottom of the chart.
+ */
+export interface MuscleGroupSlice {
+  muscleGroupId: Uuid | null
+  /**
+   * Effective sets — fractional by construction, because a set of bench press is one set of
+   * chest and half a set of triceps. Format it, never assume it is an integer.
+   */
+  sets: number
+  volume: number
+  /** The undiluted half: work where this group was the mover the exercise is programmed for. */
+  primarySets: number
+  primaryVolume: number
+  /** This slice's share of the athlete's (or session's) total effective sets, 0–1. */
+  share: number
+}
+
 // ---------------------------------------------------------------------------
 // Row predicates
 // ---------------------------------------------------------------------------
@@ -119,6 +152,10 @@ interface Index {
   setsByBlock: Map<Uuid, WorkoutSet[]>
   categoryByExercise: Map<Uuid, ExerciseCategory>
   nameByMembership: Map<Uuid, string>
+  /** Live links only, and only to groups that still exist. Empty for an unclassified exercise. */
+  musclesByExercise: Map<Uuid, ExerciseMuscle[]>
+  /** Display order, so two groups with equal work still sort the way the picker shows them. */
+  positionByGroup: Map<Uuid, number>
 }
 
 function byPosition(a: { position: number; id: Uuid }, b: { position: number; id: Uuid }): number {
@@ -151,7 +188,28 @@ function buildIndex(data: AnalyticsData): Index {
   for (const exercise of data.exercises) categoryByExercise.set(exercise.id, exercise.category)
   for (const member of data.memberships ?? []) nameByMembership.set(member.id, member.displayName)
 
-  return { blocksBySession, setsByBlock, categoryByExercise, nameByMembership }
+  const musclesByExercise = new Map<Uuid, ExerciseMuscle[]>()
+  const positionByGroup = new Map<Uuid, number>()
+  for (const group of data.muscleGroups ?? []) {
+    if (isLive(group)) positionByGroup.set(group.id, group.position)
+  }
+  for (const link of data.exerciseMuscles ?? []) {
+    // A link to a group that has been soft-deleted is not a classification any more. The work
+    // is not dropped — the exercise simply falls through to the unclassified bucket, which is
+    // the honest answer and the one a coach can act on.
+    if (isLive(link) && positionByGroup.has(link.muscleGroupId)) {
+      push(musclesByExercise, link.exerciseId, link)
+    }
+  }
+
+  return {
+    blocksBySession,
+    setsByBlock,
+    categoryByExercise,
+    nameByMembership,
+    musclesByExercise,
+    positionByGroup,
+  }
 }
 
 function setsOfBlock(index: Index, blockId: Uuid): WorkoutSet[] {
@@ -371,6 +429,169 @@ export function bodyPartShare(data: AnalyticsData, athleteId: Uuid): BodyPartSli
   return Array.from(tally, ([category, entry]) => ({ category, ...entry }))
     .filter((slice) => slice.sets > 0)
     .sort((a, b) => b.sets - a.sets || (a.category < b.category ? -1 : 1))
+}
+
+// ---------------------------------------------------------------------------
+// The muscle axis
+// ---------------------------------------------------------------------------
+
+/**
+ * What one SECONDARY link is worth against a PRIMARY one.
+ *
+ * 0.5, and the number is a convention rather than a measurement — which is exactly why it is
+ * written down here instead of being buried in an expression. Nothing in a logbook measures
+ * how hard the triceps worked during a bench press: that would need EMG, and the app has
+ * reps and kilos. So the choice is between three options, and only one of them is defensible:
+ *
+ *  - Count a secondary as a full set. Then a push day of bench, incline and overhead press
+ *    reports more triceps work than a session of nothing but pushdowns, and the chart tells
+ *    a coach to stop training triceps directly. That is actively wrong.
+ *  - Count it as zero. Then the arms of an athlete who only ever presses look untrained,
+ *    and the coach adds curls and pushdowns on top of a week that is already at its limit.
+ *  - Count it as a half. Wrong by some unknown amount in both directions, but wrong in a way
+ *    that is stated, symmetric and stable — and it matches the "indirect work counts half"
+ *    convention that hypertrophy volume-landmark literature has used for years, so a coach
+ *    who has read anything about weekly set counts already holds this model in their head.
+ *
+ * Do not tune this number to make a chart look better. If it ever changes it changes here,
+ * once, and every historical chart in the app changes with it — which is the point.
+ */
+export const SECONDARY_MUSCLE_WEIGHT = 0.5
+
+interface MuscleTally {
+  sets: number
+  volume: number
+  primarySets: number
+  primaryVolume: number
+}
+
+function tallyOf(map: Map<Uuid | null, MuscleTally>, key: Uuid | null): MuscleTally {
+  const existing = map.get(key)
+  if (existing) return existing
+  const created: MuscleTally = { sets: 0, volume: 0, primarySets: 0, primaryVolume: 0 }
+  map.set(key, created)
+  return created
+}
+
+/**
+ * Adds one block's performed work to the tally, spread across the muscles its exercise trains.
+ *
+ * An exercise with no usable link lands whole in the `null` bucket at full weight. It is not
+ * split, not scaled and not skipped: the sets happened, and the only thing the app does not
+ * know is where to file them.
+ */
+function addBlock(
+  index: Index,
+  tally: Map<Uuid | null, MuscleTally>,
+  exerciseId: Uuid,
+  sets: number,
+  volume: number,
+): void {
+  const links = index.musclesByExercise.get(exerciseId) ?? []
+  if (links.length === 0) {
+    const bucket = tallyOf(tally, null)
+    bucket.sets += sets
+    bucket.volume += volume
+    return
+  }
+  for (const link of links) {
+    const primary = link.role === 'primary'
+    const weight = primary ? 1 : SECONDARY_MUSCLE_WEIGHT
+    const entry = tallyOf(tally, link.muscleGroupId)
+    entry.sets += sets * weight
+    entry.volume += volume * weight
+    if (primary) {
+      entry.primarySets += sets
+      entry.primaryVolume += volume
+    }
+  }
+}
+
+/**
+ * The tally as sorted slices.
+ *
+ * Biggest first, because the question is "what is this athlete actually training"; ties break
+ * on the taxonomy's display order so the chart never reshuffles between two equal groups. The
+ * unclassified bucket is pinned last whatever its size — it is a bucket, not a muscle, and a
+ * coach reading the top of the list should see anatomy there.
+ */
+function toSlices(index: Index, tally: Map<Uuid | null, MuscleTally>): MuscleGroupSlice[] {
+  let total = 0
+  for (const entry of tally.values()) total += entry.sets
+
+  return Array.from(tally, ([muscleGroupId, entry]) => ({
+    muscleGroupId,
+    ...entry,
+    share: total > 0 ? entry.sets / total : 0,
+  }))
+    .filter((slice) => slice.sets > 0)
+    .sort((a, b) => {
+      if ((a.muscleGroupId === null) !== (b.muscleGroupId === null)) {
+        return a.muscleGroupId === null ? 1 : -1
+      }
+      if (b.sets !== a.sets) return b.sets - a.sets
+      const pa = a.muscleGroupId ? (index.positionByGroup.get(a.muscleGroupId) ?? 0) : 0
+      const pb = b.muscleGroupId ? (index.positionByGroup.get(b.muscleGroupId) ?? 0) : 0
+      if (pa !== pb) return pa - pb
+      return (a.muscleGroupId ?? '') < (b.muscleGroupId ?? '') ? -1 : 1
+    })
+}
+
+/**
+ * How this athlete's whole history is distributed across muscle groups.
+ *
+ * The finer sibling of `bodyPartShare`, which is untouched and stays the coarse body-region
+ * view: category drives the pill colours and sits on every historical block, and this is an
+ * additional axis rather than a replacement for it. Both can be on screen at once and they
+ * are allowed to disagree — "upper" and "Στήθος" are answers to different questions.
+ */
+export function muscleGroupShare(data: AnalyticsData, athleteId: Uuid): MuscleGroupSlice[] {
+  const index = buildIndex(data)
+  const tally = new Map<Uuid | null, MuscleTally>()
+
+  for (const session of athleteSessionsAsc(data.sessions, athleteId)) {
+    for (const block of blocksOfSession(index, session.id)) {
+      const performed = setsOfBlock(index, block.id)
+      if (performed.length === 0) continue
+      addBlock(
+        index,
+        tally,
+        block.exerciseId,
+        performed.length,
+        performed.reduce((sum, set) => sum + setVolume(set), 0),
+      )
+    }
+  }
+
+  return toSlices(index, tally)
+}
+
+/**
+ * The same distribution for one session — what the muscle groups of today's work look like.
+ *
+ * Scoped by session rather than by athlete because that is the question the Log screen asks
+ * while a coach is still standing next to the rack: "have we done any back today". The
+ * athlete's whole history is `muscleGroupShare`.
+ */
+export function muscleGroupVolume(data: AnalyticsData, sessionId: Uuid): MuscleGroupSlice[] {
+  const index = buildIndex(data)
+  const tally = new Map<Uuid | null, MuscleTally>()
+  const session = data.sessions.find((s) => s.id === sessionId)
+  if (!session || !isLive(session)) return []
+
+  for (const block of blocksOfSession(index, sessionId)) {
+    const performed = setsOfBlock(index, block.id)
+    if (performed.length === 0) continue
+    addBlock(
+      index,
+      tally,
+      block.exerciseId,
+      performed.length,
+      performed.reduce((sum, set) => sum + setVolume(set), 0),
+    )
+  }
+
+  return toSlices(index, tally)
 }
 
 /** Volume and set count over time for one body part, oldest first. */

@@ -22,12 +22,15 @@ import type {
   Briefing,
   Exercise,
   ExerciseCategory,
+  ExerciseMuscle,
   Gym,
   Invite,
   LastPerformance,
   LocalDate,
   Membership,
   MemberRole,
+  MuscleGroup,
+  MuscleRole,
   Note,
   Session,
   SessionTree,
@@ -49,6 +52,13 @@ export interface ProgressData {
   sets: WorkoutSet[]
   blocks: Array<{ id: Uuid; sessionId: Uuid; exerciseId: Uuid; position: number; deletedAt: string | null }>
   exercises: Exercise[]
+  /**
+   * The muscle axis, optional so a repository that predates it still satisfies the type and
+   * `bodyPartShare` keeps working untouched. Both are needed together: `muscleGroupShare`
+   * cannot name a group without the rows, and cannot attribute a set without the links.
+   */
+  muscleGroups?: MuscleGroup[]
+  exerciseMuscles?: ExerciseMuscle[]
 }
 
 export interface NewSessionInput {
@@ -71,6 +81,12 @@ export interface NewSetInput {
   rpe?: number | null
 }
 
+/** One row of `exercise_muscles`, as a caller states it. */
+export interface ExerciseMuscleInput {
+  muscleGroupId: Uuid
+  role: MuscleRole
+}
+
 export interface NewExerciseInput {
   id: Uuid
   /** Greek is required; English is the courtesy. The prototype had this the other way round. */
@@ -79,6 +95,24 @@ export interface NewExerciseInput {
   category: ExerciseCategory
   equipment: Exercise['equipment']
   defaultSetKind?: SetKind
+  /**
+   * Files the new exercise into its muscle groups in the same call. The trainer is standing
+   * in a live session when they add "Πιέσεις Στήθους σε μηχάνημα"; a second round-trip to
+   * classify it is a second chance to leave it unclassified forever.
+   */
+  muscles?: readonly ExerciseMuscleInput[]
+}
+
+export interface NewMuscleGroupInput {
+  id: Uuid
+  nameEl: string
+  nameEn?: string | null
+  /** The coarse body region, so the new group sorts into the same sections as the shared ones. */
+  region: ExerciseCategory
+  /** Defaults to the folded form of `nameEl` — the shape `normalizeText()` produces. */
+  slug?: string
+  /** Defaults to after this gym's existing groups, so a new group never displaces Στήθος. */
+  position?: number
 }
 
 export interface NewAppointmentInput {
@@ -118,6 +152,18 @@ export interface Repo {
   getSessionTree(gymId: Uuid, sessionId: Uuid): Promise<SessionTree | null>
 
   listExercises(gymId: Uuid): Promise<Exercise[]>
+  /** The shared taxonomy plus this gym's own groups, in display order — never alphabetical. */
+  listMuscleGroups(gymId: Uuid): Promise<MuscleGroup[]>
+  /**
+   * Every exercise↔muscle link this gym can see: the shared catalogue's own classification
+   * plus anything the gym has filed itself.
+   *
+   * Optional, and probed for rather than required, in the same shape as `unarchiveExercise`.
+   * A repository that cannot answer leaves the picker grouping everything under "χωρίς μυϊκή
+   * ομάδα", which is a degraded sheet rather than a broken one — and `Exercise.muscles` stays
+   * absent by default precisely so no screen mistakes "not loaded" for "not classified".
+   */
+  listExerciseMuscles?(gymId: Uuid): Promise<ExerciseMuscle[]>
   /**
    * The picker's first screen. Personal training is repetitive, so the eight exercises this
    * athlete did most recently beat any search box. Falls back to the gym's most-logged when
@@ -155,6 +201,16 @@ export interface Repo {
   archiveAthlete(gymId: Uuid, athleteId: Uuid): Promise<WriteState>
 
   createExercise(gymId: Uuid, input: NewExerciseInput): Promise<WriteState>
+  /**
+   * Replaces an exercise's whole link set — the smallest write that cannot leave a
+   * half-applied classification behind, and the only shape that coalesces correctly when two
+   * coaches reclassify the same movement offline.
+   *
+   * Only a gym's own exercises can be refiled. The shared catalogue ships classified and no
+   * gym may write it, exactly as `archiveExercise` refuses a `gymId === null` row.
+   */
+  setExerciseMuscles(gymId: Uuid, exerciseId: Uuid, links: readonly ExerciseMuscleInput[]): Promise<WriteState>
+  createMuscleGroup(gymId: Uuid, input: NewMuscleGroupInput): Promise<WriteState>
   archiveExercise(gymId: Uuid, exerciseId: Uuid): Promise<WriteState>
   /**
    * The undo half of archiveExercise. Optional on the interface because the hook probes for it,

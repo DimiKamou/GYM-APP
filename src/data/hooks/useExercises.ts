@@ -19,8 +19,15 @@ import {
 import { useGymId } from '@/auth/useAuth'
 import { keys } from '@/data/keys'
 import { useRepo } from '@/data/repo/useRepo'
-import type { NewExerciseInput, RecentExercise, Repo, WriteState } from '@/data/repo/types'
-import type { Exercise, Uuid } from '@/domain/types'
+import type {
+  ExerciseMuscleInput,
+  NewExerciseInput,
+  NewMuscleGroupInput,
+  RecentExercise,
+  Repo,
+  WriteState,
+} from '@/data/repo/types'
+import type { Exercise, MuscleGroup, Uuid } from '@/domain/types'
 
 const NONE = 'none'
 
@@ -51,6 +58,25 @@ export function useRecentExercises(
 }
 
 /**
+ * The muscle-group taxonomy: the shared sixteen plus whatever this gym has added.
+ *
+ * Keyed under the exercise subtree rather than beside it, so `invalidateCatalogue` — which
+ * already invalidates that whole subtree — picks the taxonomy up too. A picker that groups by
+ * muscle group and a list of groups that disagree about which groups exist is the one state
+ * this screen must never be in.
+ */
+export function useMuscleGroups(): UseQueryResult<MuscleGroup[]> {
+  const gymId = useGymId()
+  const repo = useRepo()
+  return useQuery({
+    queryKey: [...keys.exercises(gymId), 'muscle-groups'],
+    queryFn: () => repo.listMuscleGroups(gymId),
+    // A gym adds a muscle group about as often as it adds a mirror.
+    staleTime: 10 * 60_000,
+  })
+}
+
+/**
  * Everything an archived — or un-archived — exercise is cached under.
  *
  * The catalogue key is the obvious half. The other half is the picker's "recently, for this
@@ -73,6 +99,51 @@ export function useCreateExercise(): UseMutationResult<WriteState, Error, NewExe
   return useMutation({
     mutationFn: (input: NewExerciseInput) => repo.createExercise(gymId, input),
     onSuccess: () => invalidateCatalogue(client, gymId),
+  })
+}
+
+export function useCreateMuscleGroup(): UseMutationResult<WriteState, Error, NewMuscleGroupInput> {
+  const gymId = useGymId()
+  const repo = useRepo()
+  const client = useQueryClient()
+  return useMutation({
+    mutationFn: (input: NewMuscleGroupInput) => repo.createMuscleGroup(gymId, input),
+    onSuccess: () => invalidateCatalogue(client, gymId),
+  })
+}
+
+export interface SetExerciseMusclesInput {
+  exerciseId: Uuid
+  /** The complete set. This write replaces what was there; it does not add to it. */
+  links: readonly ExerciseMuscleInput[]
+}
+
+/**
+ * Refiles one exercise, and invalidates the athletes' progress with it.
+ *
+ * The catalogue is the obvious half. The other half is every muscle-group chart already
+ * drawn: `muscleGroupShare` reads the links, so an exercise that moves from Ώμοι to Στήθος
+ * changes every share that ever counted it — and a chart still showing the old split is a
+ * coach reading a number that no longer exists anywhere in the database.
+ */
+export function useSetExerciseMuscles(): UseMutationResult<
+  WriteState,
+  Error,
+  SetExerciseMusclesInput
+> {
+  const gymId = useGymId()
+  const repo = useRepo()
+  const client = useQueryClient()
+  return useMutation({
+    mutationFn: ({ exerciseId, links }: SetExerciseMusclesInput) =>
+      repo.setExerciseMuscles(gymId, exerciseId, links),
+    onSuccess: () => {
+      invalidateCatalogue(client, gymId)
+      void client.invalidateQueries({
+        queryKey: keys.athletes(gymId),
+        predicate: (query) => query.queryKey.includes('progress'),
+      })
+    },
   })
 }
 

@@ -69,15 +69,27 @@ supabase db push
 
 ### From the dashboard
 
-SQL Editor → paste `001_init.sql` → Run → paste `002_seed_catalogue.sql` → Run.
-**In that order.** `002` inserts into tables `001` creates.
+SQL Editor → paste `001_init.sql` → Run → paste `002_seed_catalogue.sql` → Run →
+paste `003_muscle_groups.sql` → Run.
+**In that order.** `002` inserts into tables `001` creates, and `003` maps the
+28 exercises `002` seeds onto the muscle groups it creates.
 
 ### Verify
 
 ```sql
 select count(*) from public.exercises where gym_id is null;        -- 28
 select count(*) from public.exercise_aliases where gym_id is null; -- 108
-select count(*) from pg_policies where schemaname = 'public';      -- 37
+select count(*) from public.muscle_groups where gym_id is null;    -- 16
+select count(*) from public.exercise_muscles;                      -- 76
+select count(*) from pg_policies where schemaname = 'public';      -- 44
+
+-- Nothing in the shared catalogue may be unfindable in the picker: an exercise
+-- with no primary muscle group falls out of every group heading.
+select count(*) from public.exercises e
+ where e.gym_id is null and e.deleted_at is null
+   and not exists (select 1 from public.exercise_muscles em
+                    where em.exercise_id = e.id and em.role = 'primary');
+                                                                   -- 0
 select relname from pg_class c join pg_namespace n on n.oid = c.relnamespace
  where n.nspname = 'public' and c.relkind = 'r' and not c.relrowsecurity;
                                                                    -- must be empty
@@ -87,8 +99,8 @@ That last query is the one worth keeping. A table without RLS in a Supabase
 project is world-readable to anyone holding the anon key, which is compiled
 into the JavaScript bundle and therefore public by construction.
 
-`002` is idempotent — re-running it refreshes the catalogue in place. `001` is
-not, and is not meant to be; it runs once.
+`002` and `003` are idempotent — re-running either refreshes its seed in place.
+`001` is not, and is not meant to be; it runs once.
 
 ### After the migrations
 
@@ -276,6 +288,9 @@ would guess.
 | trainers may not delete athletes | an **`AS RESTRICTIVE`** UPDATE policy |
 | nobody may hard-delete anything | no DELETE policy on any table, plus `revoke delete` |
 | the global exercise catalogue is read-only | SELECT allows `gym_id is null`, INSERT/UPDATE demand `gym_id = app.my_gym()` |
+| the shared muscle-group taxonomy is read-only | the same asymmetry on `muscle_groups` |
+| trainers may not archive a muscle group | an **`AS RESTRICTIVE`** UPDATE policy on `muscle_groups` |
+| a gym cannot file another gym's exercise under a group | `exercise_muscles_stamp_scope()` stamps the parents' gyms, then a CHECK compares them |
 | a note's body cannot be rewritten | a column-level `GRANT UPDATE (pinned, dismissed_at, dismissed_by)` |
 | the audit trail cannot be forged | `revoke insert on session_events`; only the SECURITY DEFINER trigger writes it |
 | a device with a wrong clock cannot win every merge | `touch_updated_at()` clamps timestamps >2 min in the future |
@@ -297,7 +312,78 @@ is a default for the UI and a reporting dimension, nothing more.
 
 ---
 
-## 8. Running the schema locally
+## 8. Muscle groups (`003_muscle_groups.sql`)
+
+The gym owner's request was "κατηγοριοποιημένες όταν πάω να κάνω προσθήκη
+άσκησης στο session" — the picker inside a live workout, grouped by μυϊκή
+ομάδα, with a trainer able to file a new exercise into a group without leaving
+the log. Two tables carry that.
+
+### `muscle_groups`
+
+| column | notes |
+| --- | --- |
+| `gym_id` | `NULL` = the shared taxonomy every gym reads and no client writes. Non-null = this gym's own group. |
+| `slug` | The canonical comparison form `normalizeText()` produces — lowercase, accentless, **final sigma folded**. `Στήθος` is stored as `στηθοσ`. |
+| `name_el` / `name_en` | Greek is `NOT NULL`; English is the fallback. |
+| `region` | The existing `public.exercise_category` enum. |
+| `position` | Display order, so Στήθος does not sort after Τρικέφαλοι. |
+
+The sixteen shared groups, in display order: Στήθος, Πλάτη, Ώμοι, Δικέφαλοι,
+Τρικέφαλοι, Τραπεζοειδείς, Τετρακέφαλοι, Οπίσθιοι Μηριαίοι, Γλουτοί, Γάμπες,
+Προσαγωγοί, Κοιλιακοί, Ραχιαίοι, Σταθεροποίηση, Καρδιοαναπνευστικό,
+Κινητικότητα.
+
+### `exercise_muscles`
+
+`(exercise_id, muscle_group_id)` with `role in ('primary','secondary')`, keyed
+on the pair. A bench press is chest **primary** and triceps plus front delts
+**secondary**; a single column on `exercises` would force that row to lie, and
+"how much chest work has this athlete done" is exactly the question the grouping
+exists to answer — it needs the role, or every accessory movement counts as
+chest work.
+
+`exercises.category` is untouched and stays. It is the coarse body region, it is
+on every historical block, and `bodyPartShare()` is built on it. Muscle groups
+are an additional, finer axis, and `muscle_groups.region` maps each group back
+onto the same enum so the two can never disagree about which half of the body a
+group belongs to.
+
+### How a gym adds its own group
+
+Any active member may do it; only the owner may archive one.
+
+`app` is not an exposed schema, so from the client send the gym id literally;
+`app.my_gym()` below is the SQL-editor shorthand for the same value.
+
+```sql
+-- as any active trainer
+insert into public.muscle_groups (gym_id, slug, name_el, name_en, region, position)
+values (app.my_gym(), 'περιστροφεισ ωμου', 'Περιστροφείς Ώμου', 'Rotator cuff', 'upper', 20);
+
+-- then file an exercise into it. gym_id is the MAPPING's tenancy; the two
+-- scope columns are stamped by the server, never sent by the client.
+insert into public.exercise_muscles (exercise_id, muscle_group_id, role, gym_id)
+values ('<an exercise>', '<the group>', 'primary', app.my_gym());
+```
+
+The group may be a shared one and the exercise a gym-owned one — that is the
+headline case, a trainer filing "Πιέσεις με λάστιχο" under Στήθος. What is
+refused is pointing at *another gym's* row: `exercise_muscles_stamp_scope()`
+looks the parents up as `SECURITY DEFINER` and writes `exercise_gym_id` /
+`muscle_gym_id` from them, so a client cannot claim a parent it does not own,
+and `exercise_muscles_exercise_scope` then rejects the row. The composite FKs
+`(exercise_gym_id, exercise_id)` and `(muscle_gym_id, muscle_group_id)` sit
+behind that and stop a parent from ever being re-parented out from under a
+mapping.
+
+Archiving is `deleted_at`, owner-only, and enforced by an **`AS RESTRICTIVE`**
+policy — as a plain second permissive policy it would be OR'd with
+`muscle_groups_update` and silently do nothing.
+
+---
+
+## 9. Running the schema locally
 
 You do not need a Supabase project to test the schema. Any Postgres 15+ works
 once you stub the two things Supabase supplies:
@@ -336,7 +422,7 @@ succeeds when it should not — so testing the *denials* is the only way to know
 
 ---
 
-## 9. Things that will bite you
+## 10. Things that will bite you
 
 - **An UPDATE filtered out by RLS raises nothing.** It matches zero rows and
   reports success. `apply_op()` turns that into a rejection on purpose; client
@@ -359,6 +445,17 @@ succeeds when it should not — so testing the *denials* is the only way to know
   DEFINER for convenience. As INVOKER, the offline flush and a live edit go
   through the identical policies, so there is exactly one answer to "may this
   coach write this row" instead of two that drift.
+- **Two shared groups have no primary exercise.** Nothing in the 28-exercise
+  catalogue is traps-primary or adductors-primary, so a picker that groups by
+  `role = 'primary'` alone renders Τραπεζοειδείς and Προσαγωγοί empty. Render
+  the secondary members under the heading too (after the primaries), or those
+  two groups look broken.
+- **`exercise_muscles` is keyed on the pair, not per gym.** Two gyms cannot each
+  file the same shared exercise under the same shared group with different
+  roles — the second one hits a primary-key violation on a row it cannot see.
+  It does not arise for a gym's own exercises, which is where gym-added mappings
+  actually live, but a client writing mappings onto *shared* exercises must
+  treat `23505` as "already filed" rather than surfacing it.
 - **Do not enable `FORCE ROW LEVEL SECURITY` on `memberships`.** Forcing RLS on
   the table owner re-arms the policy recursion that `app.my_gym()` exists to
   break, and every query in the app starts failing with "infinite recursion
