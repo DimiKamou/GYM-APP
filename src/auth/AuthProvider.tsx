@@ -3,6 +3,8 @@ import type { Session, User } from '@supabase/supabase-js'
 
 import { clearPersistedCache } from '@/data/queryClient'
 import { clearOutboxStorage } from '@/data/outbox'
+import { isLocalRepo } from '@/data/repo/index'
+import { demoIdentity } from '@/data/repo/seed'
 import { isSupabaseConfigured, missingSupabaseEnv, supabase } from '@/data/supabase'
 import type { Gym, Membership, Uuid } from '@/domain/types'
 
@@ -13,6 +15,14 @@ import type { Gym, Membership, Uuid } from '@/domain/types'
  * Safari, so the installed app is still signed out afterwards. That is the literal "it logged
  * me out again" complaint this product exists to stop hearing. OTP stays inside the app, needs
  * no password anyone can forget, and doubles as the lockout recovery path for every trainer.
+ *
+ * When there is no Supabase project — or `VITE_OFFLINE_FIXTURE=1` forces the local repo —
+ * there is no sign-in at all. The app resolves immediately to the demo gym's owner and
+ * `isDemo` is true, so Settings can say so in one plain sentence. That is not a fake session:
+ * no Supabase session object is invented, `signInWithOtp` refuses, and the real OTP path below
+ * is untouched and takes over the moment the env vars appear. An app that cannot be opened
+ * cannot be judged, and a trainer deciding whether this beats their clipboard has to be able
+ * to hold it before anyone has created a project.
  *
  * Four states are not errors and must not be rendered as one:
  *   - `unconfigured` — no Supabase project yet. The UI has to boot and say so.
@@ -39,6 +49,8 @@ export interface AuthContextValue {
   missingEnv: readonly string[]
   /** Set when the membership came from the local record because the network was gone. */
   resolvedOffline: boolean
+  /** No server, no sign-in: this is the seeded demo gym. The Settings screen says so. */
+  isDemo: boolean
   error: string | null
   signInWithOtp: (email: string) => Promise<void>
   verifyOtp: (email: string, token: string) => Promise<void>
@@ -234,14 +246,28 @@ const SIGNED_OUT: AuthState = {
   error: null,
 }
 
+/**
+ * The demo identity. Built once, synchronously: there is nothing to await, and a `loading`
+ * frame before it would flash a spinner over data that is already on the device.
+ */
+function demoState(): AuthState {
+  const { userId, membership, gym } = demoIdentity()
+  return {
+    status: 'ready',
+    user: { id: userId, email: membership.email },
+    membership,
+    gym,
+    resolvedOffline: false,
+    error: null,
+  }
+}
+
 /** Distinguishes "not handled yet" from "handled, and there was no user". */
 const UNSET = Symbol('unset')
 
 export function AuthProvider({ children }: { children: ReactNode }): JSX.Element {
   const [state, setState] = useState<AuthState>(() =>
-    isSupabaseConfigured
-      ? { ...SIGNED_OUT, status: 'loading' }
-      : { ...SIGNED_OUT, status: 'unconfigured' },
+    isLocalRepo ? demoState() : { ...SIGNED_OUT, status: 'loading' },
   )
   const handledUser = useRef<string | null | typeof UNSET>(UNSET)
   const mounted = useRef(true)
@@ -300,7 +326,9 @@ export function AuthProvider({ children }: { children: ReactNode }): JSX.Element
 
   useEffect(() => {
     mounted.current = true
-    if (!isSupabaseConfigured) return undefined
+    // Nothing to subscribe to: with the local repo there is no gotrue session and never will
+    // be one in this tab.
+    if (isLocalRepo || !isSupabaseConfigured) return undefined
 
     void supabase.auth.getSession().then(({ data }) => applySession(data.session))
     const { data } = supabase.auth.onAuthStateChange((_event, session) => {
@@ -314,6 +342,7 @@ export function AuthProvider({ children }: { children: ReactNode }): JSX.Element
   }, [applySession])
 
   const signInWithOtp = useCallback(async (email: string) => {
+    if (isLocalRepo) throw new AuthActionError('the demo gym has no sign-in', 'demo')
     if (!isSupabaseConfigured) throw new AuthActionError('Supabase is not configured', 'unconfigured')
     const { error } = await supabase.auth.signInWithOtp({
       email: email.trim().toLowerCase(),
@@ -328,6 +357,7 @@ export function AuthProvider({ children }: { children: ReactNode }): JSX.Element
   }, [])
 
   const verifyOtp = useCallback(async (email: string, token: string) => {
+    if (isLocalRepo) throw new AuthActionError('the demo gym has no sign-in', 'demo')
     if (!isSupabaseConfigured) throw new AuthActionError('Supabase is not configured', 'unconfigured')
     const { error } = await supabase.auth.verifyOtp({
       email: email.trim().toLowerCase(),
@@ -339,6 +369,14 @@ export function AuthProvider({ children }: { children: ReactNode }): JSX.Element
   }, [])
 
   const signOut = useCallback(async () => {
+    if (isLocalRepo) {
+      // There is no session to end. Dropping the read cache is the honest half of the gesture
+      // — the demo data itself belongs to the repository, not to an identity — and the app
+      // stays open on the demo gym rather than showing a sign-in screen that cannot work.
+      await clearPersistedCache()
+      if (mounted.current) setState(demoState())
+      return
+    }
     const gymId = state.gym?.id ?? readIdentity()?.gym.id ?? null
     if (isSupabaseConfigured) await supabase.auth.signOut()
     // A gym phone is passed between coaches. Leaving one trainer's briefings hydrated for the
@@ -349,6 +387,10 @@ export function AuthProvider({ children }: { children: ReactNode }): JSX.Element
   }, [state.gym])
 
   const reload = useCallback(async () => {
+    if (isLocalRepo) {
+      if (mounted.current) setState(demoState())
+      return
+    }
     if (!isSupabaseConfigured) return
     const { data } = await supabase.auth.getSession()
     await applySession(data.session, true)
@@ -362,6 +404,7 @@ export function AuthProvider({ children }: { children: ReactNode }): JSX.Element
       gym: state.gym,
       missingEnv: missingSupabaseEnv,
       resolvedOffline: state.resolvedOffline,
+      isDemo: isLocalRepo,
       error: state.error,
       signInWithOtp,
       verifyOtp,
