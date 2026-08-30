@@ -22,6 +22,15 @@
      indicator; the floor is still comfortably over the 44px target. */
   --th-key-h: clamp(48px, 7.4dvh, 64px);
 
+  /* The pad's non-key chrome, clamped to the viewport for the same reason the keys are.
+     Everything a thumb touches mid-set has to sit in the lower half of the screen, and the
+     pad is measured from the bottom up: every fixed pixel of gap or commit-key height pushes
+     the topmost row — the recent-load chips — further up. At a fixed 8px gap and a 54px commit
+     key the chips land two pixels above the midline on a 360×640 Android. These give those
+     pixels back without taking a single hit target under 44px. */
+  --th-key-gap: clamp(6px, 1dvh, 8px);
+  --th-commit-h: clamp(48px, 6.4dvh, 54px);
+
   /* The modal scrim. The one colour in the app that is NOT a theme token, because it must not
      be: a scrim is a shadow cast on the room, and it is black in a bright gym and in a dark one
      alike. Deriving it from `--th-ink` would make it a white veil in Slate. It is declared once
@@ -349,7 +358,9 @@
 .th-seg__item {
   flex: 1 1 0;
   min-width: 0;
-  min-height: 40px; /* the group clears 44px; a segment inside it is not an isolated target */
+  /* Each segment is its own role="radio" — it is aimed at individually, so it carries the
+     44px floor itself. The group clearing 44px was never the relevant measurement. */
+  min-height: 44px;
   display: inline-flex;
   align-items: center;
   justify-content: center;
@@ -717,7 +728,7 @@
   padding: 10px 10px calc(10px + env(safe-area-inset-bottom, 0px));
   display: flex;
   flex-direction: column;
-  gap: 8px;
+  gap: var(--th-key-gap);
   animation: th-sheet-in var(--th-dur-sheet) var(--th-ease-sheet);
 }
 
@@ -802,7 +813,7 @@
 .th-keypad__grid {
   display: grid;
   grid-template-columns: repeat(4, 1fr);
-  gap: 8px;
+  gap: var(--th-key-gap);
 }
 
 .th-key {
@@ -844,7 +855,7 @@
 }
 
 .th-key--commit {
-  height: 54px;
+  height: var(--th-commit-h);
   width: 100%;
   border-radius: var(--th-r);
   background: var(--th-accent);

@@ -112,6 +112,36 @@ npm run e2e       # Playwright — smoke suite runs locally; the two-device gate
 npm run build
 ```
 
+## Deploying
+
+Static hosting, because that is all this needs: Supabase is the backend, and the build is a
+folder of files. `firebase.json` is checked in and configured for Firebase Hosting.
+
+```bash
+npm run build
+npx firebase-tools deploy --only hosting     # or: firebase deploy --only hosting
+```
+
+Three things in that config are load-bearing:
+
+- **The `**` → `/index.html` rewrite.** Without it every deep link 404s. A trainer who bookmarks
+  an athlete, or reloads the page mid-session, gets a Firebase error page instead of the app —
+  and mid-session is exactly when a reload happens, because that is when the phone is in a hand.
+- **`index.html` is `no-cache`, `/assets/**` is immutable for a year.** The asset filenames are
+  content-hashed, so they can be cached forever; the HTML that points at them cannot be, or a
+  trainer keeps running last week's build until they clear Safari.
+- **No service worker is registered** (see above), so an uncached `index.html` really is the whole
+  update mechanism. That is deliberate until M5.
+
+`VITE_SUPABASE_URL` and `VITE_SUPABASE_ANON_KEY` are read at *build* time and end up in the
+bundle. That is correct for an anon key — it is public by design and RLS is what protects the
+data — but it does mean changing projects means rebuilding, not reconfiguring.
+
+Any other static host works the same way; the rewrite is the only thing that needs translating
+(Netlify `_redirects`, Vercel `rewrites`, an nginx `try_files`). Failing that,
+`VITE_HASH_ROUTER=1` moves routing into the fragment and needs no server config at all — it is
+what the single-file preview build uses.
+
 ## Milestones
 
 | | | |
@@ -129,6 +159,7 @@ npm run build
 ```
 supabase/migrations/   001_init.sql — schema, triggers, RLS, apply_ops, redeem_invite
                        002_seed_catalogue.sql — the shared bilingual exercise catalogue
+                       003_muscle_groups.sql — the muscle taxonomy and exercise↔muscle links
 src/domain/            types (the contract), analytics, Greek text handling, parsing, formatting
 src/data/              supabase client, query client + persister, the outbox, id minting
 src/auth/              email-OTP auth, membership + gym resolution
@@ -136,7 +167,9 @@ src/theme/             the token contract, ThemeProvider, the theme-parity test
 src/styles/            reset, shared tokens, themes/daylight.css, themes/slate.css
 src/i18n/              el (default) and en resources
 src/screens/           the nine screens
-tests/e2e/             two-device.spec.ts — the M1 gate
+tests/e2e/             smoke, a11y and tap-budget — the gates CI runs on every push
+                       two-device.spec.ts — the M1 gate, needs a real Supabase project
+firebase.json          static hosting config; see Deploying
 ```
 
 ## Notes on the design handoff
