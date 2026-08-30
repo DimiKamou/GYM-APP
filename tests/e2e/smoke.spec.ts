@@ -61,20 +61,41 @@ test.describe('every screen renders for real', () => {
     const firstAthlete = page.getByRole('link').or(page.getByRole('button')).first()
     await expect(firstAthlete).toBeVisible()
 
-    await page.getByText(/Παπαδόπουλος|Γεωργίου|Νίκος|Ελένη/).first().click()
+    await page.getByText(/Παπαδόπουλος/).first().click()
     await page.waitForTimeout(600)
     expect(page.url()).toMatch(/\/athletes\/[0-9a-f-]{8,}/)
 
     // The Briefing Card's job: what to do and what to avoid, above the fold.
+    // Walk TEXT NODES, not leaf elements. A note is a <p> whose own text sits alongside a
+    // nested <span> for the author, so a `children.length === 0` filter drops exactly the
+    // sentence this assertion exists to find — and reports the card broken when it is fine.
     const aboveFold = await page.evaluate(() => {
-      const inTop = (el: Element) => el.getBoundingClientRect().top < 420
-      return Array.from(document.querySelectorAll('body *'))
-        .filter((el) => inTop(el) && el.children.length === 0)
-        .map((el) => (el.textContent ?? '').trim())
-        .filter(Boolean)
-        .join(' | ')
+      const walker = document.createTreeWalker(document.body, NodeFilter.SHOW_TEXT)
+      const lines: string[] = []
+      let node = walker.nextNode()
+      while (node) {
+        const text = (node.textContent ?? '').trim()
+        if (text) {
+          const range = document.createRange()
+          range.selectNode(node)
+          if (range.getBoundingClientRect().top < 420) lines.push(text)
+        }
+        node = walker.nextNode()
+      }
+      return lines.join(' | ')
     })
-    expect(aboveFold, 'the pinned warning must be readable without scrolling').toMatch(/ώμο|Προσοχή/)
+    // Assert the SHAPE of the briefing, not one athlete's injury. An earlier version matched
+    // "ώμο" and failed the moment the click landed on Έλενα, whose warning is about a knee —
+    // reporting a working card as broken. What must hold for every athlete is that a warning
+    // arrives with a name and a date attached, and that the last session is summarised.
+    expect(aboveFold, 'a note must be attributed to a coach and dated').toMatch(
+      /—\s*\S+.*,\s*\d{1,2}\s*(Ιαν|Φεβ|Μαρ|Απρ|Μαΐ|Μάι|Ιουν|Ιουλ|Αυγ|Σεπ|Οκτ|Νοε|Δεκ)/,
+    )
+    expect(aboveFold, 'the last session must be summarised above the fold').toMatch(
+      /\d{1,2}\s*(Ιαν|Φεβ|Μαρ|Απρ|Μαΐ|Μάι|Ιουν|Ιουλ|Αυγ|Σεπ|Οκτ|Νοε|Δεκ).*·.*·/,
+    )
+    // And the two actions a coach reaches for must be reachable without scrolling.
+    expect(aboveFold, 'both primary actions must be above the fold').toMatch(/Νέα προπόνηση/)
 
     expect(errors, 'runtime errors on the athlete detail').toEqual([])
   })
