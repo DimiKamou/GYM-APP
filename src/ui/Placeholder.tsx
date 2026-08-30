@@ -53,7 +53,9 @@ export function Placeholder({ title, milestone, description, params }: Placehold
         {title}
       </h1>
 
-      <div style={card}>
+      {/* The smoke suite fails any route still rendering this, so an unbuilt screen cannot
+          quietly ship behind a green typecheck. */}
+      <div style={card} data-testid="placeholder">
         <span style={badge}>{t('placeholder.badge')}</span>
         {description ? (
           <p style={{ margin: 0, color: 'var(--th-ink)', lineHeight: 1.5 }}>{description}</p>
