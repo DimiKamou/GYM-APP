@@ -119,10 +119,55 @@ function hasMeasurement(input: Measurable): boolean {
   )
 }
 
+/**
+ * Any store, made unable to break the app.
+ *
+ * `createIdbStorage()` already guards idb-keyval, but this wraps whatever it is given — an
+ * injected store in a test, a future one — because the rule is about the app's behaviour, not
+ * about one library: in private mode and under a "block all cookies" policy the accessor
+ * itself throws, and a demo that white-screens for that reason has failed at its only job.
+ *
+ * Once a write has failed, reads prefer memory. Otherwise a store that can be read but not
+ * written would keep serving the version from before the coach's last four sets.
+ */
+function resilient(storage: OutboxStorage): OutboxStorage {
+  const memory = new Map<string, unknown>()
+  let degraded = false
+  return {
+    async get<T>(key: string): Promise<T | undefined> {
+      if (!degraded) {
+        try {
+          const value = await storage.get<T>(key)
+          if (value !== undefined) return value
+        } catch {
+          degraded = true
+        }
+      }
+      return memory.get(key) as T | undefined
+    },
+    async set(key: string, value: unknown): Promise<void> {
+      memory.set(key, value)
+      try {
+        await storage.set(key, value)
+      } catch {
+        degraded = true
+      }
+    },
+    async del(key: string): Promise<void> {
+      memory.delete(key)
+      try {
+        await storage.del(key)
+      } catch {
+        degraded = true
+      }
+    },
+  }
+}
+
 // ---------------------------------------------------------------------------
 
 export function createLocalRepo(options: LocalRepoOptions = {}): Repo {
-  const storage = options.storage ?? createIdbStorage()
+  const storage = resilient(options.storage ?? createIdbStorage())
   const now = options.now ?? (() => new Date())
   const acting = options.actingMembershipId ?? SEED_IDS.owner
   const makeSeed = (): SeedData => options.seed ?? buildSeed()
