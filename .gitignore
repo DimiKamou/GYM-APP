@@ -17,6 +17,14 @@ playwright-report
 # single-file preview build
 dist-preview
 
+# Throwaway scripts that drive a real browser. @playwright/test resolves only
+# from inside this repository, so a one-off probe that boots the app and
+# measures it has to be written here rather than in a temp directory — and
+# none of them is ever worth committing.
+*-probe.mjs
+*-check.mjs
+.stcheck*.mjs
+
 # Python, for the Streamlit pilot in streamlit/
 __pycache__/
 *.py[cod]
