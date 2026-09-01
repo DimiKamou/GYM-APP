@@ -1,4 +1,4 @@
-"""TrainHub — the Streamlit pilot. One script, four pages, shaped for a phone.
+"""TrainHub — the Streamlit pilot. One script, seven pages, shaped for a phone.
 
 This is the second client on the gym's Supabase project; the React PWA in `src/`
 is the first. Both read and write the same rows through the same policies, so
@@ -23,7 +23,7 @@ from __future__ import annotations
 import streamlit as st
 
 from lib import auth
-from views import athletes, log, settings, team
+from views import athletes, calendar, library, log, progress, settings, team
 
 st.set_page_config(
     page_title="TrainHub",
@@ -87,10 +87,13 @@ if not auth.gate():
 
 # key -> (render function, tab label, icon, is the landing page)
 # Every render function is named `render`, so Streamlit would infer the same URL
-# path four times and refuse the navigation. The key is the path.
+# path seven times and refuse the navigation. The key is the path.
 _PAGES = (
     ("athletes", athletes.render, "Αθλητές", "👥", True),
     ("log", log.render, "Προπόνηση", "📝", False),
+    ("calendar", calendar.render, "Πρόγραμμα", "📅", False),
+    ("library", library.render, "Ασκήσεις", "📚", False),
+    ("progress", progress.render, "Πρόοδος", "📈", False),
     # Listed for everyone: an ordinary trainer opens it to read the roster,
     # which is the legend for every name stamped on a set. What they may *do*
     # there is decided by team.render() and, underneath it, by the policies.
