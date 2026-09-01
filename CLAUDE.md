@@ -78,8 +78,18 @@ be created.
 position="top")` is accepted by the signature and ignored by the renderer in
 1.62; combined with a collapsed sidebar whose control the app hides, it put six
 of seven screens behind no door at all, with no error. Every test until then had
-stopped at the sign-in form — the screen before the broken one. `_navprobe.py`
-runs the app with sign-in stubbed so screens past the gate can be looked at.
+stopped at the sign-in form — the screen before the broken one. `tests/` is the
+answer to that: `python3 tests/run.py` presses real buttons through
+`streamlit.testing.v1.AppTest` against an in-memory PostgREST, and
+`streamlit run tests/demo_app.py` puts the whole app in a browser with no
+Supabase behind it.
+
+**Ask for every column you read.** PostgREST returns exactly the columns named
+in `.select(...)` and nothing complains about the rest — a screen reading one it
+forgot to ask for gets `None` and renders an empty string. `equipment` was
+missing from the log screen's catalogue read for a week: the όργανο never
+appeared anywhere, and the code that was supposed to show it looked correct.
+The fake in `tests/` projects the select list for this reason.
 
 **Equipment belongs to the exercise, not the set.** 40 kg of dumbbells is not
 80 kg of barbell; the variants are separate rows, which is what keeps the
