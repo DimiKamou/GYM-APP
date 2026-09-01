@@ -33,7 +33,7 @@ from typing import Any
 
 import streamlit as st
 
-from lib import db, fmt, gym, ui
+from lib import db, exercises, fmt, gym, ui
 
 # How far back the "last time" lookup reads. It is a window, not the whole
 # history, because the session ids go into a PostgREST `in.(…)` filter and a URL
@@ -421,8 +421,8 @@ def _resolve_exercise(
 # The grouped picker
 # ---------------------------------------------------------------------------
 
-def _grouped_exercises(gym_id: str) -> list[tuple[str, list[dict[str, Any]]]]:
-    """[(μυϊκή ομάδα, [exercise, …]), …] in the order a coach reads a gym.
+def _grouped_exercises(gym_id: str) -> list[tuple[str, str | None, list[dict[str, Any]]]]:
+    """[(μυϊκή ομάδα, id της ομάδας, [exercise, …]), …] in the order a coach reads a gym.
 
     Groups come in `muscle_groups.position` order. Within a group the primaries
     come first, then the secondaries: nothing in the shared catalogue is
@@ -465,20 +465,26 @@ def _grouped_exercises(gym_id: str) -> list[tuple[str, list[dict[str, Any]]]]:
         rows = [by_id[i] for i in dict.fromkeys(ids) if i in by_id]
         return sorted(rows, key=lambda row: fmt.fold(fmt.exercise_name(row)))
 
-    out: list[tuple[str, list[dict[str, Any]]]] = []
+    out: list[tuple[str, str | None, list[dict[str, Any]]]] = []
     for group in groups:
         group_id = str(group["id"])
         members = _named(primary.get(group_id, [])) + _named(secondary.get(group_id, []))
         if members:
             label = (group.get("name_el") or group.get("name_en") or fmt.EMPTY).strip()
-            out.append((label or fmt.EMPTY, members))
+            # The id travels with the label so a new exercise added from the
+            # picker lands in the group the coach is already looking at,
+            # instead of matching by name — a gym may add its own «Στήθος»
+            # beside the shared one and the two are different rows.
+            out.append((label or fmt.EMPTY, group_id, members))
 
     unfiled = sorted(
         (row for row in pickable if str(row["id"]) not in filed),
         key=lambda row: fmt.fold(fmt.exercise_name(row)),
     )
     if unfiled:
-        out.append((_UNFILED_GROUP, unfiled))
+        # No id: «Χωρίς μυϊκή ομάδα» is a bucket this screen invents, not a row
+        # in muscle_groups, so nothing can be filed into it.
+        out.append((_UNFILED_GROUP, None, unfiled))
     return out
 
 
@@ -861,21 +867,27 @@ def _picker(gym_id: str, session_id: str, next_position: int) -> None:
         group_index = st.selectbox(
             "Μυϊκή ομάδα",
             range(len(grouped)),
-            format_func=lambda index: f"{grouped[index][0]} ({len(grouped[index][1])})",
+            format_func=lambda index: f"{grouped[index][0]} ({len(grouped[index][2])})",
             key="log_group",
         )
-        label, members = grouped[int(group_index)]
+        label, group_id, members = grouped[int(group_index)]
 
         with st.form(f"log_add_block_{group_index}"):
             member_index = st.selectbox(
                 "Άσκηση",
                 range(len(members)),
-                format_func=lambda index: fmt.exercise_name(members[index]),
+                # With the όργανο, always. A gym has «Πιέσεις Στήθους» on a
+                # barbell, on dumbbells and on the Smith, and 40 kg of
+                # dumbbells is not 80 kg of barbell — a picker that shows only
+                # the name invites the coach to pick one and read back the
+                # other's history as if it were the same movement.
+                format_func=lambda index: _labelled(members[index]),
                 key=f"log_exercise_{group_index}",
             )
             submitted = st.form_submit_button("Προσθήκη άσκησης", type="primary")
 
         if not submitted:
+            _new_exercise(gym_id, session_id, next_position, group_id, label)
             return
 
         exercise = members[int(member_index)]
@@ -887,8 +899,94 @@ def _picker(gym_id: str, session_id: str, next_position: int) -> None:
             return
 
         _clear_workout_caches()
-        ui.notice(_NOTICE, "ok", f"{fmt.exercise_name(exercise)} — {label}")
+        ui.notice(_NOTICE, "ok", f"{_labelled(exercise)} — {label}")
         st.rerun()
+
+
+def _labelled(exercise: dict[str, Any]) -> str:
+    """«Πιέσεις Στήθους · Μπάρα» — the name is not enough to pick by."""
+    gear = exercises.equipment_of(exercise)
+    name = fmt.exercise_name(exercise)
+    return f"{name} · {gear}" if gear else name
+
+
+def _new_exercise(gym_id: str, session_id: str, next_position: int,
+                  group_id: str | None, group_label: str) -> None:
+    """Add an exercise the catalogue does not have, without leaving the workout.
+
+    This is the whole reason the gym asked for a catalogue it can extend: the
+    coach is at the machine, the athlete is waiting, and the movement is not in
+    the list. Sending them to the Ασκήσεις screen means losing the workout they
+    are in, so the exercise is created AND put into the session in one submit.
+
+    Any active member may do this, not only the owner: `exercises_insert`
+    permits the whole gym, and the original ask was that trainers add what is
+    missing — they are the ones who find it missing.
+    """
+    st.divider()
+    st.caption(f"Δεν τη βρίσκεις; Πρόσθεσέ την στο «{group_label}».")
+
+    with st.form(f"log_new_exercise_{group_id}", clear_on_submit=True):
+        name_el = st.text_input(
+            "Όνομα άσκησης",
+            max_chars=120,
+            placeholder="π.χ. Πιέσεις στήθους σε Smith",
+        )
+        gear_label = st.selectbox("Όργανο", options=list(exercises.EQUIPMENT_CHOICES))
+        gear = exercises.EQUIPMENT_CHOICES[gear_label]
+        kinds = list(exercises.KIND_CHOICES)
+        kind_label = st.selectbox(
+            "Τι μετράει",
+            options=kinds,
+            # Preselected from the όργανο: a coach picking «Cardio» almost
+            # always means time, and the wrong answer here stores twenty
+            # treadmill minutes as twenty repetitions of nothing.
+            index=kinds.index(
+                exercises.KIND_LABELS[exercises.KIND_FOR_EQUIPMENT.get(gear, "weight_reps")]
+            ),
+        )
+        submitted = st.form_submit_button("Πρόσθεσε και βάλ' την στην προπόνηση")
+
+    if not submitted:
+        return
+    if not name_el.strip():
+        st.error("Γράψε το όνομα της άσκησης.")
+        return
+    if not group_id:
+        st.error("Διάλεξε πρώτα μυϊκή ομάδα από πάνω.")
+        return
+
+    try:
+        exercise_id = exercises.create(
+            gym_id,
+            name_el=name_el,
+            # The group's own coarse region, so the new exercise sorts with the
+            # ones beside it instead of needing the coach to answer twice.
+            category=_region_of(gym_id, group_id),
+            equipment=gear,
+            kind=exercises.KIND_CHOICES[kind_label],
+            primary_group=group_id,
+        )
+        _add_block(gym_id, session_id, exercise_id, next_position)
+    except Exception as exc:
+        st.error("Η άσκηση δεν προστέθηκε.")
+        st.caption(str(exc))
+        return
+
+    _clear_workout_caches()
+    _catalogue.clear()
+    _muscle_groups.clear()
+    _exercise_muscles.clear()
+    ui.notice(_NOTICE, "ok", f"{name_el.strip()} · {gear_label} — μπήκε στην προπόνηση.")
+    st.rerun()
+
+
+def _region_of(gym_id: str, group_id: str) -> str:
+    """The muscle group's coarse body region, for the new exercise's category."""
+    for group in _muscle_groups(gym_id):
+        if str(group.get("id")) == str(group_id):
+            return str(group.get("region") or "upper")
+    return "upper"
 
 
 # ---------------------------------------------------------------------------
