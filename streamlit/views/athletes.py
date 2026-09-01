@@ -752,9 +752,14 @@ def _athlete_sheet(gym: str, selected: dict[str, Any]) -> None:
         return
     st.session_state["athlete"] = current
 
-    st.header(current.get("full_name") or _EMPTY)
+    st.header(_md(current.get("full_name") or _EMPTY))
     plan = " · ".join(
-        part for part in ((current.get("plan_phase") or "").strip(), (current.get("plan_focus") or "").strip()) if part
+        part
+        for part in (
+            (current.get("plan_phase") or "").strip(),
+            (current.get("plan_focus") or "").strip(),
+        )
+        if part
     )
     if plan:
         st.caption(_md(plan))
