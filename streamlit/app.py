@@ -48,12 +48,18 @@ _CHROME_CSS = """
 [data-testid="stDecoration"],
 [data-testid="stSidebarCollapsedControl"],
 #MainMenu,
-footer { display: none !important; }
+footer,
+/* The header too, now that navigation is ours. It is 60px of invisible,
+   fixed-position furniture — measured — and it was clipping the top row of the
+   tab bar underneath it: the pills were at y=40 and the header covered them to
+   y=60, so «Αθλητές» rendered sliced in half. Everything it used to hold is
+   already hidden above. */
+header[data-testid="stHeader"] { display: none !important; }
 
 /* The default top padding is most of a phone screen: the athlete's name starts
    below the fold before anything has been drawn. */
 [data-testid="stMainBlockContainer"],
-.block-container { padding-top: 1.5rem; padding-bottom: 4rem; }
+.block-container { padding-top: 1rem; padding-bottom: 4rem; }
 
 /* 44px minimum hit target (CLAUDE.md).
 
@@ -75,7 +81,11 @@ footer { display: none !important; }
 [data-testid="stTextAreaRootElement"],
 [data-testid="stSelectbox"] div[role="combobox"],
 div[data-testid="stForm"] button,
-div.stButton > button { min-height: 44px; }
+div.stButton > button,
+/* The navigation bar. Measured at 32px without this, which is under the floor
+   for a control every screen change goes through. */
+[data-testid="stPills"] button,
+[data-testid="stButtonGroup"] button { min-height: 44px; }
 </style>
 """
 
@@ -107,6 +117,44 @@ pages = {
 }
 st.session_state["pages"] = pages
 
-# Top, not the sidebar: the sidebar is a hamburger nobody opens mid-set, and a
-# tab bar in reach of a thumb is the difference between four screens and one.
-st.navigation(list(pages.values()), position="top").run()
+# The navigation is drawn by hand, and `position="hidden"` is what lets it be.
+#
+# `st.navigation(..., position="top")` is accepted by the signature and IGNORED
+# by the renderer in Streamlit 1.62: measured in a browser, it emits
+# stSidebarNav either way. Combined with initial_sidebar_state="collapsed" and
+# the rule above that hides stSidebarCollapsedControl, that put all seven pages
+# behind a hamburger with no button to open it — the app showed Αθλητές and
+# nothing else, with no error anywhere. Checking the signature is not checking
+# the screen.
+nav = st.navigation(list(pages.values()), position="hidden")
+
+# Which page is running. The default page reports an empty url_path.
+_current = nav.url_path or _PAGES[0][0]
+_LABELS = {key: f"{icon} {title}" for key, _, title, icon, _ in _PAGES}
+
+
+def _tab_bar() -> None:
+    """Seven pages, one wrapped bar, always visible.
+
+    Not st.columns: on a 412px phone they stack, so seven links became seven
+    full-width rows and ate 252px of screen before the athlete's name. Pills
+    wrap instead — three rows, about a hundred pixels — and read as a tab bar
+    rather than a menu. Measured both ways in a browser rather than assumed,
+    which is the mistake that produced the bug this replaces.
+    """
+    choice = st.pills(
+        "Πλοήγηση",
+        options=list(_LABELS),
+        format_func=lambda key: _LABELS[key],
+        default=_current,
+        label_visibility="collapsed",
+        key="trainhub_nav",
+    )
+    # None when the coach taps the active pill again — st.pills allows
+    # deselection, and treating that as "go nowhere" keeps them where they are.
+    if choice and choice != _current:
+        st.switch_page(pages[choice])
+
+
+_tab_bar()
+nav.run()
