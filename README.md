@@ -112,6 +112,28 @@ npm run e2e       # Playwright — smoke suite runs locally; the two-device gate
 npm run build
 ```
 
+## Two clients, one database
+
+There are two apps in this repository and they share the gym's Supabase project,
+its schema and its 44 policies.
+
+| | |
+|---|---|
+| **`src/`** — the React PWA | Installs to a phone's home screen, reads the briefing with no signal, records a set in nine taps. Signs in with an emailed six-digit code. |
+| **`streamlit/`** — the Python pilot | Seven screens in ~4,000 lines. Signs in with a username and password, so a gym can start with three accounts and no mail server at all. No offline mode: with no signal it does not load. |
+
+The pilot exists because it puts a working app in front of trainers in an
+afternoon, and because the owner creating accounts for their own staff is one
+screen rather than an invite flow. It is deployed from `main` on Streamlit
+Community Cloud, entry point `streamlit_app.py` at the repository root, with
+`requirements.txt` and `.streamlit/config.toml` beside it because that is where
+Community Cloud looks.
+
+`streamlit/README.md` is its operator guide. `CLAUDE.md` carries the traps that
+are specific to it — chiefly that Streamlit's caches are global to the server
+process, so a cache key without the gym is a tenancy leak that never reaches a
+policy.
+
 ## Deploying
 
 Static hosting, because that is all this needs: Supabase is the backend, and the build is a

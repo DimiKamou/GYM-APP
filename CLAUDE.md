@@ -48,6 +48,43 @@ accessor itself throws, not just the read.
 **Notes are append-only.** There is no UPDATE policy on `notes.body`. That is what keeps them safe under
 last-write-wins — otherwise a trainer holding a stale athlete row republishes old notes over a colleague's.
 
+## The Streamlit pilot in `streamlit/`
+
+A second client on the same Supabase project, for the first-phase pilot. It signs
+trainers in with a **username and password** — `Dimitris` becomes
+`dimitris@<USERNAME_DOMAIN>` internally — so `auth.uid()` is real and every
+trigger and policy in `001_init.sql` works untouched. Deployed from `main` on
+Streamlit Community Cloud, entry point `streamlit_app.py` at the repository root.
+
+### Traps that are specific to it
+
+**`@st.cache_resource` and `@st.cache_data` are global to the server process.**
+One Python process serves every trainer. Cache the Supabase client and the next
+visitor inherits the previous one's JWT — their gym, their identity on every set
+they write. The client lives in `st.session_state`, which is per browser session.
+
+**Every `@st.cache_data` takes `gym_id` as its first argument**, even where the
+body ignores it. A cache hit is served from this process and never reaches
+PostgREST, so RLS never sees the request: leave the tenant out of the key and
+gym B is served gym A's athletes out of memory, past every policy.
+
+**`service_role` touches `auth.users` and nothing else.** It is confined to
+`lib/admin.py`, for creating accounts. The moment it reads or writes any
+`public.*` table, the 44 policies stop being what protects the data — and
+`sessions_stamp_author()` raises without a JWT anyway, so a session cannot even
+be created.
+
+**Checking a signature is not checking the screen.** `st.navigation(...,
+position="top")` is accepted by the signature and ignored by the renderer in
+1.62; combined with a collapsed sidebar whose control the app hides, it put six
+of seven screens behind no door at all, with no error. Every test until then had
+stopped at the sign-in form — the screen before the broken one. `_navprobe.py`
+runs the app with sign-in stubbed so screens past the gate can be looked at.
+
+**Equipment belongs to the exercise, not the set.** 40 kg of dumbbells is not
+80 kg of barbell; the variants are separate rows, which is what keeps the
+"τελευταία φορά" line honest.
+
 ## Conventions
 
 - Comment **why**, never **what**. A comment restating the line above it gets deleted in review.
