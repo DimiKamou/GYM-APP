@@ -134,9 +134,12 @@ streamlit run app.py
 απόσταση **είναι** η αίσθηση της εφαρμογής· και τα δεδομένα (ονόματα, τηλέφωνα,
 τραυματισμοί) μένουν στην ΕΕ, οπότε δεν υπάρχει διαβίβαση εκτός ΕΕ να δικαιολογηθεί.
 
+Οι εντολές τρέχουν **από τη ρίζα του repository**, όχι από τον φάκελο `streamlit/`.
+
 ```bash
 gcloud config set project <PROJECT-ID>
-gcloud services enable run.googleapis.com cloudbuild.googleapis.com secretmanager.googleapis.com
+gcloud services enable run.googleapis.com cloudbuild.googleapis.com \
+  artifactregistry.googleapis.com secretmanager.googleapis.com
 
 # 1. Το secrets.toml γίνεται secret. Δεν μπαίνει ποτέ μέσα στο image.
 gcloud secrets create trainhub-secrets \
