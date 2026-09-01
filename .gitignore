@@ -1,0 +1,39 @@
+node_modules
+dist
+dist-ssr
+*.local
+.env
+.env.*
+!.env.example
+.DS_Store
+coverage
+test-results
+playwright-report
+.vite
+
+# tsc -b incremental state
+*.tsbuildinfo
+
+# single-file preview build
+dist-preview
+
+# Throwaway scripts that drive a real browser. @playwright/test resolves only
+# from inside this repository, so a one-off probe that boots the app and
+# measures it has to be written here rather than in a temp directory — and
+# none of them is ever worth committing.
+*-probe.mjs
+*-check.mjs
+.stcheck*.mjs
+
+# Python, for the Streamlit pilot in streamlit/
+__pycache__/
+*.py[cod]
+venv/
+.venv/
+
+# Streamlit secrets — the Supabase keys, including service_role, which bypasses
+# every row-level security policy in the schema. Named file by file rather than
+# ignoring .streamlit/ wholesale: config.toml in the same directory is what
+# Streamlit Community Cloud reads for the theme, and it has to stay tracked.
+.streamlit/secrets.toml
+streamlit/.streamlit/secrets.toml

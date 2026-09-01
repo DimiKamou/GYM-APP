@@ -1,0 +1,78 @@
+/**
+ * Non-theme tokens: density, radius, motion. These are identical in both themes — a theme
+ * changes colour and type, never geometry, which is what lets the two directions be nothing
+ * but the two files imported below.
+ */
+
+@import './themes/daylight.css';
+@import './themes/slate.css';
+
+:root {
+  /* ---- density ---- carried over from the prototype's three steps; `regular` is the default
+     and is declared here (not only under [data-density]) so nothing depends on the attribute. */
+  --th-pad: 16px;
+  --th-gap: 12px;
+  --th-screen-pad: 20px;
+
+  /* ---- radius ---- the calm directions are rounder than Arena: 14 on small controls,
+     18 on rows, 22 on cards. Kept as a scale so one base moves all of them together. */
+  --th-radius-base: 18px;
+  --th-r-xs: 12px;
+  --th-r-sm: 14px;
+  --th-r: var(--th-radius-base);
+  --th-r-lg: 22px;
+  --th-r-pill: 999px;
+
+  /* ---- motion ---- durations and easings from the prototype, named by role rather than value
+     so a screen asks for "the sheet curve" instead of re-typing a bezier. */
+  --th-dur-tap: 120ms;
+  --th-dur-fast: 150ms;
+  --th-dur-fade: 200ms;
+  --th-dur-sheet: 320ms;
+  --th-dur-enter: 340ms;
+  --th-ease-standard: cubic-bezier(0.2, 0.8, 0.2, 1);
+  --th-ease-sheet: cubic-bezier(0.2, 0.85, 0.2, 1);
+  --th-ease-out: ease-out;
+
+  /* ---- type scale ---- from the calm screens' measured sizes. */
+  --th-text-xs: 11px;
+  --th-text-sm: 13px;
+  --th-text-base: 15px;
+  --th-text-md: 16px;
+  --th-text-lg: 20px;
+  --th-text-xl: 27px;
+  --th-text-2xl: 32px;
+  --th-label-tracking: 0.08em;
+}
+
+:root[data-density='compact'] {
+  --th-pad: 13px;
+  --th-gap: 9px;
+  --th-screen-pad: 16px;
+}
+
+:root[data-density='comfy'] {
+  --th-pad: 20px;
+  --th-gap: 16px;
+  --th-screen-pad: 24px;
+}
+
+/* The page ground. Painted on <body> rather than <html> so the gradient is sized to the
+   viewport and does not stretch when a long screen scrolls. */
+body {
+  background-color: var(--th-bg);
+  background-image: var(--th-bg-image);
+  background-attachment: fixed;
+  color: var(--th-ink);
+  font-family: var(--th-font-ui);
+  font-size: var(--th-text-base);
+}
+
+/* Display face: headings and the big numerals. Daylight makes this a serif, Slate does not —
+   which is the whole visible difference between the two directions above colour. */
+.display {
+  font-family: var(--th-font-display);
+  font-weight: var(--th-display-weight);
+  letter-spacing: var(--th-display-tracking);
+  line-height: 1.04;
+}

@@ -1,0 +1,35 @@
+# What keeps the Supabase service_role key out of the image.
+#
+# The build context is this directory. Docker reads this file and nothing else:
+# the repository .gitignore is one level up, outside the context, and Docker
+# would not read it even if it were here. Removing the file after `COPY . .`
+# is not a substitute — `rm` in a later layer writes a whiteout over a layer
+# that still holds the file byte for byte, and anyone who can pull the image
+# unpacks it with `docker save | tar x`. A file excluded here is in no layer at
+# all, which is the only version of "not in the image" that survives that.
+
+# The four Supabase settings, service_role among them. That key is evaluated
+# against no RLS policy at all, so a leaked one reads and writes every gym in
+# the project. secrets.toml.example is not excluded: it carries placeholders
+# and is what section 2 of the README tells you to copy.
+.streamlit/secrets.toml
+**/secrets.toml
+.env
+.env.*
+
+# README section 2 builds the local virtualenv at streamlit/.venv, so without
+# these the image would carry a second, host-built copy of every dependency
+# over the one pip installed for the container's own platform.
+.venv
+venv
+
+# Byte-compiled on the host, for a Python that is not necessarily this image's.
+# PYTHONDONTWRITEBYTECODE is already set, so nothing wants them.
+**/__pycache__
+**/*.py[cod]
+
+# Tooling caches and editor litter. Large, machine-specific, never executed.
+**/.ruff_cache
+**/.pytest_cache
+**/.mypy_cache
+.DS_Store

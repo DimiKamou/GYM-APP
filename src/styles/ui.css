@@ -1,0 +1,893 @@
+/**
+ * Styles for the primitives in `src/ui/`.
+ *
+ * These live in a stylesheet rather than in `style={}` props for three reasons the screens
+ * cannot work around inline: `:hover` / `:active` / `:focus-visible` / `:disabled` states,
+ * `@keyframes` for the sheet and the spinner, and `@media (prefers-reduced-motion)`. Anything
+ * that is a plain static value still travels as a token here, so a theme swap moves it.
+ *
+ * Colour is ALWAYS a `--th-*` custom property. A literal hex in this file is a bug: it would
+ * be correct in Daylight and wrong in Slate, and nobody would notice until a trainer switched
+ * themes at 06:00 in a dark gym.
+ */
+
+:root {
+  /* The app frame is a centred phone column (see App.tsx). Anything docked to the viewport —
+     the sheet, the keypad, the toast — has to re-derive that width or it spans a desktop
+     monitor while the UI it belongs to is 480px wide in the middle. */
+  --th-dock-max: 480px;
+
+  /* One height for every key on the numeric pad. Clamped rather than fixed at the specified
+     64px because on a 667px-tall SE the fixed size pushes the commit key under the home
+     indicator; the floor is still comfortably over the 44px target. */
+  --th-key-h: clamp(48px, 7.4dvh, 64px);
+
+  /* The pad's non-key chrome, clamped to the viewport for the same reason the keys are.
+     Everything a thumb touches mid-set has to sit in the lower half of the screen, and the
+     pad is measured from the bottom up: every fixed pixel of gap or commit-key height pushes
+     the topmost row — the recent-load chips — further up. At a fixed 8px gap and a 54px commit
+     key the chips land two pixels above the midline on a 360×640 Android. These give those
+     pixels back without taking a single hit target under 44px. */
+  --th-key-gap: clamp(6px, 1dvh, 8px);
+  --th-commit-h: clamp(48px, 6.4dvh, 54px);
+
+  /* The modal scrim. The one colour in the app that is NOT a theme token, because it must not
+     be: a scrim is a shadow cast on the room, and it is black in a bright gym and in a dark one
+     alike. Deriving it from `--th-ink` would make it a white veil in Slate. It is declared once
+     here so there is still a single place to change it. */
+  --th-scrim: rgb(0 0 0 / 45%);
+
+  /* A wash for controls sitting ON a `--th-ink` fill (the toast). Mixed from `--th-bg` rather
+     than from white so it lightens in Daylight and darkens in Slate, where the toast inverts. */
+  --th-on-ink-wash: color-mix(in srgb, var(--th-bg) 16%, transparent);
+  --th-on-ink-wash-strong: color-mix(in srgb, var(--th-bg) 28%, transparent);
+}
+
+/* ---------------------------------------------------------------------------
+   Shared
+   --------------------------------------------------------------------------- */
+
+/* Every interactive primitive opts into this: it is the 44px floor plus the press feedback,
+   and it is one class so a new control cannot forget either half. */
+.th-tap {
+  min-width: 44px;
+  min-height: 44px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  transition: transform var(--th-dur-tap) var(--th-ease-standard),
+    background-color var(--th-dur-fast) var(--th-ease-standard),
+    border-color var(--th-dur-fast) var(--th-ease-standard),
+    opacity var(--th-dur-fast) var(--th-ease-standard);
+}
+
+.th-tap:active:not([aria-disabled='true']):not(:disabled) {
+  transform: scale(0.97);
+}
+
+.th-tap[aria-disabled='true'],
+.th-tap:disabled {
+  opacity: 0.45;
+  cursor: default;
+}
+
+/* ---------------------------------------------------------------------------
+   Button
+   --------------------------------------------------------------------------- */
+
+.th-btn {
+  gap: 8px;
+  border-radius: var(--th-r-sm);
+  border: 1px solid transparent;
+  font-family: var(--th-font-ui);
+  font-weight: 600;
+  font-size: var(--th-text-base);
+  line-height: 1.2;
+  padding: 0 16px;
+  text-align: center;
+  white-space: nowrap;
+}
+
+.th-btn--sm {
+  min-height: 44px; /* not smaller: "small" is about type and padding, never about the target */
+  font-size: var(--th-text-sm);
+  padding: 0 12px;
+  border-radius: var(--th-r-xs);
+}
+
+.th-btn--md {
+  min-height: 48px;
+}
+
+.th-btn--lg {
+  min-height: 54px;
+  font-size: var(--th-text-md);
+  border-radius: var(--th-r);
+}
+
+.th-btn--block {
+  display: flex;
+  width: 100%;
+}
+
+.th-btn--icon {
+  padding: 0;
+  width: 44px;
+  flex: 0 0 auto;
+}
+
+.th-btn--icon.th-btn--lg {
+  width: 54px;
+}
+
+.th-btn--primary {
+  background: var(--th-accent);
+  color: var(--th-accent-ink);
+  box-shadow: var(--th-shadow-soft);
+}
+
+.th-btn--primary:hover:not([aria-disabled='true']):not(:disabled) {
+  filter: brightness(1.06);
+}
+
+.th-btn--secondary {
+  background: var(--th-surface);
+  color: var(--th-ink);
+  border-color: var(--th-line);
+}
+
+.th-btn--secondary:hover:not([aria-disabled='true']):not(:disabled) {
+  background: var(--th-surface-2);
+}
+
+.th-btn--quiet {
+  background: var(--th-surface-2);
+  color: var(--th-ink);
+}
+
+.th-btn--quiet:hover:not([aria-disabled='true']):not(:disabled) {
+  background: var(--th-surface-3);
+}
+
+.th-btn--ghost {
+  background: transparent;
+  color: var(--th-muted);
+}
+
+.th-btn--ghost:hover:not([aria-disabled='true']):not(:disabled) {
+  background: var(--th-surface-2);
+  color: var(--th-ink);
+}
+
+/* Destructive. Deliberately not the widest or the lowest thing in any row it appears in —
+   see the placement rule in CLAUDE.md; this class only supplies the colour. */
+.th-btn--danger {
+  background: var(--th-danger);
+  color: var(--th-danger-ink);
+}
+
+.th-btn--danger-quiet {
+  background: var(--th-danger-soft);
+  color: var(--th-danger);
+}
+
+/* ---------------------------------------------------------------------------
+   Card
+   --------------------------------------------------------------------------- */
+
+.th-card {
+  background: var(--th-surface);
+  border: 1px solid var(--th-line);
+  border-radius: var(--th-r-lg);
+  padding: var(--th-pad);
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.th-card--flat {
+  background: var(--th-surface-2);
+  border-color: transparent;
+}
+
+.th-card--raised {
+  box-shadow: var(--th-shadow);
+}
+
+.th-card--tight {
+  padding: 0;
+}
+
+/* A whole card that is one target. It is a <button>, so it needs the button reset undone. */
+.th-card--interactive {
+  width: 100%;
+  text-align: left;
+  cursor: pointer;
+  transition: background-color var(--th-dur-fast) var(--th-ease-standard),
+    transform var(--th-dur-tap) var(--th-ease-standard);
+}
+
+.th-card--interactive:hover {
+  background: var(--th-surface-2);
+}
+
+.th-card--interactive:active {
+  transform: scale(0.99);
+}
+
+/* ---------------------------------------------------------------------------
+   Field / Input
+   --------------------------------------------------------------------------- */
+
+.th-field {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.th-field__label {
+  font-size: var(--th-text-xs);
+  font-weight: 700;
+  letter-spacing: var(--th-label-tracking);
+  text-transform: uppercase;
+  color: var(--th-muted);
+}
+
+.th-field__hint {
+  font-size: var(--th-text-sm);
+  color: var(--th-faint);
+}
+
+.th-field__error {
+  font-size: var(--th-text-sm);
+  color: var(--th-danger);
+  font-weight: 600;
+}
+
+.th-input {
+  min-height: 48px;
+  width: 100%;
+  padding: 0 14px;
+  border-radius: var(--th-r-sm);
+  border: 1px solid var(--th-line);
+  background: var(--th-surface);
+  color: var(--th-ink);
+  transition: border-color var(--th-dur-fast) var(--th-ease-standard);
+}
+
+.th-input::placeholder {
+  color: var(--th-faint);
+}
+
+.th-input:hover {
+  border-color: var(--th-line-soft);
+}
+
+.th-input[aria-invalid='true'] {
+  border-color: var(--th-danger);
+}
+
+.th-input--area {
+  min-height: 96px;
+  padding: 12px 14px;
+  resize: vertical;
+  line-height: 1.45;
+}
+
+/* ---------------------------------------------------------------------------
+   Chip / CategoryPill / Avatar
+   --------------------------------------------------------------------------- */
+
+.th-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 7px 12px;
+  border-radius: var(--th-r-pill);
+  border: 1px solid var(--th-line);
+  background: var(--th-surface-2);
+  color: var(--th-muted);
+  font-size: var(--th-text-sm);
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+/* A chip that is a control gets the 44px floor; a chip that is only a label does not need it
+   and would leave a hole in a dense row. */
+.th-chip--tappable {
+  min-height: 44px;
+  cursor: pointer;
+}
+
+.th-chip--selected {
+  background: var(--th-accent-soft);
+  border-color: var(--th-accent);
+  color: var(--th-ink);
+}
+
+.th-catpill {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 5px 10px;
+  border-radius: var(--th-r-pill);
+  font-size: var(--th-text-xs);
+  font-weight: 700;
+  letter-spacing: var(--th-label-tracking);
+  text-transform: uppercase;
+  background: var(--th-surface-3);
+  /* Colour arrives as an inline `--th-cat` from the category token; the pill itself is neutral
+     so that an unknown category degrades to plain ink rather than to nothing. */
+  color: var(--th-cat, var(--th-ink));
+}
+
+.th-catpill__dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: currentColor;
+  flex: 0 0 auto;
+}
+
+.th-avatar {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 50%;
+  background: var(--th-avatar-bg);
+  color: var(--th-avatar-ink);
+  font-weight: 700;
+  letter-spacing: 0.01em;
+  flex: 0 0 auto;
+  user-select: none;
+}
+
+/* ---------------------------------------------------------------------------
+   Segmented
+   --------------------------------------------------------------------------- */
+
+.th-seg {
+  display: flex;
+  padding: 3px;
+  gap: 3px;
+  border-radius: var(--th-r-sm);
+  background: var(--th-surface-2);
+  border: 1px solid var(--th-line);
+}
+
+.th-seg__item {
+  flex: 1 1 0;
+  min-width: 0;
+  /* Each segment is its own role="radio" — it is aimed at individually, so it carries the
+     44px floor itself. The group clearing 44px was never the relevant measurement. */
+  min-height: 44px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  padding: 0 10px;
+  border-radius: calc(var(--th-r-sm) - 4px);
+  font-size: var(--th-text-sm);
+  font-weight: 600;
+  color: var(--th-muted);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  transition: background-color var(--th-dur-fast) var(--th-ease-standard),
+    color var(--th-dur-fast) var(--th-ease-standard);
+}
+
+.th-seg__item[aria-checked='true'] {
+  background: var(--th-surface);
+  color: var(--th-ink);
+  box-shadow: var(--th-shadow-soft);
+}
+
+/* ---------------------------------------------------------------------------
+   Stepper
+   --------------------------------------------------------------------------- */
+
+.th-stepper {
+  display: inline-flex;
+  align-items: stretch;
+  border-radius: var(--th-r-sm);
+  border: 1px solid var(--th-line);
+  background: var(--th-surface);
+  overflow: hidden;
+}
+
+.th-stepper__btn {
+  width: 48px;
+  min-height: 48px;
+  color: var(--th-ink);
+  background: var(--th-surface-2);
+}
+
+.th-stepper__btn:hover:not(:disabled):not([aria-disabled='true']) {
+  background: var(--th-surface-3);
+}
+
+.th-stepper__value {
+  min-width: 72px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0 10px;
+  font-size: var(--th-text-lg);
+  font-weight: 600;
+  color: var(--th-ink);
+}
+
+/* ---------------------------------------------------------------------------
+   Spinner
+   --------------------------------------------------------------------------- */
+
+@keyframes th-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+.th-spinner {
+  animation: th-spin 900ms linear infinite;
+  color: var(--th-muted);
+}
+
+/* ---------------------------------------------------------------------------
+   EmptyState
+   --------------------------------------------------------------------------- */
+
+.th-empty {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 10px;
+  text-align: center;
+  padding: 32px var(--th-pad);
+  color: var(--th-muted);
+}
+
+.th-empty__icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 56px;
+  height: 56px;
+  border-radius: 50%;
+  background: var(--th-surface-2);
+  color: var(--th-faint);
+}
+
+.th-empty__title {
+  font-size: var(--th-text-lg);
+  color: var(--th-ink);
+}
+
+/* ---------------------------------------------------------------------------
+   Sheet
+   --------------------------------------------------------------------------- */
+
+@keyframes th-backdrop-in {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+@keyframes th-sheet-in {
+  from {
+    transform: translateY(100%);
+  }
+  to {
+    transform: translateY(0);
+  }
+}
+
+.th-sheet-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 60;
+  background: var(--th-scrim);
+  animation: th-backdrop-in var(--th-dur-fade) var(--th-ease-standard);
+  display: flex;
+  flex-direction: column;
+  justify-content: flex-end;
+}
+
+.th-sheet {
+  width: 100%;
+  max-width: var(--th-dock-max);
+  margin: 0 auto;
+  max-height: 88dvh;
+  display: flex;
+  flex-direction: column;
+  background: var(--th-surface);
+  border-top-left-radius: var(--th-r-lg);
+  border-top-right-radius: var(--th-r-lg);
+  box-shadow: var(--th-shadow);
+  animation: th-sheet-in var(--th-dur-sheet) var(--th-ease-sheet);
+  padding-bottom: env(safe-area-inset-bottom, 0px);
+}
+
+.th-sheet__grabber {
+  width: 40px;
+  height: 4px;
+  border-radius: var(--th-r-pill);
+  background: var(--th-line);
+  margin: 8px auto 0;
+  flex: 0 0 auto;
+}
+
+.th-sheet__head {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px var(--th-pad) 6px;
+  flex: 0 0 auto;
+}
+
+.th-sheet__title {
+  flex: 1 1 auto;
+  min-width: 0;
+  font-size: var(--th-text-lg);
+  color: var(--th-ink);
+}
+
+.th-sheet__body {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  -webkit-overflow-scrolling: touch;
+  padding: 6px var(--th-pad) var(--th-pad);
+  display: flex;
+  flex-direction: column;
+  gap: var(--th-gap);
+}
+
+.th-sheet__foot {
+  flex: 0 0 auto;
+  padding: 10px var(--th-pad) var(--th-pad);
+  border-top: 1px solid var(--th-line-soft);
+  display: flex;
+  gap: var(--th-gap);
+}
+
+/* ---------------------------------------------------------------------------
+   Toast
+   --------------------------------------------------------------------------- */
+
+@keyframes th-toast-in {
+  from {
+    opacity: 0;
+    transform: translateY(12px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.th-toast-layer {
+  position: fixed;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  z-index: 70;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 0 12px calc(12px + env(safe-area-inset-bottom, 0px));
+  max-width: var(--th-dock-max);
+  margin: 0 auto;
+  /* The LAYER ignores the pointer so it never blocks the list underneath. Each toast turns it
+     back on for itself — the prototype set it on the toast too, which is exactly why its undo
+     could not be tapped and every destructive action needed a confirm dialog instead. */
+  pointer-events: none;
+}
+
+.th-toast {
+  pointer-events: auto;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 8px 8px 16px;
+  border-radius: var(--th-r);
+  background: var(--th-ink);
+  color: var(--th-bg);
+  box-shadow: var(--th-shadow);
+  animation: th-toast-in var(--th-dur-fade) var(--th-ease-standard);
+}
+
+.th-toast__message {
+  flex: 1 1 auto;
+  min-width: 0;
+  font-size: var(--th-text-sm);
+  font-weight: 600;
+  line-height: 1.35;
+}
+
+.th-toast__action {
+  flex: 0 0 auto;
+  min-height: 44px;
+  min-width: 44px;
+  padding: 0 14px;
+  border-radius: var(--th-r-xs);
+  background: var(--th-on-ink-wash);
+  color: inherit;
+  font-weight: 700;
+  font-size: var(--th-text-sm);
+}
+
+.th-toast__action:hover {
+  background: var(--th-on-ink-wash-strong);
+}
+
+.th-toast--danger {
+  background: var(--th-danger);
+  color: var(--th-danger-ink);
+}
+
+/* ---------------------------------------------------------------------------
+   SwipeRow
+   --------------------------------------------------------------------------- */
+
+.th-swipe {
+  position: relative;
+  overflow: hidden;
+  border-radius: var(--th-r);
+  background: var(--th-danger);
+  touch-action: pan-y; /* the row owns horizontal drags; the list keeps vertical scrolling */
+}
+
+.th-swipe__actions {
+  position: absolute;
+  top: 0;
+  right: 0;
+  bottom: 0;
+  display: flex;
+  align-items: stretch;
+}
+
+.th-swipe__delete {
+  width: 88px;
+  min-height: 44px;
+  display: inline-flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+  color: var(--th-danger-ink);
+  font-size: var(--th-text-xs);
+  font-weight: 700;
+  letter-spacing: var(--th-label-tracking);
+  text-transform: uppercase;
+}
+
+.th-swipe__content {
+  position: relative;
+  background: var(--th-surface);
+  border-radius: var(--th-r);
+  will-change: transform;
+}
+
+.th-swipe__content--settling {
+  transition: transform var(--th-dur-fast) var(--th-ease-standard);
+}
+
+/* The fallback for anyone who is not dragging a finger across glass. Present in the DOM and in
+   the tab order at all times; it only becomes visible once it has focus, so the row stays clean
+   for the 99% while never being keyboard-inaccessible. */
+.th-swipe__kb {
+  position: absolute;
+  right: 6px;
+  top: 50%;
+  z-index: 1;
+  /* Collapsed the way a skip link is: it keeps its place in the tab order and in the
+     accessibility tree — a screen-reader user can still activate it — but it takes up no room
+     in the row until it has focus. `visibility: hidden` or `display: none` would remove it
+     from both, which is the whole thing this button exists to avoid. */
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+  transform: translateY(-50%);
+  border-radius: var(--th-r-xs);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--th-danger);
+  background: var(--th-danger-soft);
+}
+
+.th-swipe__kb:focus {
+  width: 44px;
+  height: 44px;
+  overflow: visible;
+  clip-path: none;
+}
+
+/* ---------------------------------------------------------------------------
+   Keypad
+   --------------------------------------------------------------------------- */
+
+.th-keypad {
+  position: fixed;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  z-index: 50;
+  max-width: var(--th-dock-max);
+  margin: 0 auto;
+  background: var(--th-surface);
+  border-top: 1px solid var(--th-line);
+  border-top-left-radius: var(--th-r-lg);
+  border-top-right-radius: var(--th-r-lg);
+  box-shadow: var(--th-shadow);
+  padding: 10px 10px calc(10px + env(safe-area-inset-bottom, 0px));
+  display: flex;
+  flex-direction: column;
+  gap: var(--th-key-gap);
+  animation: th-sheet-in var(--th-dur-sheet) var(--th-ease-sheet);
+}
+
+/* The readout is the only part above the fold, and it is the only part nobody taps. Everything
+   with a hit target — chips, keys, commit — starts below it, which is what keeps the spotting
+   hand's reach inside the lower half of the screen. */
+.th-keypad__display {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  padding: 2px 8px 4px;
+  min-height: 40px;
+}
+
+.th-keypad__value {
+  flex: 1 1 auto;
+  font-size: var(--th-text-xl);
+  font-weight: 700;
+  color: var(--th-ink);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.th-keypad__value--empty {
+  color: var(--th-faint);
+}
+
+.th-keypad__label {
+  font-size: var(--th-text-xs);
+  font-weight: 700;
+  letter-spacing: var(--th-label-tracking);
+  text-transform: uppercase;
+  color: var(--th-muted);
+}
+
+.th-keypad__error {
+  font-size: var(--th-text-sm);
+  font-weight: 600;
+  color: var(--th-danger);
+}
+
+.th-keypad__chips {
+  display: flex;
+  gap: 8px;
+  overflow-x: auto;
+  overflow-y: hidden;
+  -webkit-overflow-scrolling: touch;
+  padding-bottom: 2px;
+}
+
+/* A recent load is a coaching number, so the chip carries its date and author underneath —
+   never the bare "80". */
+.th-keypad__chip {
+  flex: 0 0 auto;
+  min-height: 48px;
+  display: inline-flex;
+  flex-direction: column;
+  align-items: flex-start;
+  justify-content: center;
+  gap: 1px;
+  padding: 6px 12px;
+  border-radius: var(--th-r-xs);
+  border: 1px solid var(--th-line);
+  background: var(--th-surface-2);
+  text-align: left;
+}
+
+.th-keypad__chipValue {
+  font-size: var(--th-text-md);
+  font-weight: 700;
+  color: var(--th-ink);
+  line-height: 1.1;
+}
+
+.th-keypad__chipMeta {
+  font-size: var(--th-text-xs);
+  color: var(--th-muted);
+  line-height: 1.1;
+}
+
+.th-keypad__grid {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: var(--th-key-gap);
+}
+
+.th-key {
+  height: var(--th-key-h);
+  min-width: 44px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: var(--th-r-sm);
+  background: var(--th-surface-2);
+  color: var(--th-ink);
+  font-size: var(--th-text-xl);
+  font-weight: 600;
+  transition: background-color var(--th-dur-tap) var(--th-ease-standard),
+    transform var(--th-dur-tap) var(--th-ease-standard);
+}
+
+.th-key:hover {
+  background: var(--th-surface-3);
+}
+
+.th-key:active {
+  transform: scale(0.96);
+  background: var(--th-surface-3);
+}
+
+/* The nudge rail. Smaller type than a digit because it is read, not aimed at blind. */
+.th-key--nudge {
+  font-size: var(--th-text-base);
+  font-weight: 700;
+  color: var(--th-muted);
+  background: var(--th-surface);
+  border: 1px solid var(--th-line);
+}
+
+.th-key--erase {
+  background: var(--th-surface-3);
+  color: var(--th-ink);
+}
+
+.th-key--commit {
+  height: var(--th-commit-h);
+  width: 100%;
+  border-radius: var(--th-r);
+  background: var(--th-accent);
+  color: var(--th-accent-ink);
+  font-size: var(--th-text-md);
+  font-weight: 700;
+  gap: 8px;
+}
+
+.th-key--commit[aria-disabled='true'] {
+  opacity: 0.5;
+}
+
+/* ---------------------------------------------------------------------------
+   Reduced motion
+   --------------------------------------------------------------------------- */
+
+/* reset.css already collapses durations globally; this is the belt to that braces, because a
+   sheet whose entrance is an animation must land on its END frame, not vanish. */
+@media (prefers-reduced-motion: reduce) {
+  .th-sheet,
+  .th-sheet-backdrop,
+  .th-toast,
+  .th-keypad {
+    animation: none;
+  }
+
+  .th-swipe__content--settling {
+    transition: none;
+  }
+
+  .th-spinner {
+    animation-duration: 2400ms;
+  }
+}

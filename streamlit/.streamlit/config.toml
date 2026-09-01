@@ -1,0 +1,22 @@
+# Read for a local run (`streamlit run streamlit/app.py`) and inside the
+# container. `../.streamlit/config.toml` at the repository root is the same file
+# for Streamlit Community Cloud, which only looks there. Change both together.
+#
+# The palette is TrainHub's own Daylight theme, lifted from
+# src/styles/themes/daylight.css, so the pilot and the PWA are recognisably the
+# same product rather than two apps that happen to share a database.
+
+[theme]
+# Stated, not inferred: without it a phone set to dark mode gets Streamlit's
+# dark base, and these five warm-paper colours land on it as unreadable pairs.
+base = "light"
+backgroundColor = "#F4F0E7"
+secondaryBackgroundColor = "#FFFFFF"
+textColor = "#25231D"
+primaryColor = "#5E7355"
+
+[browser]
+gatherUsageStats = false
+
+[server]
+headless = true

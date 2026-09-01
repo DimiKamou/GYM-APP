@@ -1,0 +1,54 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - name: Typecheck
+        run: npm run typecheck
+      - name: Unit tests
+        run: npm run test
+      - name: Build
+        run: npm run build
+
+  # A green typecheck says the app compiles. This says a trainer can open it: it drives the
+  # real bundle in a browser against the local repository, so it needs no Supabase project
+  # and no credentials, and it fails on a screen that throws, a screen still showing its
+  # placeholder, or a coaching number rendered with no date beside it.
+  smoke:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - name: Install Chromium
+        run: npx playwright install --with-deps chromium
+      # smoke: does every screen render for real. a11y: is it operable by keyboard and screen
+      # reader. tap-budget: does recording a set still cost what it cost — it prints the count
+      # every run, so a regression is visible in the log and not only on a red build.
+      # two-device.spec.ts is excluded on purpose: it needs a live project and skips without one,
+      # and a suite that always skips teaches people to ignore skips.
+      - name: Browser gates
+        run: npx playwright test tests/e2e/smoke.spec.ts tests/e2e/a11y.spec.ts tests/e2e/tap-budget.spec.ts
+      - uses: actions/upload-artifact@v4
+        if: failure()
+        with:
+          name: playwright-report
+          path: |
+            playwright-report/
+            test-results/
+          retention-days: 7

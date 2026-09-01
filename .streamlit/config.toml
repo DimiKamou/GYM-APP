@@ -1,0 +1,19 @@
+# Read by Streamlit Community Cloud, which looks at the repository root.
+# `streamlit/.streamlit/config.toml` is the same file for a local run or a container.
+#
+# The palette is TrainHub's own Daylight theme, lifted from src/styles/themes/daylight.css,
+# so the pilot and the PWA are recognisably the same product rather than two apps that
+# happen to share a database.
+
+[theme]
+base = "light"
+backgroundColor = "#F4F0E7"
+secondaryBackgroundColor = "#FFFFFF"
+textColor = "#25231D"
+primaryColor = "#5E7355"
+
+[browser]
+gatherUsageStats = false
+
+[server]
+headless = true

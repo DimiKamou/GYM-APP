@@ -1,0 +1,75 @@
+/**
+ * Theme B — SLATE (restful desaturated dark). The dark half of the pair.
+ *
+ * Only ever active behind an explicit data-theme stamp; ThemeProvider resolves
+ * `system` + prefers-color-scheme: dark to this before the first paint.
+ *
+ * Contract: every property here is in src/theme/tokens.contract.ts, and nothing else may be.
+ * Contrast figures in comments are measured WCAG 2.1 ratios.
+ */
+
+:root[data-theme='slate'] {
+  /* ---- surfaces ---- */
+  --th-bg: #161922;
+  --th-bg-image: radial-gradient(120% 75% at 50% -8%, #1C2230 0%, #14161E 62%);
+  --th-surface: #1E222C;
+  --th-surface-2: #232833;
+  --th-surface-3: #272D39;
+  --th-ink: #E6E9EF;
+  --th-muted: #888E9D;
+  --th-faint: #5C6373;
+  --th-line: #292E3A;
+  --th-line-soft: #242934;
+
+  /* ---- accent ----
+     CORRECTION to the prototype. It chose accent ink with `lum(hex) > 0.45 ? dark : white`.
+     0.45 is not the WCAG crossover (that is near 0.179), so this blue fell on the "white" side
+     and shipped white on #84A0D6 — 2.63:1, well under the 4.5:1 floor. Dark ink on the same blue
+     measures 6.86:1. Fixed by measuring both candidates rather than thresholding luminance;
+     pickInkOn() in src/theme/tokens.contract.ts does exactly that for runtime-chosen colours. */
+  --th-accent: #84A0D6;
+  --th-accent-ink: #14161E; /* 6.86:1 (white would have been 2.63:1) */
+  --th-accent-soft: #222A38; /* accent on it: 5.48:1 */
+
+  /* ---- avatar ---- */
+  --th-avatar-bg: #272D39;
+  --th-avatar-ink: #AEB6C8; /* 6.79:1 on the chip */
+
+  /* ---- semantic ---- measured on --th-surface-3 #272D39 ---- */
+  --th-danger: #FE5E53;      /* 4.56:1 */
+  --th-danger-ink: #14161E;  /* 5.97:1 on the danger fill (white on it is 3.03:1) */
+  --th-danger-soft: #33242A; /* danger text on it: 4.87:1 */
+  --th-success: #10B981;     /* 5.44:1 */
+  --th-warning: #EAB308;     /* 7.20:1 */
+
+  /* ---- category ----
+     Same OKLCH re-derivation as Daylight, walked the other way: hue held, lightness raised until
+     each clears 4.5:1 on the CHIP (#272D39), which is lighter than the near-black the prototype
+     assumed. Green and yellow already cleared it and are kept verbatim. Ratios are vs #272D39. */
+  --th-cat-upper: #5293FD;    /* 4.57:1  (was #3B82F6 — 3.9:1 here) */
+  --th-cat-lower: #FF5F29;    /* 4.55:1  (was #FF5A1F) */
+  --th-cat-core: #B775FE;     /* 4.60:1  (was #A855F7 — 3.6:1 here) */
+  --th-cat-cardio: #10B981;   /* 5.44:1  (unchanged) */
+  --th-cat-mobility: #EAB308; /* 7.20:1  (unchanged) */
+
+  /* ---- appointment type ---- ratios vs #272D39. See daylight.css for why `personal` is the
+     accent and `assessment` is a cyan instead of the prototype's blue. */
+  --th-appt-personal: #84A0D6;   /* 5.25:1 */
+  --th-appt-assessment: #0EA5E9; /* 4.98:1 */
+  --th-appt-group: #B775FE;      /* 4.60:1 */
+  --th-appt-program: #FF5F29;    /* 4.55:1 */
+
+  /* ---- type ---- no serif and nothing above 600: on a dark ground heavy weights bloom. */
+  --th-font-display: 'Hanken Grotesk', system-ui, -apple-system, 'Segoe UI', sans-serif;
+  --th-font-ui: 'Hanken Grotesk', system-ui, -apple-system, 'Segoe UI', sans-serif;
+  --th-display-weight: 600;
+  --th-display-tracking: -0.015em;
+
+  /* ---- elevation ---- */
+  --th-shadow: 0 18px 40px -20px rgba(0, 0, 0, 0.65);
+  --th-shadow-soft: 0 10px 24px -16px rgba(0, 0, 0, 0.5);
+
+  /* ---- chrome ---- matches --th-bg, not the gradient's top stop; the OS bar sits over the page
+     edge, where the gradient has already resolved to the flat background. */
+  --th-theme-color: #161922;
+}

@@ -1,0 +1,29 @@
+# What `gcloud run deploy --source streamlit` must not upload to the Cloud Build
+# staging bucket.
+#
+# This file exists separately from .dockerignore because gcloud does not read
+# that one. Without a .gcloudignore, gcloud derives its defaults from a
+# .gitignore IN THIS DIRECTORY — and there is none; the repository's lives one
+# level up and is never consulted. So a filled-in .streamlit/secrets.toml, which
+# .dockerignore now keeps out of the image, would still be uploaded to a bucket
+# on every deploy, carrying the service_role key that bypasses every row-level
+# security policy in the schema.
+#
+# Keep in step with .dockerignore.
+
+.streamlit/secrets.toml
+**/secrets.toml
+
+.env
+.env.*
+
+.venv
+venv
+
+**/__pycache__
+**/*.py[cod]
+**/.ruff_cache
+**/.pytest_cache
+**/.mypy_cache
+
+.DS_Store
