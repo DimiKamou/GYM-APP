@@ -131,6 +131,8 @@ nav = st.navigation(list(pages.values()), position="hidden")
 # Which page is running. The default page reports an empty url_path.
 _current = nav.url_path or _PAGES[0][0]
 _LABELS = {key: f"{icon} {title}" for key, _, title, icon, _ in _PAGES}
+_NAV_KEY = "trainhub_nav"
+_NAV_SEEN = "trainhub_nav_seen"
 
 
 def _tab_bar() -> None:
@@ -142,17 +144,31 @@ def _tab_bar() -> None:
     rather than a menu. Measured both ways in a browser rather than assumed,
     which is the mistake that produced the bug this replaces.
     """
+    # The bar keeps its own memory, and that memory can disagree with the page
+    # that is actually running: «Νέα προπόνηση» moves screens with
+    # st.switch_page, not by tapping a tab, so the widget still said "athletes"
+    # while the log was on screen — and the check below then bounced the coach
+    # straight back to the roster, every single time.
+    #
+    # _NAV_SEEN is the page the bar was last drawn for. When the page changed by
+    # some other means, realign the widget silently. When it did not, the widget
+    # holding something else means the coach just tapped a tab, and that is a
+    # real request to move.
+    if st.session_state.get(_NAV_SEEN) != _current:
+        st.session_state[_NAV_KEY] = _current
+        st.session_state[_NAV_SEEN] = _current
+
     choice = st.pills(
         "Πλοήγηση",
         options=list(_LABELS),
         format_func=lambda key: _LABELS[key],
-        default=_current,
         label_visibility="collapsed",
-        key="trainhub_nav",
+        key=_NAV_KEY,
     )
     # None when the coach taps the active pill again — st.pills allows
     # deselection, and treating that as "go nowhere" keeps them where they are.
     if choice and choice != _current:
+        st.session_state[_NAV_SEEN] = choice
         st.switch_page(pages[choice])
 
 

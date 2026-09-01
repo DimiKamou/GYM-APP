@@ -241,6 +241,49 @@ def _start_session(athlete: dict[str, Any]) -> None:
     st.switch_page(page)
 
 
+def _reopen_session(gym_id: str, session: dict[str, Any]) -> None:
+    """Open a past workout on the log screen so it can be corrected.
+
+    Reopening rather than a second read-only edit screen: the Προπόνηση screen
+    already knows how to draw blocks, sets, the picker and the corrections, and
+    a coach fixing yesterday's sheet is doing the same things as a coach writing
+    today's. `status` goes back to active because that is exactly what is true —
+    the workout is open again — and finished_at is cleared with it so
+    sessions_finish_after_start cannot see a finish that precedes a later edit.
+    """
+    session_id = str(session["id"])
+    if str(session.get("status") or "") != "active":
+        try:
+            rows = (
+                db.client()
+                .table("sessions")
+                .update({"status": "active", "finished_at": None})
+                .eq("gym_id", gym_id)
+                .eq("id", session_id)
+                .execute()
+                .data
+                or []
+            )
+        except Exception as exc:
+            ui.notice(_NOTICE, "error", f"Η προπόνηση δεν άνοιξε: {exc}")
+            st.rerun()
+        if not rows:
+            # An UPDATE no policy let through matches zero rows and reports
+            # success, so silence here would send the coach to a screen that
+            # then refuses the session it was sent for.
+            ui.notice(_NOTICE, "error", "Η προπόνηση δεν άνοιξε. Δοκίμασε ξανά.")
+            st.rerun()
+
+    _last_session.clear()
+    _top_lines.clear()
+    st.session_state["session_id"] = session_id
+    page = (st.session_state.get("pages") or {}).get("log")
+    if page is None:
+        ui.notice(_NOTICE, "error", "Η σελίδα καταγραφής δεν είναι διαθέσιμη.")
+        st.rerun()
+    st.switch_page(page)
+
+
 # ---------------------------------------------------------------------------
 # The roster
 # ---------------------------------------------------------------------------
@@ -413,6 +456,13 @@ def _last_session_section(
     session_notes = (session.get("notes") or "").strip()
     if session_notes:
         st.caption(fmt.md(session_notes))
+
+    active = (session.get("status") or "") == "active"
+    if st.button(
+        "Συνέχεια" if active else "Επεξεργασία / διαγραφή",
+        key="athlete_edit_session",
+    ):
+        _reopen_session(gym_id, session)
 
 
 def _history_section(notes: list[dict[str, Any]], names: dict[str, str], tz: Any, today: date) -> None:
