@@ -115,19 +115,86 @@ def _new_member_form() -> None:
     st.rerun()
 
 
+def _reset_password_form(members: list[dict[str, Any]]) -> None:
+    """The owner's half of "Ξέχασες τον κωδικό;".
+
+    The sign-in screen tells a locked-out trainer that the owner changes their
+    password here, and README section 4 says the same. Neither was true: the
+    call existed in lib/admin.py and no screen reached it, so the one recovery
+    path this app has ended at a sentence pointing nowhere. There is no
+    self-service reset because these accounts have no reachable mailbox — this
+    form IS the reset.
+    """
+    st.subheader("Αλλαγή κωδικού μέλους")
+    st.caption(
+        "Για μέλος που ξέχασε τον κωδικό του. Δώσ' του τον νέο από κοντά — δεν "
+        "φεύγει κανένα email, και ο νέος κωδικός δεν αποθηκεύεται πουθενά αλλού."
+    )
+
+    # A member with no auth account behind it has no password to change, and a
+    # removed one has nothing to sign in to.
+    resettable = [
+        member
+        for member in members
+        if member.get("user_id") and (member.get("status") or "") != "removed"
+    ]
+    if not resettable:
+        st.info("Κανένα μέλος με λογαριασμό σύνδεσης.")
+        return
+
+    def _label(index: int) -> str:
+        member = resettable[index]
+        who = member.get("display_name") or auth.sign_in_name(member.get("email")) or "—"
+        return f"{who} · {_ROLE_LABELS.get(member.get('role') or '', member.get('role') or '')}"
+
+    with st.form("team_reset_password", clear_on_submit=True):
+        chosen = st.selectbox("Μέλος", range(len(resettable)), format_func=_label)
+        password = st.text_input(
+            "Νέος κωδικός",
+            type="password",
+            autocomplete="new-password",
+            help="Τουλάχιστον 8 χαρακτήρες. Γράψ' τον κάπου πριν τον δώσεις.",
+        )
+        submitted = st.form_submit_button("Αλλαγή κωδικού")
+
+    if not submitted:
+        return
+
+    member = resettable[int(chosen)]
+    try:
+        admin.reset_password(str(member.get("user_id") or ""), password)
+    except PermissionError as exc:
+        st.error(str(exc))
+        return
+    except (ValueError, RuntimeError) as exc:
+        st.error(str(exc))
+        return
+    except Exception as exc:  # an API error nobody anticipated is still news
+        st.error(f"Ο κωδικός δεν άλλαξε: {exc}")
+        return
+
+    ui.notice(
+        _NOTICE,
+        "ok",
+        f"Ο κωδικός του/της {member.get('display_name') or '—'} άλλαξε. Δώσ' του τον "
+        "νέο κωδικό ο ίδιος — κανένα email δεν στάλθηκε.",
+    )
+    st.rerun()
+
+
 def render() -> None:
     st.header("Ομάδα")
     st.caption("Ποιος γράφει στο φύλλο του γυμναστηρίου.")
 
-    gym = db.gym_id()
-    if not gym:
+    gym_id = db.gym_id()
+    if not gym_id:
         st.info("Ο λογαριασμός σου δεν ανήκει ακόμη σε γυμναστήριο.")
         return
 
     ui.flush_notice(_NOTICE)
 
     try:
-        members = _roster(gym)
+        members = _roster(gym_id)
     except Exception as exc:
         st.error("Η ομάδα δεν φορτώθηκε.")
         st.caption(str(exc))
@@ -154,3 +221,6 @@ def render() -> None:
         return
 
     _new_member_form()
+
+    st.divider()
+    _reset_password_form(members)
