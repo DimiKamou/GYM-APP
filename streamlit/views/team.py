@@ -10,7 +10,7 @@ from typing import Any
 
 import streamlit as st
 
-from lib import admin, auth, db
+from lib import admin, auth, db, ui
 
 _ROLE_LABELS = {"owner": "Ιδιοκτήτης", "trainer": "Προπονητής"}
 _STATUS_LABELS = {"active": "Ενεργός", "invited": "Εκκρεμεί", "removed": "Αφαιρέθηκε"}
@@ -44,25 +44,10 @@ def _roster(gym_id: str) -> list[dict[str, Any]]:
     )
 
 
-def _sign_in_name(email: str) -> str:
-    """What this member types into the username box.
-
-    Only the synthetic addresses this app mints are usernames. The very first
-    owner was created by hand in the Supabase dashboard with a real address, and
-    showing the local part of that as his "username" would be a lie he would
-    then fail to sign in with.
-    """
-    address = (email or "").strip()
-    domain = str(getattr(auth, "USERNAME_DOMAIN", "") or "").strip().lower()
-    if domain and address.lower().endswith("@" + domain):
-        return auth.username_of(address)
-    return address
-
-
 def _row(member: dict[str, Any]) -> dict[str, str]:
     return {
         "Όνομα": member.get("display_name") or "—",
-        "Χρήστης": _sign_in_name(member.get("email") or ""),
+        "Χρήστης": auth.sign_in_name(member.get("email")),
         "Ρόλος": _ROLE_LABELS.get(member.get("role") or "", member.get("role") or "—"),
         "Κατάσταση": _STATUS_LABELS.get(member.get("status") or "", member.get("status") or "—"),
     }
@@ -70,17 +55,6 @@ def _row(member: dict[str, Any]) -> dict[str, str]:
 
 def _count_label(n: int) -> str:
     return "1 μέλος" if n == 1 else f"{n} μέλη"
-
-
-def _flush_notice() -> None:
-    notice = st.session_state.pop(_NOTICE, None)
-    if not notice:
-        return
-    kind, message = notice
-    if kind == "ok":
-        st.success(message)
-    else:
-        st.error(message)
 
 
 def _new_member_form() -> None:
@@ -130,7 +104,8 @@ def _new_member_form() -> None:
 
     # The row exists now, so the cached roster is a lie until it is dropped.
     _roster.clear()
-    st.session_state[_NOTICE] = (
+    ui.notice(
+        _NOTICE,
         "ok",
         f"Ο/Η {member.get('display_name')} μπήκε στην ομάδα ως "
         f"{_ROLE_LABELS.get(member.get('role') or '', member.get('role') or '')}. "
@@ -149,7 +124,7 @@ def render() -> None:
         st.info("Ο λογαριασμός σου δεν ανήκει ακόμη σε γυμναστήριο.")
         return
 
-    _flush_notice()
+    ui.flush_notice(_NOTICE)
 
     try:
         members = _roster(gym)

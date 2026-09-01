@@ -108,6 +108,18 @@ def username_of(email: str) -> str:
     return text
 
 
+def sign_in_name(email: str | None) -> str:
+    """What this member types into the Χρήστης box.
+
+    `username_of` already answers this, and the Ομάδα and Ρυθμίσεις screens had
+    each wrapped it in a private helper of the same name — one taking an address,
+    one taking a membership row, one of them re-checking the domain that
+    `username_of` had just checked. One function, so the roster and the settings
+    screen cannot start disagreeing about what a person signs in as.
+    """
+    return username_of(str(email or ""))
+
+
 def current_username() -> str | None:
     """Who is signed in, before a membership row exists to name them."""
     email = st.session_state.get(_EMAIL_KEY)

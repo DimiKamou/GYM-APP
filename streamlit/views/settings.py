@@ -10,80 +10,41 @@ trust this thing in the basement where there is no signal.
 
 from __future__ import annotations
 
-import re
 from typing import Any
 
 import streamlit as st
 
-from lib import auth, db
+from lib import auth, db, fmt, gym
 
 _ROLE_LABELS = {"owner": "Ιδιοκτήτης", "trainer": "Προπονητής"}
 
-_EMPTY = "—"
 
-# CommonMark syntax. Display names, gym names and a hand-made first account's
-# address are typed by people, and Streamlit renders every string as markdown —
-# an underscore in a name silently becomes italics, and the name is the one
-# thing on this screen that has to be exact.
-_MD_SPECIALS = re.compile(r"([\\`*_{}\[\]()<>#+\-.!|$~])")
+def _who(member: dict[str, Any]) -> str:
+    """The name in the Χρήστης box, for a membership row that may predate one.
 
-
-def _md(text: str) -> str:
-    return _MD_SPECIALS.sub(r"\\\1", text or "")
-
-
-@st.cache_data(ttl=300, show_spinner=False)
-def _gym(gym_id: str) -> dict[str, Any]:
-    """The gym row behind the membership.
-
-    gym_id leads the signature even though RLS already scopes the query: this
-    cache is one dictionary for the whole server process, and a hit is answered
-    from memory without a policy ever being evaluated. Without the tenant in the
-    key, the cache is the leak.
+    The address on the row is the authority. Falling back to the signed-in
+    session covers the very first owner, created by hand in the dashboard before
+    any membership existed to record it.
     """
-    rows = (
-        db.client()
-        .table("gyms")
-        .select("id, name, timezone")
-        .eq("id", gym_id)
-        .is_("deleted_at", "null")
-        .limit(1)
-        .execute()
-        .data
-    ) or []
-    return dict(rows[0]) if rows else {}
-
-
-def _sign_in_name(member: dict[str, Any]) -> str:
-    """What this person types into the username box.
-
-    Only the synthetic addresses this app mints are usernames; `username_of()`
-    hands back a real address whole. The very first owner was created by hand in
-    the Supabase dashboard and may well have one, and showing its local part as
-    his "username" would be a lie he would then fail to sign in with.
-    """
-    email = str(member.get("email") or "").strip()
-    if email:
-        return auth.username_of(email)
-    return auth.current_username() or _EMPTY
+    return auth.sign_in_name(member.get("email")) or auth.current_username() or fmt.EMPTY
 
 
 def _identity(member: dict[str, Any], gym_row: dict[str, Any]) -> None:
-    name = str(member.get("display_name") or "").strip() or _EMPTY
+    name = str(member.get("display_name") or "").strip() or fmt.EMPTY
     role = str(member.get("role") or "")
     gym_name = str(gym_row.get("name") or "").strip()
     timezone = str(gym_row.get("timezone") or "").strip()
 
-    st.markdown(f"#### {_md(name)}")
+    st.markdown(f"#### {fmt.md(name)}")
     st.caption(
-        f"Χρήστης: {_md(_sign_in_name(member))} · {_ROLE_LABELS.get(role, role or _EMPTY)}"
+        f"Χρήστης: {fmt.md(_who(member))} · {_ROLE_LABELS.get(role, role or fmt.EMPTY)}"
     )
-    st.caption(f"Γυμναστήριο: {_md(gym_name) if gym_name else _EMPTY}")
+    st.caption(f"Γυμναστήριο: {fmt.md(gym_name) if gym_name else fmt.EMPTY}")
     if timezone:
         # Not decoration: the gym's zone, not the phone's, decides which day a
         # session is filed under, so a workout logged at 23:50 lands where the
         # coach expects it and a coach abroad does not file on the wrong day.
-        st.caption(f"Ζώνη ώρας: {_md(timezone)}")
+        st.caption(f"Ζώνη ώρας: {fmt.md(timezone)}")
 
     st.caption(
         "Αυτό το όνομα μπαίνει δίπλα σε κάθε σετ και σε κάθε σημείωση που γράφεις. "
@@ -163,9 +124,9 @@ def render() -> None:
     st.header("Ρυθμίσεις")
 
     member = db.me()
-    gym = db.gym_id()
+    gym_id = db.gym_id()
 
-    if not member or not gym:
+    if not member or not gym_id:
         # gate() does not let this page draw in that state, so reaching it means
         # something went wrong after sign-in. A dead end with no way out of the
         # account would be the worse screen.
@@ -175,7 +136,7 @@ def render() -> None:
         return
 
     try:
-        gym_row = _gym(gym)
+        gym_row = gym.row(gym_id)
     except Exception as exc:
         # The name of the gym is the least important line here; the identity and
         # the password must not disappear with it.
