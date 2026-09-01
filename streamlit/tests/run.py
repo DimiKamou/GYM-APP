@@ -74,6 +74,11 @@ def button(at: AppTest, key: str):
     raise AssertionError(f"no button {key!r}; have {[b.key for b in at.button]}")
 
 
+def exercise_picker(at: AppTest):
+    """The «Άσκηση» search box. Its key carries a generation counter."""
+    return [widget for widget in at.selectbox if widget.label == "Άσκηση"][0]
+
+
 def texts(at: AppTest) -> str:
     out = []
     for kind in ("markdown", "caption", "header", "subheader",
@@ -120,10 +125,14 @@ def test_adding_an_exercise_stays_on_the_workout() -> None:
     """The bug the gym reported: adding an exercise threw them back to the roster."""
     state.reset()
     at = open_log()
-    picker = [s for s in at.selectbox if s.label == "Άσκηση"][0]
-    smith = [option for option in picker.options if "Smith" in option][0]
-    picker.set_value(smith).run()
-    button(at, "log_add_block").click().run()
+    picker = exercise_picker(at)
+    check("the Smith variant is offered by name",
+          any("Smith" in option for option in picker.options), str(picker.options))
+    # set_value takes the option's underlying value — an exercise id — while
+    # .options reports the formatted labels the coach reads.
+    # One tap: choosing the exercise IS adding it, with no second press to
+    # confirm what the first one already said.
+    picker.set_value("e-smith").run()
     raise_on_exception(at)
 
     blocks = state.rows("blocks", session_id=state.SESSION)
@@ -132,6 +141,54 @@ def test_adding_an_exercise_stays_on_the_workout() -> None:
           any(b["exercise_id"] == "e-smith" for b in blocks), str(blocks))
     check("the coach is still on the workout",
           "Δημήτρης Καμουτσής" in texts(at))
+
+
+def test_choosing_an_exercise_adds_it_exactly_once() -> None:
+    """The widget keeps its value across reruns; the add must not repeat with it."""
+    state.reset()
+    at = open_log()
+    picker = exercise_picker(at)
+    picker.set_value("e-smith").run()
+    raise_on_exception(at)
+    # Any later interaction reruns the script with the widget state as it stands.
+    at.run()
+    raise_on_exception(at)
+
+    smith = [b for b in state.rows("blocks", session_id=state.SESSION)
+             if b["exercise_id"] == "e-smith"]
+    check("added once, not once per rerun", len(smith) == 1, str(smith))
+
+
+def test_the_search_reaches_every_exercise_without_choosing_a_group() -> None:
+    """«Όλες οι ασκήσεις» is the default, so a coach can type the name straight away."""
+    state.reset()
+    at = open_log()
+    groups = [s for s in at.selectbox if s.label == "Μυϊκή ομάδα"][0]
+    check("«Όλες οι ασκήσεις» is the first option",
+          groups.options[0].startswith("Όλες"), str(groups.options))
+    # -1 is the sentinel the screen uses for «Όλες»; the real groups are indexes.
+    check("and it is the one selected", groups.value == -1, str(groups.value))
+    picker = exercise_picker(at)
+    check("and the search offers all three variants at once",
+          len(picker.options) == 3, str(picker.options))
+    check("with nothing preselected, so nothing is added by opening the picker",
+          picker.value is None, str(picker.value))
+
+
+def test_last_weeks_exercises_are_one_tap() -> None:
+    """A coach repeats a programme far more often than they invent one."""
+    state.reset()
+    at = open_log()
+    labels = [b.label for b in at.button if b.label.startswith("+ ")]
+    check("last week's exercise is offered", labels == ["+ Πιέσεις Στήθους · Αλτήρες"], str(labels))
+    check("today's is not offered twice",
+          not any("Μπάρα" in label for label in labels), str(labels))
+
+    button(at, "log_again_e-db").click().run()
+    raise_on_exception(at)
+    blocks = state.rows("blocks", session_id=state.SESSION)
+    check("one tap put it in the workout",
+          any(b["exercise_id"] == "e-db" for b in blocks), str(blocks))
 
 
 def test_logging_a_set_reads_a_greek_decimal() -> None:
