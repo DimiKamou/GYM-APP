@@ -261,9 +261,66 @@ def format_set(row: dict[str, Any], kind: str) -> str:
 
 
 def score(row: dict[str, Any]) -> float:
-    """One comparable magnitude per set, so "the top one" means something for every kind."""
+    """The first magnitude a set carries, in column order. NOT a top-set picker.
+
+    It cannot be one: it knows nothing of the set's kind, so across a mixed block
+    it ranks 600 seconds above 80 kg and the winner is then rendered in the
+    loser's unit. `dominant_kind` + `top_set` are the pair that answers "the top
+    one" — this stays only for a single-number readout of one known set.
+    """
     for column in ("load_kg", "meters", "seconds", "reps"):
         value = decimal(row.get(column))
         if value is not None:
             return value
     return 0.0
+
+
+def _num(value: Any) -> float:
+    """0 for a missing number, the way `num()` does in src/domain/analytics.ts."""
+    parsed = decimal(value)
+    return 0.0 if parsed is None else parsed
+
+
+# The per-kind ranking of one performed set, mirroring isBetter() in
+# src/domain/analytics.ts. Load leads for weight_reps and REPS lead for
+# bodyweight: ten pull-ups beat eight with a 5 kg belt, and the two screens
+# ranking the same block differently is how one athlete gets two "top sets".
+_TOP_SET_KEYS = {
+    "weight_reps": lambda row: (_num(row.get("load_kg")), _num(row.get("reps"))),
+    "bodyweight": lambda row: (_num(row.get("reps")), _num(row.get("load_kg"))),
+    "duration": lambda row: (_num(row.get("seconds")),),
+    "distance": lambda row: (_num(row.get("meters")),),
+}
+
+
+def dominant_kind(rows: list[dict[str, Any]]) -> str:
+    """What a block is measured in: the kind most of its live sets carry.
+
+    The first set's kind is not the same answer. A block that a stale client
+    wrote one stray weight_reps row into is still a duration block, and reading
+    it in that one row's kind renders every treadmill minute as an em-dash.
+    """
+    counts: dict[str, int] = {}
+    for row in rows:
+        kind = str(row.get("kind") or "")
+        if kind:
+            counts[kind] = counts.get(kind, 0) + 1
+    if not counts:
+        return "weight_reps"
+    # Insertion order breaks a tie, so the earliest kind in the block wins and
+    # the answer does not move when the same rows are read again.
+    return max(counts, key=lambda kind: counts[kind])
+
+
+def top_set(rows: list[dict[str, Any]], kind: str) -> dict[str, Any] | None:
+    """The best set of `kind` in a block — the number a coach reads as "last time".
+
+    Only sets of that one kind are candidates. Comparing across kinds picks 600
+    treadmill seconds over an 80 kg bench and then prints it as "—", which is the
+    bare, wrong number this screen exists to prevent.
+    """
+    of_kind = [row for row in rows if str(row.get("kind") or "") == kind]
+    if not of_kind:
+        return None
+    key = _TOP_SET_KEYS.get(kind, _TOP_SET_KEYS["weight_reps"])
+    return max(of_kind, key=key)

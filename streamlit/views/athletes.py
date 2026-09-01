@@ -151,13 +151,36 @@ def _top_lines(gym_id: str, session_id: str) -> list[str]:
     if exercise_ids:
         exercises = (
             client.table("exercises")
-            .select("id, name_el, name_en")
+            .select("id, name_el, name_en, merged_into_id")
             .in_("id", exercise_ids)
             .execute()
             .data
             or []
         )
     by_id = {row["id"]: row for row in exercises}
+
+    # A block written before a duplicate was folded in still points at the dead
+    # row (001_init.sql: "reads follow the arrow"), so without this second read
+    # one movement shows two names on one sheet. Only when a merge is actually
+    # in play, and one hop only — exercises_guard_merge() refuses a merge target
+    # that is itself merged.
+    merged = sorted(
+        {
+            row["merged_into_id"]
+            for row in exercises
+            if row.get("merged_into_id") and row["merged_into_id"] not in by_id
+        }
+    )
+    if merged:
+        for row in (
+            client.table("exercises")
+            .select("id, name_el, name_en, merged_into_id")
+            .in_("id", merged)
+            .execute()
+            .data
+            or []
+        ):
+            by_id[row["id"]] = row
 
     by_block: dict[str, list[dict[str, Any]]] = {}
     for row in sets:
@@ -167,12 +190,18 @@ def _top_lines(gym_id: str, session_id: str) -> list[str]:
     for block in blocks:
         performed = by_block.get(block["id"]) or []
         exercise = by_id.get(block.get("exercise_id") or "")
+        merged_into = (exercise or {}).get("merged_into_id")
+        if merged_into:
+            exercise = by_id.get(merged_into, exercise)
         if not performed or exercise is None:
             continue
-        # The kind of the first set is the block's kind: a treadmill block and a
-        # bench block are not comparable and must not be rendered alike.
-        kind = performed[0].get("kind") or "weight_reps"
-        top = max(performed, key=fmt.score)
+        # The block's kind is the majority of its sets, and the top set is picked
+        # within that one kind: a treadmill block and a bench block are not
+        # comparable, and a winner picked across kinds renders in the loser's unit.
+        kind = fmt.dominant_kind(performed)
+        top = fmt.top_set(performed, kind)
+        if top is None:
+            continue
         # Greek first, English as the fallback, from the same helper the log screen
         # uses — the two screens naming the same exercise differently is the seam.
         lines.append(f"{fmt.exercise_name(exercise)} · {fmt.format_set(top, kind)}")

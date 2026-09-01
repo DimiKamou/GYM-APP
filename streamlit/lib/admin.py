@@ -21,6 +21,12 @@ insert where `gym_id = app.my_gym()`, and the restrictive
 adding to their own roster is a permitted write, and a trainer attempting the
 same is refused by the database rather than by an `if` in this file.
 
+Resetting a password has no such backstop: `auth.users` has no policies, so the
+`if` in this file IS the whole permission system for it. It therefore reads the
+caller's role from the server on every call (`_owner_gym`) instead of from the
+membership cached in this browser session, which the database can demote
+underneath — see db.fresh_membership().
+
 The key lives in `st.secrets` (or the environment) and in nothing that is
 committed. When it is
 absent, ADMIN_AVAILABLE is False and the rest of the app runs untouched — only
@@ -127,6 +133,34 @@ def _admin_client() -> Client:
     )
 
 
+def _owner_gym(denial: str) -> str:
+    """The caller's gym, from a role resolved NOW. Never from db.me()'s cache.
+
+    `db.is_owner()` answers from a snapshot taken when the tab was opened, and
+    the database can invalidate it without this process noticing:
+    transfer_ownership() demotes an owner to trainer, and their open tab still
+    says owner. Nothing further down catches it — the service_role key is
+    evaluated against no policy at all, and memberships_select shows the whole
+    roster to every active member, so the "is this one of mine?" check passes
+    for a demoted owner too. On this path the only owner check that exists is
+    this one, so it is a round trip and it fails closed.
+    """
+    try:
+        mine = db.fresh_membership()
+    except Exception as exc:
+        raise RuntimeError(
+            "Ο ρόλος σου δεν επιβεβαιώθηκε από τον διακομιστή, οπότε δεν έγινε "
+            f"τίποτα. Έλεγξε τη σύνδεση και δοκίμασε ξανά. Αιτία: {_text(exc)}"
+        ) from exc
+
+    if (mine.get("role") or "") != "owner":
+        raise PermissionError(denial)
+    gym = str(mine.get("gym_id") or "")
+    if not gym:
+        raise PermissionError("Ο λογαριασμός σου δεν ανήκει σε γυμναστήριο.")
+    return gym
+
+
 def _text(exc: BaseException) -> str:
     """Everything an API error carries, flattened for a message a human reads."""
     parts = [str(getattr(exc, attr, "") or "") for attr in ("message", "code", "details", "hint")]
@@ -190,13 +224,16 @@ def _check_password(password: str) -> None:
 
 
 def _rollback(user_id: str, username: str, exc: BaseException) -> NoReturn:
-    """Undo the auth account when the membership insert fails, then re-raise.
+    """Undo the auth account, then re-raise. Only for a PROVABLY absent row.
 
     A half-created member is the worst outcome available on this path: an
     account that signs in perfectly and then sees an empty app, because
     `app.my_gym()` is null for a user with no membership row and every policy
     in the database evaluates false. Nobody diagnoses that from the symptom —
     it looks like the app is broken, not like the account is incomplete.
+
+    The mirror image is worse still and is not undoable, which is why the caller
+    must look before it deletes — see _settle_failed_insert().
     """
     try:
         _admin_client().auth.admin.delete_user(user_id)
@@ -218,6 +255,85 @@ def _rollback(user_id: str, username: str, exc: BaseException) -> NoReturn:
     ) from exc
 
 
+def _settle_failed_insert(
+    data: Client,
+    gym: str,
+    email: str,
+    user_id: str,
+    username: str,
+    exc: BaseException,
+) -> dict[str, Any]:
+    """Work out what actually happened, then undo only what actually failed.
+
+    `.execute()` raises identically for "PostgREST refused the insert" and for
+    "the row committed and the answer never came back" — a read timeout, a
+    dropped connection. Deleting the auth account on the second one cannot be
+    undone: memberships.user_id is ON DELETE SET NULL, so the committed row
+    survives with no account and status active, and memberships_gym_email_uniq
+    is not partial, so that username is taken in this gym forever by a member
+    who cannot sign in. So the row is read back before anything is deleted, and
+    a read that itself fails leaves BOTH halves alone.
+    """
+    try:
+        rows = (
+            data.table("memberships")
+            .select("id, gym_id, user_id, display_name, email, role, status")
+            .eq("gym_id", gym)
+            .eq("email", email)
+            .limit(1)
+            .execute()
+            .data
+            or []
+        )
+    except Exception as read_exc:
+        # Neither half is provably wrong, so neither is touched. An owner told
+        # which username to look at can finish this in a minute; an owner told
+        # "nothing was created" is being sent to retry into a wall.
+        raise RuntimeError(
+            f"Δεν επιβεβαιώθηκε αν ο/η «{username}» μπήκε στην ομάδα, και τίποτα "
+            "δεν αναιρέθηκε. Ξαναφόρτωσε την Ομάδα: αν εμφανίζεται, ο λογαριασμός "
+            "είναι έτοιμος και ισχύει ο κωδικός που μόλις έδωσες· αν δεν "
+            f"εμφανίζεται, σβήσε τον λογαριασμό «{username}» από το Supabase "
+            f"(Authentication → Users) πριν ξαναδοκιμάσεις. Αιτία: {_text(exc)} · "
+            f"{_text(read_exc)}"
+        ) from exc
+
+    committed = dict(rows[0]) if rows else {}
+    holder = str(committed.get("user_id") or "")
+    if not committed or (holder and holder != user_id):
+        # No row, or a row belonging to somebody else: this insert really was
+        # refused, and the account just minted has nothing to belong to.
+        _rollback(user_id, username, exc)
+
+    if not holder:
+        # The row committed and then the connection dropped, so the account this
+        # row was inserted for is the one just created. Link it rather than
+        # leaving a member who can never sign in and whose username is spent.
+        try:
+            patched = (
+                data.table("memberships")
+                .update({"user_id": user_id})
+                .eq("gym_id", gym)
+                .eq("id", committed["id"])
+                .execute()
+                .data
+                or []
+            )
+        except Exception as patch_exc:
+            raise RuntimeError(
+                f"Ο/Η «{username}» μπήκε στην ομάδα αλλά δεν συνδέθηκε με τον "
+                "λογαριασμό σύνδεσης, οπότε δεν μπορεί ακόμη να μπει. Μην "
+                "ξαναδημιουργήσεις τον χρήστη — δοκίμασε ξανά σε λίγο. Αιτία: "
+                f"{_text(patch_exc)}"
+            ) from exc
+        if patched:
+            committed = dict(patched[0])
+        else:
+            committed["user_id"] = user_id
+
+    return committed
+
+
 def create_member(username: str, full_name: str, role: str, password: str) -> dict[str, Any]:
     """Create an auth account and the membership row that gives it a gym.
 
@@ -225,12 +341,7 @@ def create_member(username: str, full_name: str, role: str, password: str) -> di
     with. Raises PermissionError when the caller is not the owner, ValueError
     for anything the owner can fix by retyping, RuntimeError for the rest.
     """
-    if not db.is_owner():
-        raise PermissionError("Μόνο ο ιδιοκτήτης του γυμναστηρίου προσθέτει χρήστες.")
-
-    gym = db.gym_id()
-    if not gym:
-        raise PermissionError("Ο λογαριασμός σου δεν ανήκει σε γυμναστήριο.")
+    gym = _owner_gym("Μόνο ο ιδιοκτήτης του γυμναστηρίου προσθέτει χρήστες.")
 
     if role not in _ROLES:
         raise ValueError("Ο ρόλος είναι «προπονητής» ή «ιδιοκτήτης».")
@@ -260,7 +371,10 @@ def create_member(username: str, full_name: str, role: str, password: str) -> di
     # then has to be deleted again.
     taken = (
         data.table("memberships")
-        .select("id, display_name, status")
+        # user_id, because "taken" has two very different meanings: a member who
+        # signs in with it, and a row left without an account, which is a member
+        # nobody can repair by retyping the form.
+        .select("id, display_name, status, user_id")
         .eq("gym_id", gym)
         .eq("email", email)
         .limit(1)
@@ -275,6 +389,14 @@ def create_member(username: str, full_name: str, role: str, password: str) -> di
                 f"Το όνομα χρήστη «{username}» ανήκει στον/στην {holder}, που έχει "
                 "αφαιρεθεί. Επανέφερέ τον αντί να φτιάξεις δεύτερο λογαριασμό — έτσι "
                 "η παλιά του δουλειά μένει στο όνομά του."
+            )
+        if not taken[0].get("user_id"):
+            raise ValueError(
+                f"Το όνομα χρήστη «{username}» το κρατά η γραμμή του/της {holder}, "
+                "που δεν έχει λογαριασμό σύνδεσης. Δεύτερη γραμμή με το ίδιο όνομα "
+                "χρήστη δεν επιτρέπεται: διάλεξε άλλο όνομα, ή φτιάξε τον λογαριασμό "
+                "από το Supabase (Authentication → Users) και σύνδεσέ τον με αυτή τη "
+                "γραμμή."
             )
         raise ValueError(f"Το όνομα χρήστη «{username}» το έχει ήδη ο/η {holder}.")
 
@@ -351,21 +473,17 @@ def create_member(username: str, full_name: str, role: str, password: str) -> di
         if not inserted:
             raise RuntimeError("η εγγραφή μέλους δεν επέστρεψε γραμμή")
     except Exception as exc:
-        _rollback(user_id, username, exc)
+        member = _settle_failed_insert(data, gym, email, user_id, username, exc)
+    else:
+        member = dict(inserted[0])
 
-    member = dict(inserted[0])
     member["username"] = username
     return member
 
 
 def reset_password(user_id: str, new_password: str) -> None:
     """Set another member's password. Owner only, and only inside their gym."""
-    if not db.is_owner():
-        raise PermissionError("Μόνο ο ιδιοκτήτης αλλάζει τον κωδικό άλλου χρήστη.")
-
-    gym = db.gym_id()
-    if not gym:
-        raise PermissionError("Ο λογαριασμός σου δεν ανήκει σε γυμναστήριο.")
+    gym = _owner_gym("Μόνο ο ιδιοκτήτης αλλάζει τον κωδικό άλλου χρήστη.")
 
     _check_password(new_password)
 

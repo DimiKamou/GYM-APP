@@ -96,6 +96,29 @@ def _catalogue(gym_id: str) -> list[dict[str, Any]]:
     )
 
 
+@st.cache_data(ttl=15, show_spinner=False)
+def _exercise(gym_id: str, exercise_id: str) -> dict[str, Any] | None:
+    """One exercise, read past a stale catalogue.
+
+    Short ttl on purpose: this is the read that answers "what is this block
+    measured in" when the catalogue cannot, and it is asked while the coach is
+    standing in front of the machine.
+    """
+    if not exercise_id:
+        return None
+    rows = (
+        db.client()
+        .table("exercises")
+        .select("id, name_el, name_en, category, default_set_kind, is_archived, merged_into_id, deleted_at")
+        .eq("id", exercise_id)
+        .limit(1)
+        .execute()
+        .data
+        or []
+    )
+    return rows[0] if rows else None
+
+
 @st.cache_data(ttl=300, show_spinner=False)
 def _muscle_groups(gym_id: str) -> list[dict[str, Any]]:
     """The taxonomy in DISPLAY order — position first, never the alphabet.
@@ -170,28 +193,55 @@ def _sets(gym_id: str, session_id: str, block_ids: tuple[str, ...]) -> list[dict
     )
 
 
+_EPOCH = datetime.min.replace(tzinfo=timezone.utc)
+
+
+def _session_order(local_date: Any, started_at: Any, session_id: Any) -> tuple[date, datetime, str]:
+    """The total order compareSessions() uses in src/domain/analytics.ts.
+
+    The gym day leads because it is the fact a coach reasons about; the instant
+    and the id are there only to make the order total, so two clients reading the
+    same history agree on which session came first.
+    """
+    return (
+        fmt.parse_local_date(local_date) or date.min,
+        fmt.parse_instant(started_at) or _EPOCH,
+        str(session_id or ""),
+    )
+
+
 @st.cache_data(ttl=120, show_spinner=False)
 def _last_performance(
     gym_id: str,
     athlete_id: str,
-    exercise_ids: tuple[str, ...],
-    exclude_session_id: str,
+    exercise_keys: tuple[tuple[str, str], ...],
+    current_session: tuple[str, str, str],
 ) -> dict[str, dict[str, Any]]:
-    """exercise id -> the athlete's last top set on it, with its day and author.
+    """canonical exercise id -> the athlete's last top set on it, with day and author.
 
     Three queries for the whole screen rather than one per block: the athlete's
     recent sessions, the blocks of those sessions that use these exercises, and
-    the sets of the winning blocks. The current workout is excluded — "last time"
-    means the last time before today's, otherwise the target moves as the coach
-    types it.
+    the sets of the winning blocks.
+
+    `exercise_keys` pairs every id a block may carry with the canonical id it
+    stands for. A movement whose duplicate has been folded in is logged under two
+    ids, and both halves are the same movement's history.
+
+    `current_session` is (local_date, started_at, id), and only sessions strictly
+    before it in that order are candidates. Excluding the open workout by id
+    alone is not enough: a session left open at 06:00 while a colleague logs and
+    finishes a heavier one at 07:15 would otherwise be told the 07:15 numbers
+    were "last time".
     """
-    if not exercise_ids:
+    if not exercise_keys:
         return {}
+
+    canonical = dict(exercise_keys)
 
     client = db.client()
     sessions = (
         client.table("sessions")
-        .select("id, local_date, started_at, logged_by")
+        .select("id, local_date, started_at, logged_by, credited_to")
         .eq("gym_id", gym_id)
         .eq("athlete_id", athlete_id)
         .is_("deleted_at", "null")
@@ -206,7 +256,13 @@ def _last_performance(
         or []
     )
 
-    history = [row for row in sessions if str(row.get("id")) != exclude_session_id]
+    current_key = _session_order(*current_session)
+    history = [
+        row
+        for row in sessions
+        if str(row.get("id")) != current_session[2]
+        and _session_order(row.get("local_date"), row.get("started_at"), row.get("id")) < current_key
+    ]
     if not history:
         return {}
     rank_of = {str(row["id"]): rank for rank, row in enumerate(history)}
@@ -217,7 +273,7 @@ def _last_performance(
         .select("id, session_id, exercise_id")
         .eq("gym_id", gym_id)
         .in_("session_id", list(rank_of))
-        .in_("exercise_id", list(exercise_ids))
+        .in_("exercise_id", list(canonical))
         .is_("deleted_at", "null")
         .execute()
         .data
@@ -234,7 +290,11 @@ def _last_performance(
         rank = rank_of.get(str(block.get("session_id")))
         if rank is None:
             continue
-        exercise_id = str(block.get("exercise_id") or "")
+        # Keyed by the canonical id: a block written before the merge and one
+        # written after it are the same movement and must not answer separately.
+        exercise_id = canonical.get(str(block.get("exercise_id") or ""), "")
+        if not exercise_id:
+            continue
         current = winners.get(exercise_id)
         if current is None or rank < current["rank"]:
             winners[exercise_id] = {
@@ -268,15 +328,23 @@ def _last_performance(
         rows = [row for bid in winner["block_ids"] for row in by_block.get(bid, [])]
         if not rows:
             continue
-        top = max(rows, key=fmt.score)
+        # The block's own kind first, then the best set within it. A treadmill
+        # set and a bench set are not comparable, and the winner of a comparison
+        # across kinds renders in the loser's unit.
+        kind = fmt.dominant_kind(rows)
+        top = fmt.top_set(rows, kind)
+        if top is None:
+            continue
         session = session_of[winner["session_id"]]
         result[exercise_id] = {
             "set": top,
-            # Each set carries its own kind; a treadmill block and a bench block
-            # are not comparable and must not be rendered alike.
-            "kind": top.get("kind") or "weight_reps",
+            "kind": kind,
             "day": fmt.parse_local_date(session.get("local_date")),
-            "logged_by": session.get("logged_by"),
+            # sessionAuthorId() in src/domain/analytics.ts: the credit, falling
+            # back to who typed it. A session Μαρία typed and re-credited to
+            # Νίκος reads as Νίκος everywhere else in the product, and the whole
+            # point of credited_to is that this edit is visible.
+            "author": session.get("credited_to") or session.get("logged_by"),
         }
     return result
 
@@ -301,6 +369,52 @@ def _session_row(gym_id: str, session_id: str) -> dict[str, Any] | None:
 def _clear_workout_caches() -> None:
     _blocks.clear()
     _sets.clear()
+    # The catalogue is cached for minutes and the blocks for seconds, so a
+    # colleague's brand-new exercise can be on this screen as a block while the
+    # row that says what it is measured in is still missing from this tab's copy.
+    _catalogue.clear()
+    _exercise.clear()
+
+
+def _canonical_ids(catalogue: list[dict[str, Any]]) -> dict[str, str]:
+    """Every exercise id the gym can see -> the row it is really about.
+
+    A folded duplicate keeps naming the blocks that already point at it —
+    001_init.sql: "the block keeps pointing at the dead row, reads follow the
+    arrow" — so a read that does not follow it asks for the canonical id, matches
+    none of that history and tells the coach it is the athlete's first time. One
+    hop is enough: exercises_guard_merge() refuses a merge target that is itself
+    merged.
+    """
+    return {
+        str(row["id"]): str(row.get("merged_into_id") or row["id"])
+        for row in catalogue
+        if row.get("id")
+    }
+
+
+def _resolve_exercise(
+    gym_id: str,
+    catalogue: dict[str, dict[str, Any]],
+    canonical: dict[str, str],
+    exercise_id: str,
+) -> dict[str, Any] | None:
+    """The row a block's name and default_set_kind must come from, or None.
+
+    None is an answer, not a failure to report later: the caller draws a notice
+    instead of a set form. Guessing here is what writes twenty treadmill minutes
+    as reps at zero kilos, which sets_complete_for_kind cannot see and no reader
+    downstream can undo.
+    """
+    if not exercise_id:
+        return None
+    row = catalogue.get(canonical.get(exercise_id, exercise_id)) or catalogue.get(exercise_id)
+    if row is not None:
+        return row
+    try:
+        return _exercise(gym_id, exercise_id)
+    except Exception:
+        return None
 
 
 # ---------------------------------------------------------------------------
@@ -468,10 +582,12 @@ def _kind_of(rows: list[dict[str, Any]], exercise: dict[str, Any] | None) -> str
 
     The kind of the sets already in the block wins over the exercise's default:
     once a block holds seconds, a second set of reps under the same heading would
-    make the block unreadable and its volume meaningless.
+    make the block unreadable and its volume meaningless. Which kind that is, is
+    the majority of the live sets and not the first one, so one stray row from a
+    stale client cannot decide how every other set in the block renders.
     """
     if rows:
-        return str(rows[0].get("kind") or "weight_reps")
+        return fmt.dominant_kind(rows)
     return str((exercise or {}).get("default_set_kind") or "weight_reps")
 
 
@@ -649,7 +765,7 @@ def _last_time_line(
         return "Πρώτη φορά σε αυτή την άσκηση."
     performed = fmt.format_set(entry["set"], entry["kind"])
     when = fmt.format_day(entry["day"], today) if entry.get("day") else fmt.EMPTY
-    who = fmt.author_of(names, entry.get("logged_by"))
+    who = fmt.author_of(names, entry.get("author"))
     return f"Τελευταία φορά: {performed} · {when} · {who}"
 
 
@@ -664,6 +780,23 @@ def _block_card(
     today: date,
 ) -> None:
     block_id = str(block["id"])
+
+    if exercise is None and not rows:
+        # Nothing on this screen may guess a kind. An unresolved exercise
+        # defaulted to weight_reps writes twenty treadmill minutes as reps at
+        # zero kilos; sets_complete_for_kind is satisfied by that row and no
+        # later reader can tell it apart from a real one.
+        with st.container(border=True):
+            st.warning("Η άσκηση δεν φορτώθηκε.")
+            st.caption(
+                "Δεν ξέρουμε σε τι μετριέται, οπότε δεν μπορεί να καταχωρηθεί σετ ακόμα."
+            )
+            if st.button("Δοκίμασε ξανά", key=f"log_reload_{block_id}"):
+                _catalogue.clear()
+                _exercise.clear()
+                st.rerun()
+        return
+
     kind = _kind_of(rows, exercise)
 
     with st.container(border=True):
@@ -784,18 +917,24 @@ def _finished_screen(gym_id: str, athlete: dict[str, Any], finished: dict[str, A
         for row in rows:
             by_block.setdefault(str(row.get("block_id")), []).append(row)
         try:
-            catalogue = {str(row["id"]): row for row in _catalogue(gym_id)}
+            rows_of_catalogue = _catalogue(gym_id)
         except Exception:
-            catalogue = {}
+            rows_of_catalogue = []
+        catalogue = {str(row["id"]): row for row in rows_of_catalogue}
+        canonical = _canonical_ids(rows_of_catalogue)
 
         summary = []
         for block in blocks:
             performed = by_block.get(str(block["id"]), [])
             if not performed:
                 continue
-            exercise = catalogue.get(str(block.get("exercise_id") or ""))
-            kind = _kind_of(performed, exercise)
-            top = max(performed, key=fmt.score)
+            exercise = _resolve_exercise(
+                gym_id, catalogue, canonical, str(block.get("exercise_id") or "")
+            )
+            kind = fmt.dominant_kind(performed)
+            top = fmt.top_set(performed, kind)
+            if top is None:
+                continue
             summary.append(
                 f"- {fmt.md(fmt.exercise_name(exercise))} · {fmt.format_set(top, kind)} "
                 f"({len(performed)} σετ)"
@@ -897,15 +1036,31 @@ def _workout(gym_id: str, athlete: dict[str, Any], session: dict[str, Any]) -> N
         by_block.setdefault(str(row.get("block_id")), []).append(row)
 
     try:
-        catalogue = {str(row["id"]): row for row in _catalogue(gym_id)}
+        rows_of_catalogue = _catalogue(gym_id)
     except Exception as exc:
         st.error("Ο κατάλογος ασκήσεων δεν φορτώθηκε.")
         st.caption(str(exc))
-        catalogue = {}
+        rows_of_catalogue = []
+    catalogue = {str(row["id"]): row for row in rows_of_catalogue}
+    canonical = _canonical_ids(rows_of_catalogue)
 
-    exercise_ids = tuple(sorted({str(block.get("exercise_id") or "") for block in blocks} - {""}))
+    raw_ids = {str(block.get("exercise_id") or "") for block in blocks} - {""}
+    on_screen = {canonical.get(raw, raw) for raw in raw_ids}
+    # Both halves of a merged movement's history, keyed by the canonical id it
+    # all belongs to. An id the catalogue has never heard of stands for itself.
+    exercise_keys = tuple(
+        sorted(
+            {(raw, canon) for raw, canon in canonical.items() if canon in on_screen}
+            | {(exercise_id, exercise_id) for exercise_id in on_screen}
+        )
+    )
+    current_session = (
+        str(session.get("local_date") or ""),
+        str(session.get("started_at") or ""),
+        session_id,
+    )
     try:
-        last = _last_performance(gym_id, athlete_id, exercise_ids, session_id)
+        last = _last_performance(gym_id, athlete_id, exercise_keys, current_session)
     except Exception:
         # The history is the nicest thing on this screen and the least essential:
         # losing it must not stop the coach logging the set in front of them.
@@ -915,12 +1070,13 @@ def _workout(gym_id: str, athlete: dict[str, Any], session: dict[str, Any]) -> N
         st.info("Καμία άσκηση ακόμα. Πρόσθεσε την πρώτη από το «Προσθήκη άσκησης».")
 
     for block in blocks:
+        exercise_id = str(block.get("exercise_id") or "")
         _block_card(
             gym_id,
             block,
-            catalogue.get(str(block.get("exercise_id") or "")),
+            _resolve_exercise(gym_id, catalogue, canonical, exercise_id),
             by_block.get(str(block["id"]), []),
-            last.get(str(block.get("exercise_id") or "")),
+            last.get(canonical.get(exercise_id, exercise_id)),
             names,
             session.get("logged_by"),
             today,

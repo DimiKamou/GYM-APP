@@ -21,6 +21,10 @@ WORKDIR /app
 COPY requirements.txt ./
 RUN pip install --no-cache-dir -r requirements.txt
 
+# Everything the app needs and, thanks to .dockerignore, nothing else. That
+# file is what keeps a filled-in .streamlit/secrets.toml out of the context and
+# therefore out of every layer; see the check below for why it has to be the
+# context and not a later cleanup.
 COPY . .
 
 # Two things, both about the secrets file:
@@ -29,12 +33,18 @@ COPY . .
 #    holds it, so /app/.streamlit/secrets.toml hides /app/.streamlit/config.toml
 #    and the app would boot themeless. Streamlit also reads ~/.streamlit/config.toml,
 #    which no mount covers, so the theme survives from there.
-# 2. A developer who has filled in a local .streamlit/secrets.toml would
-#    otherwise bake the service_role key — which bypasses every RLS policy in the
-#    schema — into a layer of a pushed image.
+# 2. A developer's own secrets.toml carries the service_role key, which bypasses
+#    every RLS policy in the schema. `rm` here would not have removed it from the
+#    image: this layer only records a whiteout, while the layer COPY wrote holds
+#    the file intact for anyone who runs `docker save | tar x`. .dockerignore is
+#    the thing that works, so this asserts it held — a build context that still
+#    carries the file fails now, while there is no image yet to push.
 RUN mkdir -p /root/.streamlit \
     && cp .streamlit/config.toml /root/.streamlit/config.toml \
-    && rm -f .streamlit/secrets.toml
+    && if [ -e .streamlit/secrets.toml ]; then \
+         echo "secrets.toml reached the build context; check streamlit/.dockerignore" >&2; \
+         exit 1; \
+       fi
 
 EXPOSE 8080
 

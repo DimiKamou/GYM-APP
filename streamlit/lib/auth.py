@@ -46,6 +46,15 @@ _COOKIE_OP_KEY = "_cookie_op_seq"
 _EXPIRES_KEY = "_auth_expires_at"
 _EMAIL_KEY = "_auth_email"
 _PROBE_KEY = "_cookie_probes"
+# Sign-out is decided here and nowhere else. The cookie component answers with
+# what the browser posted BEFORE the delete this run flushed, so a snapshot read
+# in that run still carries the refresh token that was just destroyed — and
+# handing it back to the server would sign the trainer who pressed Αποσύνδεση
+# straight back in, under the next trainer's fingers.
+_SIGNED_OUT_KEY = "_auth_signed_out"
+# Set when bootstrap_gym() refused because a membership row exists that this
+# session cannot read. The create-gym form must not be re-offered after that.
+_BLOCKED_KEY = "_auth_membership_blocked"
 
 # A username has to survive being an email local part.
 _USERNAME_RE = re.compile(r"^[a-z0-9._-]{1,64}$")
@@ -173,14 +182,59 @@ def sign_out() -> None:
     _sign_out_state(drop_cookie=True)
 
 
-def change_password(new_password: str) -> None:
+def change_password(new_password: str, current_password: str | None = None) -> None:
+    """Set a new password, after proving the person typing it owns the account.
+
+    `current_password` is optional in the signature and mandatory in the body:
+    a caller still written against the one-argument version must fail loudly at
+    the first attempt rather than silently keep the unverified behaviour. The
+    session on a phone that lives in a gym bag lasts thirty days and these
+    accounts have no mailbox, so a stranger who changes this password locks the
+    trainer out of the only sheet their gym has, and only the owner can undo it.
+    """
     password = new_password or ""
     if len(password) < 8:
         raise ValueError("Ο κωδικός πρέπει να έχει τουλάχιστον 8 χαρακτήρες.")
+    if not (current_password or ""):
+        raise ValueError("Γράψε τον τρέχοντα κωδικό σου για να τον αλλάξεις.")
+
+    _reauthenticate(current_password or "")
+
     try:
         db.client().auth.update_user({"password": password})
     except Exception as exc:
         raise RuntimeError(_password_error(exc)) from exc
+
+
+def _reauthenticate(current_password: str) -> None:
+    """Ask the server whether this password is really this account's."""
+    username = current_username()
+    if not username:
+        # Without an address there is nothing to check the password against, and
+        # an unverified change is the thing this function exists to prevent.
+        raise RuntimeError("Ο λογαριασμός δεν αναγνωρίστηκε. Κάνε αποσύνδεση, μπες ξανά και δοκίμασε.")
+    try:
+        email = email_for(username)
+    except ValueError as exc:
+        raise RuntimeError(_BAD_CREDENTIALS) from exc
+
+    try:
+        response = db.client().auth.sign_in_with_password(
+            {"email": email, "password": current_password}
+        )
+    except Exception as exc:
+        # Same sentence as the sign-in form gives: a settings screen that says
+        # "wrong password" differently is a second thing to keep in step.
+        raise RuntimeError(_auth_error(exc)) from exc
+
+    session = getattr(response, "session", None)
+    if not _remember(session):
+        raise RuntimeError(_BAD_CREDENTIALS)
+    # The check minted a new session and update_user() will run under it. GoTrue
+    # can drop this account's other sessions when the password changes, so the
+    # cookie has to carry the surviving refresh token before that happens — or
+    # the next cold start on this phone lands on the sign-in form.
+    _flush_cookie()
 
 
 # ---------------------------------------------------------------------------
@@ -211,6 +265,13 @@ def _needs_refresh() -> bool:
 
 def _use_refresh_token(token: str | None) -> bool:
     if not token:
+        # db.attach_session stores `refresh_token or ""`, so a session can hold
+        # an access token with no way to renew it. Returning False on its own
+        # would leave that expired token attached to postgrest behind a sign-in
+        # form: the screen says signed out, the queries say signed in, and
+        # nothing ever converges.
+        _sign_out_state(drop_cookie=True)
+        _flush_cookie()
         return False
     try:
         response = db.client().auth.refresh_session(token)
@@ -245,7 +306,10 @@ def _remember(session: Any) -> bool:
     if email:
         st.session_state[_EMAIL_KEY] = str(email)
     st.session_state[_EXPIRES_KEY] = _expiry_epoch(session)
-    st.session_state.pop(_PROBE_KEY, None)
+    # A session in hand retires every flag whose only job is to keep one from
+    # being restored, so none of them can outlive the person who caused it.
+    for key in (_PROBE_KEY, _SIGNED_OUT_KEY, _BLOCKED_KEY):
+        st.session_state.pop(key, None)
     if refresh:
         # Supabase rotates the refresh token on every use, so the cookie is
         # rewritten each time — an old one is already spent.
@@ -269,7 +333,7 @@ def _expiry_epoch(session: Any) -> float:
 
 def _sign_out_state(drop_cookie: bool = True) -> None:
     db.forget_session()
-    for key in (_EXPIRES_KEY, _EMAIL_KEY, _PROBE_KEY):
+    for key in (_EXPIRES_KEY, _EMAIL_KEY, _PROBE_KEY, _BLOCKED_KEY):
         st.session_state.pop(key, None)
     # Navigation state belongs to a person: the next trainer on this tablet must
     # not inherit the previous one's open athlete or half-written session.
@@ -277,6 +341,10 @@ def _sign_out_state(drop_cookie: bool = True) -> None:
         st.session_state.pop(key, None)
     if drop_cookie:
         st.session_state[_PENDING_COOKIE_KEY] = ("delete", None)
+        # Set with the delete, not after it: from here until the browser
+        # confirms the cookie is gone, this flag — never a cookie snapshot — is
+        # the answer to "is anyone signed in".
+        st.session_state[_SIGNED_OUT_KEY] = True
     try:
         # @st.cache_data is global to the server process. Every cached function
         # is keyed by gym_id, so this is belt and braces — and cheap.
@@ -318,9 +386,17 @@ def _cookie_snapshot() -> dict[str, Any] | None:
     if cookies is None:
         return None
     try:
-        return dict(cookies)
+        # A None value is a cookie the browser does not have; keeping it would
+        # make the fallback branch above look like an answer.
+        answered = {name: value for name, value in dict(cookies).items() if value is not None}
     except Exception:
         return {}
+    # extra-streamlit-components returns the component's default — an empty
+    # dict — until the iframe has posted, so "no cookies" and "not asked yet"
+    # arrive as the same value. Reading it as "not asked yet" is what keeps the
+    # sign-in form from flashing over a session that is one round trip from
+    # restoring; the probe budget in _restore_from_cookie bounds the wait.
+    return answered or None
 
 
 def _restore_from_cookie() -> bool:
@@ -332,9 +408,17 @@ def _restore_from_cookie() -> bool:
             with st.spinner("Έλεγχος σύνδεσης…"):
                 time.sleep(_PROBE_PAUSE_S)
             st.rerun()
-        return False
+        # The budget is spent: stop guessing and treat silence as no cookie, so
+        # a browser that blocks the component still reaches the form.
+        cookies = {}
 
     token = cookies.get(_COOKIE_NAME)
+    if st.session_state.get(_SIGNED_OUT_KEY):
+        if not token:
+            # The browser has answered without it, so the delete has landed and
+            # any cookie from here on belongs to a new sign-in.
+            st.session_state.pop(_SIGNED_OUT_KEY, None)
+        return False
     if not token:
         return False
     return _use_refresh_token(str(token))
@@ -405,6 +489,11 @@ def _render_sign_in() -> None:
     # so the only recovery path is the owner, from the Ομάδα screen.
     st.caption("Ξέχασες τον κωδικό; Ο ιδιοκτήτης του γυμναστηρίου τον αλλάζει από την Ομάδα.")
 
+    # The form is on screen, so the probe budget is spent whether the cookie
+    # iframe ever answered or not: from here a rerun to wait for it would throw
+    # away the password being typed into the boxes above.
+    st.session_state[_PROBE_KEY] = _PROBE_LIMIT
+
     if not submitted:
         return
 
@@ -453,6 +542,10 @@ def _render_bootstrap() -> None:
         _render_sign_out_button()
         return
 
+    if st.session_state.get(_BLOCKED_KEY):
+        _render_blocked_account()
+        return
+
     st.subheader("Νέο γυμναστήριο")
     st.write(
         "Ο λογαριασμός σου δεν ανήκει ακόμη σε γυμναστήριο. "
@@ -486,14 +579,35 @@ def _render_bootstrap() -> None:
         ).execute()
     except Exception as exc:
         message, stale = _bootstrap_error(exc)
-        st.error(message)
         if stale:
-            # The server knows about a membership this session had not read yet.
+            # The server knows about a membership this session had not read yet,
+            # so which screen is right is decided by a fresh read and not here.
+            # Leaving the create-gym form up under an error that contradicts it
+            # is what gets the button pressed a second time.
+            st.session_state[_BLOCKED_KEY] = True
             db.clear_identity()
+            st.rerun()
+        st.error(message)
         return
 
     db.clear_identity()
     st.rerun()
+
+
+def _render_blocked_account() -> None:
+    """For an account that has a membership row it cannot use.
+
+    Never the create-gym form: bootstrap_gym() would hand a removed trainer a
+    second, empty gym with themselves as its owner, and the owner who removed
+    them could not add them back — create_member() registers a project-global
+    address and refuses one that already exists.
+    """
+    st.subheader("Ο λογαριασμός δεν είναι ενεργός")
+    st.write(
+        "Ο λογαριασμός σου έχει αφαιρεθεί από το γυμναστήριο ή δεν έχει ενεργοποιηθεί ακόμη. "
+        "Μίλα με τον ιδιοκτήτη του γυμναστηρίου."
+    )
+    _render_sign_out_button()
 
 
 def _render_sign_out_button() -> None:

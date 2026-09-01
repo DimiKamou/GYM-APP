@@ -207,3 +207,43 @@ select 'group after the owner archived it: '
        ||case when deleted_at is null then 'STILL LIVE — policy is broken' else 'archived' end
   from public.muscle_groups where id = 'ca7a2000-0000-4000-8000-0000000000a1';
 reset role;
+
+\echo '--- 19. A REMOVED member calls bootstrap_gym (must FAIL: 004 narrowed the guard) ---'
+-- Identities at this point in the file: check 12 ran transfer_ownership, so
+-- Maria (11111111) is the OWNER and Dimitris (22222222) is the trainer. Reading
+-- the roles off the fixture INSERT at the top gives the pre-transfer answer and
+-- is how this check was first written backwards, against a user who was still
+-- an active owner and would have been refused by the guard in 001 too.
+--
+-- Removing a trainer sets status = 'removed' and leaves auth.users untouched, so
+-- they still sign in. The guard in 001 rejected only an ACTIVE membership, so a
+-- removed trainer was handed a second gym with themselves as owner — and since
+-- the sign-in address is unique across the whole project, the gym they were
+-- removed from could then never re-add them.
+--
+-- It cannot be checked from a client: app.my_gym() filters status = 'active', so
+-- a removed account sees no row of memberships at all, its own included. The
+-- count below is what proves that, and is the reason the guard has to be here.
+set role authenticated;
+set request.jwt.claim.sub = '11111111-1111-1111-1111-111111111111';
+update public.memberships set status = 'removed'
+ where id = 'cccccccc-0000-0000-0000-000000000002';
+select 'the owner removed the trainer: '
+       ||(select status::text from public.memberships
+           where id = 'cccccccc-0000-0000-0000-000000000002');
+
+set request.jwt.claim.sub = '22222222-2222-2222-2222-222222222222';
+select 'membership rows the removed trainer can see: '||count(*) from public.memberships;
+select public.bootstrap_gym('Σκιώδες Γυμναστήριο', 'Απομακρυσμένος', 'Europe/Athens');
+
+\echo '    (put the trainer back, so the fixture is what the next reader expects)'
+set request.jwt.claim.sub = '11111111-1111-1111-1111-111111111111';
+update public.memberships set status = 'active'
+ where id = 'cccccccc-0000-0000-0000-000000000002';
+reset role;
+-- Counted with the role reset, because a removed account sees no gyms at all
+-- and "0 gyms" from inside its own session would be true whether or not the
+-- call had just created one. Two is the fixture: Iron Lab and the other gym.
+select 'gyms in the database after the attempt: '||count(*)
+       ||case when count(*) = 2 then ' (σωστό)' else ' — ΤΟ ΓΥΜΝΑΣΤΗΡΙΟ ΔΗΜΙΟΥΡΓΗΘΗΚΕ' end
+  from public.gyms;

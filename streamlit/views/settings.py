@@ -56,13 +56,20 @@ def _password_form() -> None:
     st.subheader("Αλλαγή κωδικού")
     st.caption(
         "Τουλάχιστον 8 χαρακτήρες. Δεν στέλνεται email — ο κωδικός αλλάζει εδώ και "
-        "ισχύει αμέσως."
+        "ισχύει αμέσως. Χρειάζεται και ο τρέχων κωδικός σου."
     )
 
     # One round trip for both boxes, and the boxes empty themselves afterwards:
     # a password left sitting in a field on a shared gym phone is the next
     # person's password.
     with st.form("settings_password", clear_on_submit=True):
+        # The session survives thirty days on a phone that lives in a gym bag, and
+        # these accounts have no mailbox to recover from — so whoever finds it
+        # unlocked could otherwise lock the owner out of their own account, and
+        # only the gym owner could undo it.
+        current_password = st.text_input(
+            "Τρέχων κωδικός", type="password", autocomplete="current-password"
+        )
         new_password = st.text_input(
             "Νέος κωδικός", type="password", autocomplete="new-password"
         )
@@ -74,8 +81,8 @@ def _password_form() -> None:
     if not submitted:
         return
 
-    if not new_password or not repeated:
-        st.error("Συμπλήρωσε και τα δύο πεδία.")
+    if not current_password or not new_password or not repeated:
+        st.error("Συμπλήρωσε και τα τρία πεδία.")
         return
 
     if new_password != repeated:
@@ -85,7 +92,7 @@ def _password_form() -> None:
         return
 
     try:
-        auth.change_password(new_password)
+        auth.change_password(new_password, current_password)
     except (ValueError, RuntimeError) as exc:
         st.error(str(exc))
         return

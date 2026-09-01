@@ -136,19 +136,52 @@ def _reset_password_form(members: list[dict[str, Any]]) -> None:
     resettable = [
         member
         for member in members
-        if member.get("user_id") and (member.get("status") or "") != "removed"
+        if member.get("id")
+        and member.get("user_id")
+        and (member.get("status") or "") != "removed"
     ]
     if not resettable:
         st.info("Κανένα μέλος με λογαριασμό σύνδεσης.")
         return
 
-    def _label(index: int) -> str:
-        member = resettable[index]
-        who = member.get("display_name") or auth.sign_in_name(member.get("email")) or "—"
-        return f"{who} · {_ROLE_LABELS.get(member.get('role') or '', member.get('role') or '')}"
+    # The choice travels as a membership id, never as a position in this list.
+    # The roster behind it is a 30-second cache, so the run that draws the form
+    # and the run that submits it can be looking at different lists: keyed by
+    # position, a rename or a removal-plus-addition in between moved the reset
+    # onto whoever now sat at that index, and the owner walked away with a
+    # password they believed belonged to the person on the label.
+    by_id = {str(member["id"]): member for member in resettable}
+
+    def _label(member_id: str) -> str:
+        # Streamlit carries a selectbox choice between runs as the label it
+        # rendered, so two members sharing a name and a role would be one
+        # indistinguishable option. The sign-in name is unique per gym — it is
+        # what makes the label an identity — and the owner is about to hand it
+        # over with the password anyway.
+        member = by_id.get(member_id, {})
+        return " · ".join(
+            part
+            for part in (
+                member.get("display_name") or "—",
+                auth.sign_in_name(member.get("email")),
+                _ROLE_LABELS.get(member.get("role") or "", member.get("role") or ""),
+            )
+            if part
+        )
 
     with st.form("team_reset_password", clear_on_submit=True):
-        chosen = st.selectbox("Μέλος", range(len(resettable)), format_func=_label)
+        # index=None: with a preselected first option, a choice this run can no
+        # longer honour silently becomes that first member instead of surfacing.
+        # Nothing preselected means the fallback is "no member", which the check
+        # below can refuse.
+        chosen = st.selectbox(
+            "Μέλος",
+            list(by_id),
+            format_func=_label,
+            index=None,
+            placeholder="Διάλεξε μέλος",
+            key="team_reset_member",
+        )
         password = st.text_input(
             "Νέος κωδικός",
             type="password",
@@ -160,7 +193,16 @@ def _reset_password_form(members: list[dict[str, Any]]) -> None:
     if not submitted:
         return
 
-    member = resettable[int(chosen)]
+    # Resolved against the roster THIS run read, so the id either still names a
+    # member of this gym or nothing happens at all.
+    member = by_id.get(str(chosen)) if chosen is not None else None
+    if member is None:
+        st.error(
+            "Διάλεξε μέλος από τη λίστα. Αν είχες ήδη διαλέξει, η ομάδα άλλαξε "
+            "στο μεταξύ: κανένας κωδικός δεν άλλαξε, διάλεξέ το ξανά."
+        )
+        return
+
     try:
         admin.reset_password(str(member.get("user_id") or ""), password)
     except PermissionError as exc:
