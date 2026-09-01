@@ -21,7 +21,8 @@ insert where `gym_id = app.my_gym()`, and the restrictive
 adding to their own roster is a permitted write, and a trainer attempting the
 same is refused by the database rather than by an `if` in this file.
 
-The key lives in `st.secrets` and in nothing that is committed. When it is
+The key lives in `st.secrets` (or the environment) and in nothing that is
+committed. When it is
 absent, ADMIN_AVAILABLE is False and the rest of the app runs untouched — only
 creating accounts is unavailable.
 """
@@ -31,7 +32,6 @@ from __future__ import annotations
 import re
 from typing import Any, NoReturn
 
-import streamlit as st
 from supabase import Client, create_client
 
 try:  # the export moved out of the private layout in supabase-py 2.x
@@ -42,13 +42,15 @@ except ImportError:  # pragma: no cover - older layouts still expose it here
 from lib import auth, db
 
 
-# The canonical secret names, plus the two spellings people actually paste out
-# of the Supabase dashboard. The canonical one is what the missing-secret
-# message names, so the fix is unambiguous.
+# The canonical secret names, plus the spellings people actually paste out of the
+# Supabase dashboard. The canonical one is what `.streamlit/secrets.toml.example`
+# documents AND what the missing-secret message names, so the fix is
+# unambiguous — the two disagreeing is how an owner ends up adding a key under a
+# name nothing reads.
 _URL_SECRET = "SUPABASE_URL"
 _URL_ALIASES = (_URL_SECRET, "SUPABASE_PROJECT_URL")
-_SERVICE_SECRET = "SUPABASE_SERVICE_KEY"
-_SERVICE_ALIASES = (_SERVICE_SECRET, "SUPABASE_SERVICE_ROLE_KEY", "SERVICE_ROLE_KEY")
+_SERVICE_SECRET = "SUPABASE_SERVICE_ROLE_KEY"
+_SERVICE_ALIASES = (_SERVICE_SECRET, "SUPABASE_SERVICE_KEY", "SERVICE_ROLE_KEY")
 
 # Supabase's own floor is 6. Eight is the shortest password worth handing to a
 # trainer who will keep it for two years and type it on a phone at 06:55.
@@ -60,22 +62,17 @@ _EMAIL_RE = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
 _ROLES = ("owner", "trainer")
 
 
-def _secret(name: str) -> str:
-    """Read one top-level secret, tolerating the absence of a secrets file.
-
-    `st.secrets` raises when no secrets.toml exists at all, so even asking
-    whether a key is present has to happen inside the guard.
-    """
-    try:
-        value = st.secrets.get(name, "")
-    except Exception:
-        return ""
-    return str(value).strip() if value else ""
-
-
 def _first(names: tuple[str, ...]) -> str:
+    """The first of these settings that is actually set.
+
+    `db.config` and not a second reader of `st.secrets`: it is the one place that
+    already guards the missing-secrets-file case AND falls back to the
+    environment. A private copy here read only st.secrets, so a container given
+    the service key as an env var — which is how every host but Streamlit Cloud
+    supplies it — silently had no "new user" button and no reason on screen why.
+    """
     for name in names:
-        value = _secret(name)
+        value = (db.config(name) or "").strip()
         if value:
             return value
     return ""
@@ -99,8 +96,9 @@ def _unavailable_reason() -> str:
     )
     return (
         head
-        + " Μέχρι να μπει, δεν μπορεί να δημιουργηθεί λογαριασμός χρήστη — όλα τα "
-        "υπόλοιπα της εφαρμογής δουλεύουν κανονικά. Γράψ' το στο "
+        + " Μέχρι να μπει, δεν δημιουργείται λογαριασμός χρήστη και δεν αλλάζει "
+        "κωδικός άλλου μέλους — όλα τα υπόλοιπα της εφαρμογής δουλεύουν κανονικά. "
+        "Γράψ' το στο "
         ".streamlit/secrets.toml (Supabase → Project Settings → API → service_role) "
         "και ξαναφόρτωσε την εφαρμογή. Το κλειδί δεν μπαίνει ποτέ σε αρχείο του "
         "repository."
