@@ -49,6 +49,12 @@ from lib import db, exercises, fmt, gym, ui
 # number this app exists to prevent.
 _HISTORY_SESSIONS = 60
 
+# How far back «Από τις προηγούμενες προπονήσεις» looks. Short on purpose: it is
+# a shortcut to what this athlete is doing now, not a history — an exercise
+# dropped from the programme a month ago should stop being the first thing
+# offered.
+_RECENT_SESSIONS = 3
+
 # numeric(6,2) on sets.load_kg and numeric(9,2) on sets.meters are the hard
 # limits; these are the sane-input limits, so a slipped keyboard says so in Greek
 # instead of coming back as a Postgres overflow.
@@ -62,6 +68,13 @@ _MAX_SECONDS = 86_400
 _UNFILED_GROUP = "Χωρίς μυϊκή ομάδα"
 
 _NOTICE = "log_notice"
+# The exercise search box. Streamlit refuses to let a script write a widget's
+# own key after the widget exists, so the box cannot be cleared in place once it
+# has been acted on — and left uncleared it would re-add the same exercise on
+# every following rerun. It is given a fresh key instead: a new widget starts
+# with nothing selected, which is exactly the state wanted after an add.
+_PICK_KEY = "log_pick_exercise"
+_PICK_NONCE = "log_pick_generation"
 # Set by the finish button. render() consults it BEFORE opening a workout,
 # because clearing session_id on its own would make the very next rerun insert a
 # fresh empty session and the coach could never leave the screen.
@@ -365,6 +378,61 @@ def _last_performance(
     return result
 
 
+@st.cache_data(ttl=60, show_spinner=False)
+def _recent_exercise_ids(gym_id: str, athlete_id: str) -> tuple[str, ...]:
+    """The exercises of this athlete's last few workouts, most recent first.
+
+    Two queries and a short ttl, because this is drawn inside an expander the
+    coach opens mid-workout. It is a convenience, not a source of truth: a
+    caller that cannot read it falls back to the search, which reaches every
+    exercise anyway.
+    """
+    client = db.client()
+    sessions = (
+        client.table("sessions")
+        .select("id, local_date, started_at")
+        .eq("gym_id", gym_id)
+        .eq("athlete_id", athlete_id)
+        .is_("deleted_at", "null")
+        .order("local_date", desc=True)
+        .order("started_at", desc=True)
+        .order("id", desc=True)
+        .limit(_RECENT_SESSIONS)
+        .execute()
+        .data
+        or []
+    )
+    if not sessions:
+        return ()
+
+    rank_of = {str(row["id"]): rank for rank, row in enumerate(sessions)}
+    blocks = (
+        client.table("blocks")
+        .select("session_id, exercise_id, position")
+        .eq("gym_id", gym_id)
+        .in_("session_id", list(rank_of))
+        .is_("deleted_at", "null")
+        .execute()
+        .data
+        or []
+    )
+
+    ordered = sorted(
+        blocks,
+        key=lambda block: (
+            rank_of.get(str(block.get("session_id")), len(rank_of)),
+            fmt.integer(block.get("position")) or 0,
+        ),
+    )
+    # dict.fromkeys keeps the first appearance of each exercise, which is the
+    # most recent one — an exercise done in three workouts is offered once.
+    return tuple(
+        dict.fromkeys(
+            str(block.get("exercise_id") or "") for block in ordered if block.get("exercise_id")
+        )
+    )
+
+
 def _session_row(gym_id: str, session_id: str) -> dict[str, Any] | None:
     """The open workout. Deliberately uncached — its status is what the screen turns on."""
     rows = (
@@ -437,6 +505,25 @@ def _resolve_exercise(
 # The grouped picker
 # ---------------------------------------------------------------------------
 
+def _pickable_rows(gym_id: str) -> list[dict[str, Any]]:
+    """Every exercise a coach may put in a workout right now.
+
+    One filter for both ways in — the flat search and the browse by muscle
+    group. Two copies would eventually disagree about which archived row is
+    still offered, and the coach would find an exercise one way and not the
+    other.
+    """
+    return [
+        row
+        for row in _catalogue(gym_id)
+        if not row.get("deleted_at")
+        and not row.get("is_archived")
+        # A merged duplicate still names historical blocks, but offering it here
+        # would re-open the duplicate the merge tool just closed.
+        and not row.get("merged_into_id")
+    ]
+
+
 def _grouped_exercises(gym_id: str) -> list[tuple[str, str | None, list[dict[str, Any]]]]:
     """[(μυϊκή ομάδα, id της ομάδας, [exercise, …]), …] in the order a coach reads a gym.
 
@@ -449,15 +536,7 @@ def _grouped_exercises(gym_id: str) -> list[tuple[str, str | None, list[dict[str
     "Χωρίς μυϊκή ομάδα" heading. Dropping it would make it unloggable, and the
     coach is standing in front of the machine.
     """
-    pickable = [
-        row
-        for row in _catalogue(gym_id)
-        if not row.get("deleted_at")
-        and not row.get("is_archived")
-        # A merged duplicate still names historical blocks, but offering it here
-        # would re-open the duplicate the merge tool just closed.
-        and not row.get("merged_into_id")
-    ]
+    pickable = _pickable_rows(gym_id)
     by_id = {str(row["id"]): row for row in pickable}
     if not by_id:
         return []
@@ -1037,62 +1116,142 @@ def _block_card(
         st.rerun()
 
 
-def _picker(gym_id: str, session_id: str, next_position: int) -> None:
-    """Add a block, chosen by μυϊκή ομάδα first."""
+def _picker(
+    gym_id: str,
+    session_id: str,
+    athlete_id: str,
+    next_position: int,
+    on_screen: set[str],
+) -> None:
+    """Add an exercise in one tap where possible, two where not.
+
+    The first version made the coach open the picker, scroll a list of sixteen
+    muscle groups to Πλάτη, scroll a second list to Έλξεις, and then press a
+    submit button — five actions, standing at a rack, holding a phone. The gym
+    reported it as "3 scroll down".
+
+    So: the exercises this athlete did last are one button each; the search
+    covers the whole catalogue at once, so «ελξ» finds Έλξεις without knowing
+    which group it is filed under; and choosing an exercise adds it, because a
+    separate «Προσθήκη» press only confirms what the previous tap already said.
+    The muscle group is still there, now as an optional narrowing rather than a
+    gate — and it is what the "add a new exercise" form files into.
+    """
     with st.expander("Προσθήκη άσκησης"):
         try:
             grouped = _grouped_exercises(gym_id)
+            rows = _pickable_rows(gym_id)
         except Exception as exc:
             st.error("Ο κατάλογος ασκήσεων δεν φορτώθηκε.")
             st.caption(str(exc))
             return
 
-        if not grouped:
+        if not rows:
             st.info("Δεν υπάρχουν διαθέσιμες ασκήσεις.")
             return
 
-        # Outside the form on purpose, and it is the one widget here that is:
-        # a form batches its widgets into a single submit, so a group chosen
-        # inside one would never reach the exercise list before the coach
-        # pressed the button. Indexes rather than labels, because a gym may add
-        # its own "Στήθος" beside the shared one.
+        by_id = {str(row["id"]): row for row in rows}
+
+        _repeat_buttons(gym_id, session_id, athlete_id, next_position, by_id, on_screen)
+
+        # «Όλες» first and selected by default: the search below is useless
+        # behind a group the coach has to choose first, and the common case is
+        # that they know the name of the movement and not its filing.
+        options: list[int] = [-1] + list(range(len(grouped)))
         group_index = st.selectbox(
             "Μυϊκή ομάδα",
-            range(len(grouped)),
-            format_func=lambda index: f"{grouped[index][0]} ({len(grouped[index][2])})",
+            options,
+            format_func=lambda index: (
+                "Όλες οι ασκήσεις"
+                if index < 0
+                else f"{grouped[index][0]} ({len(grouped[index][2])})"
+            ),
             key="log_group",
         )
-        label, group_id, members = grouped[int(group_index)]
+        group_index = int(group_index)
+        if group_index < 0:
+            label, group_id, members = "", None, rows
+        else:
+            label, group_id, members = grouped[group_index]
 
-        with st.form(f"log_add_block_{group_index}"):
-            member_index = st.selectbox(
-                "Άσκηση",
-                range(len(members)),
-                # With the όργανο, always. A gym has «Πιέσεις Στήθους» on a
-                # barbell, on dumbbells and on the Smith, and 40 kg of
-                # dumbbells is not 80 kg of barbell — a picker that shows only
-                # the name invites the coach to pick one and read back the
-                # other's history as if it were the same movement.
-                format_func=lambda index: _labelled(members[index]),
-                key=f"log_exercise_{group_index}",
-            )
-            submitted = st.form_submit_button("Προσθήκη άσκησης", type="primary")
+        # Sorted by the whole label, όργανο included, so the three «Πιέσεις
+        # Στήθους» always come out in the same order.
+        members = sorted(members, key=lambda row: fmt.fold(_labelled(row)))
 
-        if not submitted:
+        generation = int(st.session_state.get(_PICK_NONCE, 0) or 0)
+        choice = st.selectbox(
+            "Άσκηση",
+            options=[str(row["id"]) for row in members],
+            format_func=lambda key: _labelled(by_id.get(key) or {}),
+            index=None,
+            placeholder="Γράψε ή διάλεξε — π.χ. έλξεις",
+            key=f"{_PICK_KEY}_{generation}",
+            help="Γράφοντας φιλτράρει: «ελξ» φέρνει τις Έλξεις χωρίς να ψάξεις ομάδα.",
+        )
+
+        if choice:
+            # A generation up, so the next run draws an empty box. The counter is
+            # not a widget key, which is why this assignment is allowed at all.
+            st.session_state[_PICK_NONCE] = generation + 1
+            _put_in_workout(gym_id, session_id, str(choice), next_position, by_id)
+
+        if group_id:
             _new_exercise(gym_id, session_id, next_position, group_id, label)
-            return
+        else:
+            st.divider()
+            st.caption("Δεν τη βρίσκεις; Διάλεξε μυϊκή ομάδα από πάνω για να την προσθέσεις.")
 
-        exercise = members[int(member_index)]
-        try:
-            _add_block(gym_id, session_id, str(exercise["id"]), next_position)
-        except Exception as exc:
-            st.error("Η άσκηση δεν προστέθηκε.")
-            st.caption(str(exc))
-            return
 
-        _clear_workout_caches()
-        ui.notice(_NOTICE, "ok", f"{_labelled(exercise)} — {label}")
+def _put_in_workout(
+    gym_id: str,
+    session_id: str,
+    exercise_id: str,
+    next_position: int,
+    by_id: dict[str, dict[str, Any]],
+) -> None:
+    """One exercise into the open workout, from whichever way in was used."""
+    try:
+        _add_block(gym_id, session_id, exercise_id, next_position)
+    except Exception as exc:
+        ui.notice(_NOTICE, "error", f"Η άσκηση δεν προστέθηκε: {exc}")
         st.rerun()
+
+    _clear_workout_caches()
+    ui.notice(_NOTICE, "ok", f"Μπήκε: {_labelled(by_id.get(exercise_id) or {})}")
+    st.rerun()
+
+
+def _repeat_buttons(
+    gym_id: str,
+    session_id: str,
+    athlete_id: str,
+    next_position: int,
+    by_id: dict[str, dict[str, Any]],
+    on_screen: set[str],
+) -> None:
+    """What this athlete did last time, one tap each.
+
+    A coach repeats an athlete's programme far more often than they invent one,
+    so the exercises of the last few workouts are the answer to «Προσθήκη
+    άσκησης» most of the time. Anything already in today's workout is left out:
+    it would add a second empty heading for a movement that is on the screen.
+    """
+    try:
+        recent = _recent_exercise_ids(gym_id, athlete_id)
+    except Exception:
+        # The fast path is the nicest thing here and the least essential. The
+        # search below reaches every exercise either way.
+        return
+
+    offered = [key for key in recent if key in by_id and key not in on_screen][:4]
+    if not offered:
+        return
+
+    st.caption("Από τις προηγούμενες προπονήσεις")
+    for key in offered:
+        if st.button(f"+ {_labelled(by_id[key])}", key=f"log_again_{key}"):
+            _put_in_workout(gym_id, session_id, key, next_position, by_id)
+    st.divider()
 
 
 def _labelled(exercise: dict[str, Any]) -> str:
@@ -1532,7 +1691,15 @@ def _workout(gym_id: str, athlete: dict[str, Any], session: dict[str, Any]) -> N
             today,
         )
 
-    _picker(gym_id, session_id, _next_position(blocks))
+    _picker(
+        gym_id,
+        session_id,
+        athlete_id,
+        _next_position(blocks),
+        # Canonical ids: a movement already on the screen under the id it was
+        # merged into must not be offered again under the old one.
+        {canonical.get(raw, raw) for raw in raw_ids},
+    )
     _edit_session(gym_id, session, names, today)
 
     st.divider()

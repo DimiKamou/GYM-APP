@@ -22,6 +22,7 @@ TRAINER = "m2"
 USER_ID = "u1"
 ATHLETE = "a1"
 SESSION = "s1"
+LAST_SESSION = "s0"
 BLOCK = "b1"
 SET = "set1"
 CHEST = "mg-chest"
@@ -70,12 +71,19 @@ _SEED: dict[str, list[dict[str, Any]]] = {
          "gym_id": None, "deleted_at": None},
     ],
     "sessions": [
+        # Last week's workout, so the picker has something to offer as a repeat.
+        {"id": LAST_SESSION, "gym_id": GYM, "athlete_id": ATHLETE, "status": "finished",
+         "title": None, "notes": None, "local_date": "2026-08-25",
+         "started_at": "2026-08-25T07:00:00+00:00", "finished_at": "2026-08-25T08:00:00+00:00",
+         "logged_by": OWNER, "credited_to": None, "created_at": NOW, "deleted_at": None},
         {"id": SESSION, "gym_id": GYM, "athlete_id": ATHLETE, "status": "active",
          "title": None, "notes": None, "local_date": "2026-09-01", "started_at": NOW,
          "finished_at": None, "logged_by": OWNER, "credited_to": None,
          "created_at": NOW, "deleted_at": None},
     ],
     "blocks": [
+        {"id": "b0", "gym_id": GYM, "session_id": LAST_SESSION, "exercise_id": "e-db",
+         "position": 0, "deleted_at": None},
         {"id": BLOCK, "gym_id": GYM, "session_id": SESSION, "exercise_id": "e-bar",
          "position": 0, "deleted_at": None},
     ],

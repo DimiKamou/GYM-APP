@@ -339,21 +339,26 @@ def _roster(gym_id: str) -> None:
         st.caption(str(exc))
         return
 
-    # Outside a form on purpose: filtering a list is the one place where a
-    # keystroke should change the screen, and every read behind it is cached.
-    query = st.text_input(
+    # A selectbox and not a text field, and the difference is the whole point:
+    # st.text_input reruns on Enter or on blur, so on a phone the roster only
+    # filtered once the coach dismissed the keyboard — typing «Καμου» did
+    # nothing until then. A selectbox filters in the browser as the letters
+    # arrive, with no round trip at all.
+    by_id = {str(a["id"]): (a.get("full_name") or fmt.EMPTY) for a in athletes}
+    picked = st.selectbox(
         "Αναζήτηση",
-        key=_QUERY,
-        placeholder="Όνομα αθλητή",
+        options=list(by_id),
+        format_func=lambda key: by_id.get(key, fmt.EMPTY),
+        index=None,
+        placeholder="Γράψε όνομα — π.χ. Καμου",
         label_visibility="collapsed",
+        key=_QUERY,
     )
 
-    shown = [a for a in athletes if fmt.matches(a.get("full_name") or "", query or "")]
+    shown = [a for a in athletes if picked is None or str(a["id"]) == str(picked)]
 
     if not athletes:
         st.info("Κανένας αθλητής ακόμα. Πρόσθεσε τον πρώτο πιο κάτω.")
-    elif not shown:
-        st.info(f"Κανένας αθλητής δεν ταιριάζει με «{query}».")
     else:
         for athlete in shown:
             with st.container(border=True):
