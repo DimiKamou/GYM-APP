@@ -210,11 +210,13 @@ def _use_refresh_token(token: str | None) -> bool:
         # reached the server is not. Dropping the cookie on a dead gym wifi
         # would sign a trainer out for the rest of the shift.
         _sign_out_state(drop_cookie=getattr(exc, "status", None) is not None)
+        _flush_cookie()
         return False
 
     session = getattr(response, "session", None)
     if not _remember(session):
         _sign_out_state(drop_cookie=True)
+        _flush_cookie()
         return False
     _flush_cookie()
     return True
@@ -355,7 +357,7 @@ def _flush_cookie() -> None:
                 same_site="lax",
                 key=key,
             )
-        else:
+        elif action == "delete":
             manager.delete(_COOKIE_NAME, key=key)
     except Exception:
         # No cookie means no survival across a locked phone. The session in this
@@ -390,6 +392,10 @@ def _render_sign_in() -> None:
         username = st.text_input("Χρήστης", autocomplete="username")
         password = st.text_input("Κωδικός", type="password", autocomplete="current-password")
         submitted = st.form_submit_button("Σύνδεση", type="primary")
+
+    # There is no self-service reset: these accounts have no reachable mailbox,
+    # so the only recovery path is the owner, from the Ομάδα screen.
+    st.caption("Ξέχασες τον κωδικό; Ο ιδιοκτήτης του γυμναστηρίου τον αλλάζει από την Ομάδα.")
 
     if not submitted:
         return

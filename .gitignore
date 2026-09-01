@@ -16,3 +16,16 @@ playwright-report
 
 # single-file preview build
 dist-preview
+
+# Python, for the Streamlit pilot in streamlit/
+__pycache__/
+*.py[cod]
+venv/
+.venv/
+
+# Streamlit secrets — the Supabase keys, including service_role, which bypasses
+# every row-level security policy in the schema. Named file by file rather than
+# ignoring .streamlit/ wholesale: config.toml in the same directory is what
+# Streamlit Community Cloud reads for the theme, and it has to stay tracked.
+.streamlit/secrets.toml
+streamlit/.streamlit/secrets.toml
