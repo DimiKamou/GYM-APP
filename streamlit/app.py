@@ -55,11 +55,27 @@ footer { display: none !important; }
 [data-testid="stMainBlockContainer"],
 .block-container { padding-top: 1.5rem; padding-bottom: 4rem; }
 
-/* 44px minimum hit target (CLAUDE.md) against Streamlit's 38px controls. */
+/* 44px minimum hit target (CLAUDE.md).
+
+   Addressed by data-testid, not by data-baseweb. Streamlit 1.62 renders a text
+   field as [data-testid="stTextInputField"] inside stTextInputRootElement and
+   exposes no data-baseweb="input" hook at all, so the obvious rule matches
+   nothing and fails silently — measured in a browser, the sign-in fields were
+   36px while this block claimed to have set them to 44.
+
+   The number stepper's two buttons are here because they are what a coach taps
+   between sets, one-handed, with the other hand on the bar. */
+[data-testid="stTextInputField"],
+[data-testid="stTextInputRootElement"],
+[data-testid="stNumberInputField"],
+[data-testid="stNumberInputContainer"],
+[data-testid="stNumberInputStepUp"],
+[data-testid="stNumberInputStepDown"],
+[data-testid="stDateInputField"],
+[data-testid="stTextAreaRootElement"],
+[data-testid="stSelectbox"] div[role="combobox"],
 div[data-testid="stForm"] button,
-div.stButton > button,
-div[data-baseweb="input"] input,
-div[data-baseweb="select"] > div { min-height: 44px; }
+div.stButton > button { min-height: 44px; }
 </style>
 """
 

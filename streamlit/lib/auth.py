@@ -69,14 +69,11 @@ _TIMEZONES = (
     "UTC",
 )
 
-_TOUCH_CSS = """
-<style>
-/* 44px minimum hit target: Streamlit ships 38px controls, and this screen is
-   used one-handed on a phone. */
-div[data-testid="stForm"] button, div.stButton > button { min-height: 44px; width: 100%; }
-div[data-baseweb="input"] input, div[data-baseweb="select"] > div { min-height: 44px; }
-</style>
-"""
+# The 44px hit-target rule lives in app.py, which writes it before gate() is
+# ever called, so every screen below is already under it. A second copy here
+# would be two rules to keep in step with Streamlit's DOM — and the first
+# version of that rule was written against a selector Streamlit no longer
+# emits, which is precisely the failure a duplicate doubles.
 
 
 # ---------------------------------------------------------------------------
@@ -383,7 +380,6 @@ def _render_not_configured(missing: list[str]) -> None:
 
 
 def _render_sign_in() -> None:
-    st.markdown(_TOUCH_CSS, unsafe_allow_html=True)
     st.title("TrainHub")
     st.caption("Όπου καταγράφεται κάθε επανάληψη.")
 
@@ -429,7 +425,6 @@ def _render_sign_in() -> None:
 
 
 def _render_bootstrap() -> None:
-    st.markdown(_TOUCH_CSS, unsafe_allow_html=True)
     st.title("TrainHub")
 
     who = current_username()
