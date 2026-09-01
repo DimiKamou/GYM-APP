@@ -23,18 +23,29 @@ from lib import db, fmt
 
 
 @st.cache_data(ttl=300, show_spinner=False)
-def timezone_of(gym_id: str) -> str:
-    """The zone the gym files its days in. Athens when the row says nothing."""
-    row = (
+def row(gym_id: str) -> dict[str, Any]:
+    """The gym itself. One read for the name AND the timezone.
+
+    Three screens were each selecting from `gyms` on their own — the briefing for
+    the zone, the log for the zone, the settings screen for the name — which is
+    three cached copies of one row that expire at three different moments.
+    """
+    rows = (
         db.client()
         .table("gyms")
-        .select("timezone")
+        .select("id, name, timezone")
         .eq("id", gym_id)
+        .is_("deleted_at", "null")
         .limit(1)
         .execute()
         .data
-    )
-    return (row[0].get("timezone") if row else None) or fmt.DEFAULT_TZ
+    ) or []
+    return dict(rows[0]) if rows else {}
+
+
+def timezone_of(gym_id: str) -> str:
+    """The zone the gym files its days in. Athens when the row says nothing."""
+    return str(row(gym_id).get("timezone") or "").strip() or fmt.DEFAULT_TZ
 
 
 def zone(gym_id: str) -> Any:
