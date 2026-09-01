@@ -28,32 +28,12 @@ about who actually typed it.
 
 from __future__ import annotations
 
-import re
-import unicodedata
 from datetime import date, datetime, timezone
 from typing import Any
 
 import streamlit as st
 
-from lib import db
-
-# Greek short month names, spelled the way Intl 'el-GR' spells them in the PWA
-# (src/domain/format.ts). Hard-coded rather than taken from strftime, because the
-# server process boots with whatever locale Streamlit Cloud gives it and an app
-# that prints "Aug" on Tuesday and "Αυγ" on Wednesday is worse than one that is
-# consistently wrong.
-_MONTHS_EL = (
-    "Ιαν", "Φεβ", "Μαρ", "Απρ", "Μαΐ", "Ιουν",
-    "Ιουλ", "Αυγ", "Σεπ", "Οκτ", "Νοε", "Δεκ",
-)
-
-_DEFAULT_TZ = "Europe/Athens"
-
-# Rendered where a membership id does not resolve to a name. Never an empty
-# string: a number whose author silently vanished reads as if nobody wrote it.
-_UNKNOWN_AUTHOR = "άγνωστο μέλος"
-
-_EMPTY = "—"
+from lib import db, fmt, gym, ui
 
 # How far back the "last time" lookup reads. It is a window, not the whole
 # history, because the session ids go into a PostgREST `in.(…)` filter and a URL
@@ -87,194 +67,6 @@ _KIND_LABELS = {
     "distance": "απόσταση",
 }
 
-# Combining diacritical marks, i.e. everything NFD peels off an accented vowel.
-_COMBINING = re.compile("[\u0300-\u036f]")
-
-# CommonMark treats all of these as syntax. Exercise names and set notes can be
-# typed by a trainer, and Streamlit renders them as markdown, so an underscore in
-# a gym's own exercise name would silently restyle the line around it.
-_MD_SPECIALS = re.compile(r"([\\`*_{}\[\]()<>#+\-.!|$~])")
-
-
-# ---------------------------------------------------------------------------
-# Text
-# ---------------------------------------------------------------------------
-
-def _md(text: str) -> str:
-    """Escape trainer-typed text for a markdown renderer, keeping line breaks."""
-    return _MD_SPECIALS.sub(r"\\\1", text or "").replace("\n", "  \n")
-
-
-def _sort_key(text: str) -> str:
-    """Accent- and sigma-insensitive sort key, so Άρσεις sits beside Ασκήσεις.
-
-    Only ever used WITHIN one muscle group. The groups themselves are ordered by
-    `muscle_groups.position` — in Greek alphabetical order Τρικέφαλοι sorts above
-    Στήθος, which is nobody's mental model of a gym.
-    """
-    stripped = _COMBINING.sub("", unicodedata.normalize("NFD", text or ""))
-    return unicodedata.normalize("NFC", stripped).lower().replace("ς", "σ")
-
-
-def _exercise_name(exercise: dict[str, Any] | None) -> str:
-    """Greek first, English as the fallback — a catalogue row may carry only one."""
-    if not exercise:
-        return _EMPTY
-    return (exercise.get("name_el") or exercise.get("name_en") or _EMPTY).strip() or _EMPTY
-
-
-# ---------------------------------------------------------------------------
-# Dates
-# ---------------------------------------------------------------------------
-
-def _format_day(value: date, today: date) -> str:
-    """"12 Αυγ", and "12 Αυγ 2025" once the year stops being obvious.
-
-    The year is not decoration on an old number: "12 Αυγ" against a two-year-old
-    top set reads as last month, and the coach loads the bar accordingly.
-    """
-    head = f"{value.day} {_MONTHS_EL[value.month - 1]}"
-    return head if value.year == today.year else f"{head} {value.year}"
-
-
-def _parse_instant(value: Any) -> datetime | None:
-    if isinstance(value, datetime):
-        return value
-    text = str(value or "").strip()
-    if not text:
-        return None
-    # PostgREST hands back "+00:00" on some columns and a bare "Z" on others.
-    if text.endswith(("Z", "z")):
-        text = text[:-1] + "+00:00"
-    try:
-        parsed = datetime.fromisoformat(text)
-    except ValueError:
-        return None
-    return parsed if parsed.tzinfo else parsed.replace(tzinfo=timezone.utc)
-
-
-def _parse_local_date(value: Any) -> date | None:
-    if isinstance(value, date) and not isinstance(value, datetime):
-        return value
-    try:
-        return date.fromisoformat(str(value or "")[:10])
-    except ValueError:
-        return None
-
-
-def _zone(gym_id: str) -> Any:
-    """The gym's tz object, or None when the platform has no tz database."""
-    try:
-        from zoneinfo import ZoneInfo
-
-        return ZoneInfo(_gym_timezone(gym_id))
-    except Exception:
-        return None
-
-
-# ---------------------------------------------------------------------------
-# Numbers
-# ---------------------------------------------------------------------------
-
-def _decimal(value: Any) -> float | None:
-    """Tolerant decimal parse. Returns None, never NaN.
-
-    A Greek trainer types "72,5". `float("72,5")` raises and `Number("72,5")`
-    would produce a NaN that propagates silently into every volume total and
-    chart in the product — the likeliest silent data loss in the whole app. This
-    is also the read path: PostgREST hands numeric columns back as strings.
-    """
-    if value is None or isinstance(value, bool):
-        return None
-    if isinstance(value, (int, float)):
-        parsed = float(value)
-    else:
-        text = str(value).strip().replace(",", ".")
-        if not text:
-            return None
-        try:
-            parsed = float(text)
-        except ValueError:
-            return None
-    if parsed != parsed or parsed in (float("inf"), float("-inf")):
-        return None
-    return parsed
-
-
-def _integer(value: Any) -> int | None:
-    parsed = _decimal(value)
-    return None if parsed is None else int(round(parsed))
-
-
-def _format_weight(kg: float) -> str:
-    """"72,5" — Greek decimal comma, trailing zeros dropped, plates to 1,25 kg."""
-    text = f"{kg:.2f}".rstrip("0").rstrip(".")
-    return (text or "0").replace(".", ",")
-
-
-def _weight_input_default(value: Any) -> str:
-    """What the κιλά box starts with — the same comma form the coach types."""
-    parsed = _decimal(value)
-    return "" if parsed is None else _format_weight(parsed)
-
-
-def _format_duration(seconds: int) -> str:
-    if seconds < 60:
-        return f"{seconds} δευτ."
-    minutes, rest = divmod(seconds, 60)
-    # A ragged duration reads as a stopwatch. "1,5 λεπτά" is not how anyone
-    # reports a plank.
-    if rest:
-        return f"{minutes}:{rest:02d}"
-    return "1 λεπτό" if minutes == 1 else f"{minutes} λεπτά"
-
-
-def _format_distance(meters: float) -> str:
-    if meters >= 1000:
-        return f"{meters / 1000:.1f}".replace(".", ",") + " χλμ"
-    return f"{round(meters)} μ."
-
-
-def _format_set(row: dict[str, Any], kind: str) -> str:
-    """The one-line rendering of a set, per kind: "80×8", "10 επαναλήψεις", "20 λεπτά"."""
-    load = _decimal(row.get("load_kg"))
-    reps = _integer(row.get("reps"))
-
-    if kind == "weight_reps":
-        if load is not None and reps is not None:
-            return f"{_format_weight(load)}×{reps}"
-        if load is not None:
-            return f"{_format_weight(load)} kg"
-        if reps is not None:
-            return f"{reps} επαναλήψεις"
-        return _EMPTY
-
-    if kind == "bodyweight":
-        if reps is None:
-            return _EMPTY
-        if load is not None and load > 0:
-            return f"+{_format_weight(load)}×{reps}"
-        return f"{reps} επαναλήψεις"
-
-    if kind == "duration":
-        seconds = _integer(row.get("seconds"))
-        return _EMPTY if seconds is None or seconds < 0 else _format_duration(seconds)
-
-    if kind == "distance":
-        meters = _decimal(row.get("meters"))
-        return _EMPTY if meters is None or meters < 0 else _format_distance(meters)
-
-    return _EMPTY
-
-
-def _score(row: dict[str, Any]) -> float:
-    """One comparable magnitude per set, so "the top one" means something for every kind."""
-    for column in ("load_kg", "meters", "seconds", "reps"):
-        value = _decimal(row.get(column))
-        if value is not None:
-            return value
-    return 0.0
-
 
 # ---------------------------------------------------------------------------
 # Reads
@@ -284,39 +76,6 @@ def _score(row: dict[str, Any]) -> float:
 # without ever reaching a policy again — the tenant has to be part of the key or
 # the cache is the leak that RLS was there to prevent.
 # ---------------------------------------------------------------------------
-
-@st.cache_data(ttl=300, show_spinner=False)
-def _gym_timezone(gym_id: str) -> str:
-    row = (
-        db.client()
-        .table("gyms")
-        .select("timezone")
-        .eq("id", gym_id)
-        .limit(1)
-        .execute()
-        .data
-    )
-    return (row[0].get("timezone") if row else None) or _DEFAULT_TZ
-
-
-@st.cache_data(ttl=300, show_spinner=False)
-def _member_names(gym_id: str) -> dict[str, str]:
-    """membership id -> display name, for the whole gym.
-
-    Soft-deleted and removed members are included on purpose: they wrote history
-    that still has to be attributed to them.
-    """
-    rows = (
-        db.client()
-        .table("memberships")
-        .select("id, display_name")
-        .eq("gym_id", gym_id)
-        .execute()
-        .data
-        or []
-    )
-    return {row["id"]: (row.get("display_name") or _UNKNOWN_AUTHOR) for row in rows}
-
 
 @st.cache_data(ttl=300, show_spinner=False)
 def _catalogue(gym_id: str) -> list[dict[str, Any]]:
@@ -341,7 +100,7 @@ def _catalogue(gym_id: str) -> list[dict[str, Any]]:
 def _muscle_groups(gym_id: str) -> list[dict[str, Any]]:
     """The taxonomy in DISPLAY order — position first, never the alphabet.
 
-    RLS returns the shared groups (gym_id is null) and this gym's own together,
+    RLS returns the shared groups (gym_id is null) and this gym_id's own together,
     so a gym's own group at position 20 lands after the sixteen shared ones
     exactly as its position says. (position, id) and not position alone, because
     two inserts can mint the same position and the id is the only tie-break.
@@ -509,14 +268,14 @@ def _last_performance(
         rows = [row for bid in winner["block_ids"] for row in by_block.get(bid, [])]
         if not rows:
             continue
-        top = max(rows, key=_score)
+        top = max(rows, key=fmt.score)
         session = session_of[winner["session_id"]]
         result[exercise_id] = {
             "set": top,
             # Each set carries its own kind; a treadmill block and a bench block
             # are not comparable and must not be rendered alike.
             "kind": top.get("kind") or "weight_reps",
-            "day": _parse_local_date(session.get("local_date")),
+            "day": fmt.parse_local_date(session.get("local_date")),
             "logged_by": session.get("logged_by"),
         }
     return result
@@ -590,19 +349,19 @@ def _grouped_exercises(gym_id: str) -> list[tuple[str, list[dict[str, Any]]]]:
 
     def _named(ids: list[str]) -> list[dict[str, Any]]:
         rows = [by_id[i] for i in dict.fromkeys(ids) if i in by_id]
-        return sorted(rows, key=lambda row: _sort_key(_exercise_name(row)))
+        return sorted(rows, key=lambda row: fmt.fold(fmt.exercise_name(row)))
 
     out: list[tuple[str, list[dict[str, Any]]]] = []
     for group in groups:
         group_id = str(group["id"])
         members = _named(primary.get(group_id, [])) + _named(secondary.get(group_id, []))
         if members:
-            label = (group.get("name_el") or group.get("name_en") or _EMPTY).strip()
-            out.append((label or _EMPTY, members))
+            label = (group.get("name_el") or group.get("name_en") or fmt.EMPTY).strip()
+            out.append((label or fmt.EMPTY, members))
 
     unfiled = sorted(
         (row for row in pickable if str(row["id"]) not in filed),
-        key=lambda row: _sort_key(_exercise_name(row)),
+        key=lambda row: fmt.fold(fmt.exercise_name(row)),
     )
     if unfiled:
         out.append((_UNFILED_GROUP, unfiled))
@@ -675,7 +434,7 @@ def _finish_session(gym_id: str, session: dict[str, Any]) -> bool:
     returned representation is the only evidence that anything happened.
     """
     now = datetime.now(timezone.utc)
-    started = _parse_instant(session.get("started_at"))
+    started = fmt.parse_instant(session.get("started_at"))
     # sessions_finish_after_start refuses finished_at < started_at, and the two
     # clocks are not the same one.
     finished_at = max(now, started) if started else now
@@ -696,25 +455,10 @@ def _finish_session(gym_id: str, session: dict[str, Any]) -> bool:
 # Small view helpers
 # ---------------------------------------------------------------------------
 
-def _flush_notice() -> None:
-    notice = st.session_state.pop(_NOTICE, None)
-    if not notice:
-        return
-    kind, message = notice
-    if kind == "ok":
-        st.success(message)
-    else:
-        st.error(message)
-
-
-def _author_of(names: dict[str, str], membership_id: Any) -> str:
-    return names.get(str(membership_id or ""), _UNKNOWN_AUTHOR)
-
-
 def _go_to(page_key: str) -> None:
     page = (st.session_state.get("pages") or {}).get(page_key)
     if page is None:
-        st.session_state[_NOTICE] = ("error", "Η σελίδα δεν είναι διαθέσιμη.")
+        ui.notice(_NOTICE, "error", "Η σελίδα δεν είναι διαθέσιμη.")
         st.rerun()
     st.switch_page(page)
 
@@ -734,7 +478,7 @@ def _kind_of(rows: list[dict[str, Any]], exercise: dict[str, Any] | None) -> str
 def _next_position(rows: list[dict[str, Any]]) -> int:
     highest = -1
     for row in rows:
-        value = _integer(row.get("position"))
+        value = fmt.integer(row.get("position"))
         if value is not None and value > highest:
             highest = value
     return highest + 1
@@ -761,7 +505,7 @@ def _set_form(block_id: str, kind: str, previous: dict[str, Any] | None) -> dict
     with st.form(f"log_set_{block_id}", clear_on_submit=True):
         if kind == "duration":
             minute_col, second_col, go_col = st.columns([3, 3, 4], vertical_alignment="bottom")
-            seconds_before = _integer(prev.get("seconds")) or 0
+            seconds_before = fmt.integer(prev.get("seconds")) or 0
             with minute_col:
                 minutes = st.number_input(
                     "λεπτά",
@@ -798,7 +542,7 @@ def _set_form(block_id: str, kind: str, previous: dict[str, Any] | None) -> dict
             with meters_col:
                 meters_text = st.text_input(
                     "μέτρα",
-                    value=_weight_input_default(prev.get("meters")),
+                    value=fmt.weight_input_default(prev.get("meters")),
                     placeholder="2000",
                     key=f"log_m_{block_id}",
                 )
@@ -806,7 +550,7 @@ def _set_form(block_id: str, kind: str, previous: dict[str, Any] | None) -> dict
                 submitted = st.form_submit_button("Καταχώρηση σετ", type="primary")
             if not submitted:
                 return None
-            meters = _decimal(meters_text)
+            meters = fmt.decimal(meters_text)
             if meters is None or meters <= 0:
                 st.error("Γράψε την απόσταση σε μέτρα — π.χ. 2000.")
                 return None
@@ -823,13 +567,13 @@ def _set_form(block_id: str, kind: str, previous: dict[str, Any] | None) -> dict
                     min_value=0,
                     max_value=1000,
                     step=1,
-                    value=_integer(prev.get("reps")) or 0,
+                    value=fmt.integer(prev.get("reps")) or 0,
                     key=f"log_bwreps_{block_id}",
                 )
             with extra_col:
                 extra_text = st.text_input(
                     "επιπλέον κιλά",
-                    value=_weight_input_default(prev.get("load_kg")),
+                    value=fmt.weight_input_default(prev.get("load_kg")),
                     placeholder="0",
                     key=f"log_bwkg_{block_id}",
                 )
@@ -843,7 +587,7 @@ def _set_form(block_id: str, kind: str, previous: dict[str, Any] | None) -> dict
             values: dict[str, Any] = {"reps": int(reps)}
             typed = (extra_text or "").strip()
             if typed:
-                extra = _decimal(typed)
+                extra = fmt.decimal(typed)
                 if extra is None or extra < 0 or extra > _MAX_KG:
                     st.error("Τα επιπλέον κιλά δεν διαβάζονται — π.χ. 12,5.")
                     return None
@@ -856,7 +600,7 @@ def _set_form(block_id: str, kind: str, previous: dict[str, Any] | None) -> dict
         with kg_col:
             load_text = st.text_input(
                 "κιλά",
-                value=_weight_input_default(prev.get("load_kg")),
+                value=fmt.weight_input_default(prev.get("load_kg")),
                 placeholder="72,5",
                 key=f"log_kg_{block_id}",
             )
@@ -866,14 +610,14 @@ def _set_form(block_id: str, kind: str, previous: dict[str, Any] | None) -> dict
                 min_value=0,
                 max_value=1000,
                 step=1,
-                value=_integer(prev.get("reps")) or 0,
+                value=fmt.integer(prev.get("reps")) or 0,
                 key=f"log_reps_{block_id}",
             )
         with go_col:
             submitted = st.form_submit_button("Καταχώρηση σετ", type="primary")
         if not submitted:
             return None
-        load = _decimal(load_text)
+        load = fmt.decimal(load_text)
         if load is None:
             st.error("Γράψε τα κιλά — π.χ. 72,5.")
             return None
@@ -903,9 +647,9 @@ def _last_time_line(
     """
     if not entry:
         return "Πρώτη φορά σε αυτή την άσκηση."
-    performed = _format_set(entry["set"], entry["kind"])
-    when = _format_day(entry["day"], today) if entry.get("day") else _EMPTY
-    who = _author_of(names, entry.get("logged_by"))
+    performed = fmt.format_set(entry["set"], entry["kind"])
+    when = fmt.format_day(entry["day"], today) if entry.get("day") else fmt.EMPTY
+    who = fmt.author_of(names, entry.get("logged_by"))
     return f"Τελευταία φορά: {performed} · {when} · {who}"
 
 
@@ -923,22 +667,22 @@ def _block_card(
     kind = _kind_of(rows, exercise)
 
     with st.container(border=True):
-        st.markdown(f"**{_md(_exercise_name(exercise))}**")
-        st.caption(_md(_last_time_line(last, names, today)))
+        st.markdown(f"**{fmt.md(fmt.exercise_name(exercise))}**")
+        st.caption(fmt.md(_last_time_line(last, names, today)))
 
         if rows:
             lines = []
             for number, row in enumerate(rows, 1):
-                line = f"{number}. {_format_set(row, kind)}"
+                line = f"{number}. {fmt.format_set(row, kind)}"
                 # The 07:00 coach finishing what the 06:00 coach started is the
                 # product, not an edge case — so a set typed by someone other
                 # than the session's author says whose hand it was.
                 author = row.get("created_by")
                 if author and str(author) != str(session_author or ""):
-                    line = f"{line} · {_md(_author_of(names, author))}"
+                    line = f"{line} · {fmt.md(fmt.author_of(names, author))}"
                 note = (row.get("note") or "").strip()
                 if note:
-                    line = f"{line} — {_md(note)}"
+                    line = f"{line} — {fmt.md(note)}"
                 lines.append(line)
             st.markdown("\n".join(lines))
         else:
@@ -956,9 +700,8 @@ def _block_card(
             return
 
         _clear_workout_caches()
-        st.session_state[_NOTICE] = (
-            "ok",
-            f"{_exercise_name(exercise)} · {_format_set(values, kind)}",
+        ui.notice(
+            _NOTICE, "ok", f"{fmt.exercise_name(exercise)} · {fmt.format_set(values, kind)}"
         )
         st.rerun()
 
@@ -994,7 +737,7 @@ def _picker(gym_id: str, session_id: str, next_position: int) -> None:
             member_index = st.selectbox(
                 "Άσκηση",
                 range(len(members)),
-                format_func=lambda index: _exercise_name(members[index]),
+                format_func=lambda index: fmt.exercise_name(members[index]),
                 key=f"log_exercise_{group_index}",
             )
             submitted = st.form_submit_button("Προσθήκη άσκησης", type="primary")
@@ -1011,7 +754,7 @@ def _picker(gym_id: str, session_id: str, next_position: int) -> None:
             return
 
         _clear_workout_caches()
-        st.session_state[_NOTICE] = ("ok", f"{_exercise_name(exercise)} — {label}")
+        ui.notice(_NOTICE, "ok", f"{fmt.exercise_name(exercise)} — {label}")
         st.rerun()
 
 
@@ -1026,7 +769,7 @@ def _finished_screen(gym_id: str, athlete: dict[str, Any], finished: dict[str, A
     empty — without this stop the very next rerun would insert a fresh empty
     session and the coach could never leave.
     """
-    st.header(_md(str(athlete.get("full_name") or _EMPTY)))
+    st.header(fmt.md(str(athlete.get("full_name") or fmt.EMPTY)))
     st.success("Η προπόνηση ολοκληρώθηκε.")
 
     session_id = str(finished.get("session_id") or "")
@@ -1052,9 +795,9 @@ def _finished_screen(gym_id: str, athlete: dict[str, Any], finished: dict[str, A
                 continue
             exercise = catalogue.get(str(block.get("exercise_id") or ""))
             kind = _kind_of(performed, exercise)
-            top = max(performed, key=_score)
+            top = max(performed, key=fmt.score)
             summary.append(
-                f"- {_md(_exercise_name(exercise))} · {_format_set(top, kind)} "
+                f"- {fmt.md(fmt.exercise_name(exercise))} · {fmt.format_set(top, kind)} "
                 f"({len(performed)} σετ)"
             )
         if summary:
@@ -1114,28 +857,22 @@ def _workout(gym_id: str, athlete: dict[str, Any], session: dict[str, Any]) -> N
     athlete_id = str(athlete["id"])
     session_id = str(session["id"])
 
-    tz = _zone(gym_id)
-    today = datetime.now(tz).date() if tz is not None else datetime.now(timezone.utc).date()
+    today = gym.today(gym_id)
 
-    try:
-        names = _member_names(gym_id)
-    except Exception:
-        # An unreachable roster must not blank the numbers: _author_of falls back
-        # to a named "unknown member" rather than to silence.
-        names = {}
+    names = gym.names_or_empty(gym_id)
 
     if st.button("← Στον αθλητή", key="log_back"):
         _go_to("athletes")
 
-    st.header(_md(str(athlete.get("full_name") or _EMPTY)))
-    day = _parse_local_date(session.get("local_date"))
+    st.header(fmt.md(str(athlete.get("full_name") or fmt.EMPTY)))
+    day = fmt.parse_local_date(session.get("local_date"))
     st.markdown(
         "**"
-        + _md(
+        + fmt.md(
             "Σε εξέλιξη · "
-            + _author_of(names, session.get("logged_by"))
+            + fmt.author_of(names, session.get("logged_by"))
             + " · "
-            + (_format_day(day, today) if day else _EMPTY)
+            + (fmt.format_day(day, today) if day else fmt.EMPTY)
         )
         + "**"
     )
@@ -1224,8 +961,8 @@ def _workout(gym_id: str, athlete: dict[str, Any], session: dict[str, Any]) -> N
 # ---------------------------------------------------------------------------
 
 def render() -> None:
-    gym = db.gym_id()
-    if not gym:
+    gym_id = db.gym_id()
+    if not gym_id:
         st.header("Προπόνηση")
         st.info("Ο λογαριασμός σου δεν ανήκει ακόμη σε γυμναστήριο.")
         return
@@ -1241,18 +978,18 @@ def render() -> None:
             _go_to("athletes")
         return
 
-    _flush_notice()
+    ui.flush_notice(_NOTICE)
 
     athlete_id = str(athlete["id"])
     finished = st.session_state.get(_FINISHED)
     if isinstance(finished, dict) and str(finished.get("athlete_id")) == athlete_id:
-        _finished_screen(gym, athlete, finished)
+        _finished_screen(gym_id, athlete, finished)
         return
     # Someone else's finished workout: the coach has moved on to another athlete.
     st.session_state.pop(_FINISHED, None)
 
-    session = _open_or_reuse(gym, athlete_id)
+    session = _open_or_reuse(gym_id, athlete_id)
     if session is None:
         return
 
-    _workout(gym, athlete, session)
+    _workout(gym_id, athlete, session)
