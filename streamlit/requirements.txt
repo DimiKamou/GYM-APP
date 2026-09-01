@@ -1,0 +1,12 @@
+# Python dependencies for the Streamlit pilot.
+#
+# Pinned exactly, not floated. These three versions are the ones this app was
+# built and booted against, and a silent minor bump in supabase-py has moved the
+# auth surface before — a pilot that stops signing anyone in on a Tuesday
+# morning because a transitive release landed overnight is not a pilot.
+#
+# `../requirements.txt` at the repository root is the same list, duplicated
+# because Streamlit Community Cloud only looks there. Change both together.
+streamlit==1.62.0
+supabase==2.31.0
+extra-streamlit-components==0.1.80
