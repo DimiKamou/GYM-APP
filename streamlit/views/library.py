@@ -14,42 +14,22 @@ which is nobody's mental model of a body.
 from __future__ import annotations
 
 from typing import Any
-from uuid import uuid4
 
 import streamlit as st
 
-from lib import db, fmt, ui
+from lib import db, exercises, fmt, ui
 
 _NOTICE = "library_notice"
 
-_CATEGORY_LABELS = {
-    "upper": "Άνω κορμός",
-    "lower": "Κάτω κορμός",
-    "core": "Κορμός",
-    "cardio": "Καρδιοαναπνευστικό",
-    "mobility": "Κινητικότητα",
-}
-_CATEGORY_CHOICES = {label: value for value, label in _CATEGORY_LABELS.items()}
-
-_EQUIPMENT_LABELS = {
-    "barbell": "Μπάρα",
-    "dumbbell": "Αλτήρες",
-    "machine": "Μηχάνημα",
-    "cable": "Τροχαλία",
-    "bodyweight": "Σωματικό βάρος",
-    "cardio": "Cardio",
-    "kettlebell": "Kettlebell",
-    "other": "Άλλο",
-}
-_EQUIPMENT_CHOICES = {label: value for value, label in _EQUIPMENT_LABELS.items()}
-
-_KIND_LABELS = {
-    "weight_reps": "Κιλά × επαναλήψεις",
-    "bodyweight": "Σωματικό βάρος",
-    "duration": "Χρόνος",
-    "distance": "Απόσταση",
-}
-_KIND_CHOICES = {label: value for value, label in _KIND_LABELS.items()}
+# The vocabulary lives in lib/exercises.py, with the write that uses it. It was
+# private to this file until the picker inside a workout needed to name an
+# όργανο too, and a second copy is two lists to keep in step with one enum.
+_CATEGORY_LABELS = exercises.CATEGORY_LABELS
+_CATEGORY_CHOICES = exercises.CATEGORY_CHOICES
+_EQUIPMENT_LABELS = exercises.EQUIPMENT_LABELS
+_EQUIPMENT_CHOICES = exercises.EQUIPMENT_CHOICES
+_KIND_LABELS = exercises.KIND_LABELS
+_KIND_CHOICES = exercises.KIND_CHOICES
 
 _UNGROUPED = "Χωρίς μυϊκή ομάδα"
 
@@ -112,48 +92,6 @@ def _clear() -> None:
 # Writes
 # ---------------------------------------------------------------------------
 
-def _create_exercise(
-    gym_id: str,
-    name_el: str,
-    category: str,
-    equipment: str,
-    kind: str,
-    primary_group: str | None,
-    secondary_groups: list[str],
-) -> None:
-    """One call files the exercise and its muscles.
-
-    A trainer adds "Πιέσεις Στήθους σε μηχάνημα" while standing in a live
-    session; a second round trip to classify it is a second chance to leave it
-    unclassified forever, and an exercise with no primary group falls out of
-    every heading in the picker.
-    """
-    client = db.client()
-    exercise_id = str(uuid4())
-    client.table("exercises").insert(
-        {
-            "id": exercise_id,
-            "gym_id": gym_id,
-            "name_el": name_el.strip(),
-            "category": category,
-            "equipment": equipment,
-            "default_set_kind": kind,
-        }
-    ).execute()
-
-    links = []
-    if primary_group:
-        links.append({"exercise_id": exercise_id, "muscle_group_id": primary_group, "role": "primary", "gym_id": gym_id})
-    for group_id in secondary_groups:
-        if group_id and group_id != primary_group:
-            links.append({"exercise_id": exercise_id, "muscle_group_id": group_id, "role": "secondary", "gym_id": gym_id})
-    if links:
-        # exercise_muscles_stamp_scope() fills the two scope columns from the
-        # parents it looks up itself, so gym_id here is the mapping's tenancy
-        # and not a claim about either parent.
-        client.table("exercise_muscles").insert(links).execute()
-
-
 def _set_archived(exercise_id: str, archived: bool) -> None:
     db.client().table("exercises").update({"is_archived": archived}).eq("id", exercise_id).execute()
 
@@ -163,7 +101,10 @@ def _set_archived(exercise_id: str, archived: bool) -> None:
 # ---------------------------------------------------------------------------
 
 def _index_by_group(
-    exercises: list[dict[str, Any]],
+    # `rows`, not `exercises`: that name is the module this file imports, and a
+    # parameter shadowing it would make lib/exercises unreachable inside here
+    # the moment somebody needed it.
+    rows: list[dict[str, Any]],
     groups: list[dict[str, Any]],
     links: list[dict[str, Any]],
 ) -> dict[str, list[dict[str, Any]]]:
@@ -181,7 +122,7 @@ def _index_by_group(
     buckets: dict[str, list[dict[str, Any]]] = {g["name_el"]: [] for g in groups}
     buckets[_UNGROUPED] = []
 
-    for exercise in exercises:
+    for exercise in rows:
         group_ids = by_exercise.get(exercise["id"]) or []
         placed = False
         for group_id in group_ids:
@@ -277,14 +218,14 @@ def _new_exercise_form(gym_id: str, groups: list[dict[str, Any]]) -> None:
             return
 
         try:
-            _create_exercise(
+            exercises.create(
                 gym_id,
-                name_el,
-                _CATEGORY_CHOICES[category_label],
-                _EQUIPMENT_CHOICES[equipment_label],
-                _KIND_CHOICES[kind_label],
-                primary,
-                list(secondary),
+                name_el=name_el,
+                category=_CATEGORY_CHOICES[category_label],
+                equipment=_EQUIPMENT_CHOICES[equipment_label],
+                kind=_KIND_CHOICES[kind_label],
+                primary_group=primary,
+                secondary_groups=list(secondary),
             )
         except Exception as exc:
             st.error(f"Η άσκηση δεν προστέθηκε: {exc}")
