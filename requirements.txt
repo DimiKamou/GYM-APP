@@ -1,0 +1,9 @@
+# Python dependencies for the Streamlit pilot (see streamlit/ and streamlit_app.py).
+# This file is at the repository root because that is where Streamlit Community Cloud
+# looks; `streamlit/requirements.txt` is the same list for a local run or a container.
+#
+# Pinned exactly, not floated: these three versions are the ones the app was built and
+# booted against, and a silent minor bump in supabase-py has changed the auth surface before.
+streamlit==1.62.0
+supabase==2.31.0
+extra-streamlit-components==0.1.80
