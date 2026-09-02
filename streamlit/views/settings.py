@@ -14,7 +14,7 @@ from typing import Any
 
 import streamlit as st
 
-from lib import auth, db, fmt, gym
+from lib import auth, db, fmt, gym, version
 
 _ROLE_LABELS = {"owner": "Ιδιοκτήτης", "trainer": "Προπονητής"}
 
@@ -127,6 +127,22 @@ def _sign_out() -> None:
         st.rerun()
 
 
+def _version() -> None:
+    """Which build this is, and what landed in it.
+
+    Here as well as on the sign-in screen because this is the screen somebody
+    opens when a change they were promised is not on their phone.
+    """
+    st.subheader("Έκδοση")
+    st.markdown(f"**{version.VERSION}**")
+    for number, what in version.CHANGELOG[:4]:
+        st.caption(f"{number} · {what}")
+    st.caption(
+        "Αν λείπει κάτι που ζήτησες και ο αριθμός εδώ είναι μικρότερος από αυτόν "
+        "που σου είπαν, η εφαρμογή δεν έχει ξαναχτιστεί ακόμα."
+    )
+
+
 def render() -> None:
     st.header("Ρυθμίσεις")
 
@@ -160,3 +176,6 @@ def render() -> None:
 
     st.divider()
     _sign_out()
+
+    st.divider()
+    _version()

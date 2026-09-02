@@ -550,7 +550,7 @@ def _edit_athlete(gym_id: str, athlete: dict[str, Any], names: dict[str, str]) -
     """
     athlete_id = str(athlete["id"])
 
-    with st.expander("Στοιχεία αθλητή"):
+    with st.expander("✏️  Επεξεργασία / διαγραφή αθλητή"):
         with st.form("athlete_edit"):
             full_name = st.text_input(
                 "Ονοματεπώνυμο",
@@ -746,15 +746,19 @@ def _athlete_sheet(gym_id: str, selected: dict[str, Any]) -> None:
         st.error("Οι σημειώσεις δεν φορτώθηκαν.")
         st.caption(str(exc))
 
+    # Directly under the name, not at the foot of the sheet. It was below the
+    # briefing, the last session and the notes — three sections deep on a phone —
+    # and the gym reported twice that an athlete could not be edited or removed
+    # at all. A control nobody scrolls to is a control that does not exist.
+    _edit_athlete(gym_id, current, names)
+
+    st.divider()
     _pinned_section(notes, names, tz, today)
 
     _last_session_section(gym_id, athlete_id, names, today)
 
     if st.button("Νέα προπόνηση", key="athlete_new_session", type="primary"):
         _start_session(current)
-
-    st.divider()
-    _edit_athlete(gym_id, current, names)
 
     st.divider()
     _history_section(notes, names, tz, today)

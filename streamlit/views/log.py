@@ -1272,7 +1272,10 @@ def _picker(
     each: the lists are for finding something new, not for repeating a
     programme.
     """
-    with st.expander("Προσθήκη άσκησης"):
+    # Open by default while the workout is empty. A new workout has exactly one
+    # thing to do next, and the three lists that do it were behind a shut panel
+    # the gym never opened — they reported having no drop-downs at all.
+    with st.expander("Προσθήκη άσκησης", expanded=not on_screen):
         try:
             grouped = _grouped_exercises(gym_id)
             rows = _pickable_rows(gym_id)

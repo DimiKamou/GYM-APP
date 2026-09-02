@@ -20,7 +20,7 @@ from typing import Any
 import extra_streamlit_components as stx
 import streamlit as st
 
-from lib import db
+from lib import db, version
 
 
 # The synthetic mail domain never receives a message; it only has to be stable
@@ -521,7 +521,10 @@ def _render_not_configured(missing: list[str]) -> None:
 
 def _render_sign_in() -> None:
     st.title("TrainHub")
-    st.caption("Όπου καταγράφεται κάθε επανάληψη.")
+    # The version is on the FIRST screen, before sign-in, because "is the new
+    # thing actually deployed" is a question asked from a phone by someone who
+    # cannot open a menu to find out.
+    st.caption(f"Όπου καταγράφεται κάθε επανάληψη. · έκδοση {version.VERSION}")
 
     with st.form("trainhub_sign_in"):
         st.subheader("Σύνδεση")
