@@ -22,7 +22,7 @@ coaching number with no one to ask about it is the failure this app replaces.
 
 from __future__ import annotations
 
-from datetime import date
+from datetime import date, datetime, timezone
 from typing import Any
 
 import streamlit as st
@@ -533,6 +533,169 @@ def _new_note_form(gym_id: str, athlete_id: str) -> None:
     st.rerun()
 
 
+_CONFIRM_DELETE = "athletes_confirm_delete"
+
+
+def _edit_athlete(gym_id: str, athlete: dict[str, Any], names: dict[str, str]) -> None:
+    """Correct the sheet's own details, and — for the owner — remove the athlete.
+
+    This is the one place in the app that keeps a confirm dialog instead of an
+    undo, and CLAUDE.md says why: removing an athlete takes their whole history
+    off every screen at once. An undo banner that scrolls away is not a good
+    enough answer to that, the way it is for one set.
+
+    The removal is still a soft delete — there is no DELETE policy anywhere in
+    this schema — so the row and its sessions survive and a mistake is
+    recoverable from the database. It is the SCREEN that treats it as final.
+    """
+    athlete_id = str(athlete["id"])
+
+    with st.expander("Στοιχεία αθλητή"):
+        with st.form("athlete_edit"):
+            full_name = st.text_input(
+                "Ονοματεπώνυμο",
+                value=str(athlete.get("full_name") or ""),
+                max_chars=160,
+            )
+            phase = st.text_input(
+                "Φάση προγράμματος",
+                value=str(athlete.get("plan_phase") or ""),
+                max_chars=120,
+                placeholder="π.χ. Όγκος",
+            )
+            focus = st.text_input(
+                "Έμφαση",
+                value=str(athlete.get("plan_focus") or ""),
+                max_chars=120,
+                placeholder="π.χ. Πλάτη / ώμοι",
+            )
+            options: list[str | None] = [None] + sorted(
+                names, key=lambda member_id: fmt.fold(names.get(member_id, ""))
+            )
+            coach = str(athlete.get("coach_membership_id") or "")
+            picked = st.selectbox(
+                "Προπονητής",
+                options=options,
+                index=options.index(coach) if coach in options else 0,
+                format_func=lambda member_id: (
+                    "Κανένας συγκεκριμένα"
+                    if member_id is None
+                    else names.get(member_id, fmt.UNKNOWN_AUTHOR)
+                ),
+                help=(
+                    "Φίλτρο και όχι φράχτης: όποιος προπονητής του γυμναστηρίου "
+                    "μπορεί να καταγράψει προπόνηση για οποιονδήποτε αθλητή."
+                ),
+            )
+            saved = st.form_submit_button("Αποθήκευση", type="primary")
+
+        if saved:
+            name = (full_name or "").strip()
+            if not name:
+                st.error("Το ονοματεπώνυμο δεν μπορεί να μείνει κενό.")
+                return
+            try:
+                rows = (
+                    db.client()
+                    .table("athletes")
+                    .update(
+                        {
+                            "full_name": name,
+                            "plan_phase": (phase or "").strip() or None,
+                            "plan_focus": (focus or "").strip() or None,
+                            "coach_membership_id": picked,
+                        }
+                    )
+                    .eq("gym_id", gym_id)
+                    .eq("id", athlete_id)
+                    .execute()
+                    .data
+                    or []
+                )
+            except Exception as exc:
+                message = str(exc)
+                if "athletes_gym_name_uniq" in message or "duplicate key" in message:
+                    st.error(f"Υπάρχει ήδη αθλητής με το όνομα «{name}».")
+                else:
+                    st.error("Οι αλλαγές δεν αποθηκεύτηκαν.")
+                    st.caption(message)
+                return
+            if not rows:
+                # An UPDATE no policy let through matches zero rows and reports
+                # success, so silence here would be a change the coach believes
+                # they made.
+                st.error("Οι αλλαγές δεν αποθηκεύτηκαν. Δοκίμασε ξανά.")
+                return
+
+            _athletes.clear()
+            st.session_state["athlete"] = {**athlete, "full_name": name}
+            ui.notice(_NOTICE, "ok", "Τα στοιχεία ενημερώθηκαν.")
+            st.rerun()
+
+        st.divider()
+        _remove_athlete(gym_id, athlete)
+
+
+def _remove_athlete(gym_id: str, athlete: dict[str, Any]) -> None:
+    """Two taps and a sentence, owner only.
+
+    `athletes_delete_owner_only` is AS RESTRICTIVE, so a trainer's attempt is
+    refused by the database — and a button that the database will refuse is
+    worse than no button, because the trainer reads the refusal as a bug.
+    """
+    athlete_id = str(athlete["id"])
+    name = str(athlete.get("full_name") or fmt.EMPTY)
+
+    if not db.is_owner():
+        st.caption("Μόνο ο ιδιοκτήτης του γυμναστηρίου μπορεί να αφαιρέσει αθλητή.")
+        return
+
+    if st.session_state.get(_CONFIRM_DELETE) != athlete_id:
+        st.caption("Η αφαίρεση βγάζει τον αθλητή και το ιστορικό του από όλες τις οθόνες.")
+        if st.button("Αφαίρεση αθλητή", key="athlete_remove"):
+            st.session_state[_CONFIRM_DELETE] = athlete_id
+            st.rerun()
+        return
+
+    st.warning(f"Να αφαιρεθεί ο/η {name}; Οι προπονήσεις του φεύγουν από κάθε οθόνη.")
+    cancel_col, confirm_col = st.columns(2)
+    with cancel_col:
+        if st.button("Ακύρωση", key="athlete_remove_cancel", type="primary"):
+            st.session_state.pop(_CONFIRM_DELETE, None)
+            st.rerun()
+    with confirm_col:
+        if st.button("Ναι, αφαίρεσέ τον", key="athlete_remove_confirm"):
+            try:
+                rows = (
+                    db.client()
+                    .table("athletes")
+                    .update({"deleted_at": datetime.now(timezone.utc).isoformat()})
+                    .eq("gym_id", gym_id)
+                    .eq("id", athlete_id)
+                    .execute()
+                    .data
+                    or []
+                )
+            except Exception as exc:
+                st.error("Ο αθλητής δεν αφαιρέθηκε.")
+                st.caption(str(exc))
+                return
+            if not rows:
+                st.error("Ο αθλητής δεν αφαιρέθηκε. Δοκίμασε ξανά.")
+                return
+
+            _athletes.clear()
+            _last_session.clear()
+            _notes.clear()
+            st.session_state.pop(_CONFIRM_DELETE, None)
+            # The sheet is about to describe a row that no longer exists, and
+            # an open workout belongs to the athlete just removed.
+            for key in ("athlete", "session_id"):
+                st.session_state.pop(key, None)
+            ui.notice(_NOTICE, "ok", f"Ο/Η {name} αφαιρέθηκε.")
+            st.rerun()
+
+
 def _athlete_sheet(gym_id: str, selected: dict[str, Any]) -> None:
     athlete_id = str(selected.get("id") or "")
 
@@ -589,6 +752,9 @@ def _athlete_sheet(gym_id: str, selected: dict[str, Any]) -> None:
 
     if st.button("Νέα προπόνηση", key="athlete_new_session", type="primary"):
         _start_session(current)
+
+    st.divider()
+    _edit_athlete(gym_id, current, names)
 
     st.divider()
     _history_section(notes, names, tz, today)

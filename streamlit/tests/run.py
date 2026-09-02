@@ -29,6 +29,7 @@ from lib import db  # noqa: E402
 from streamlit.testing.v1 import AppTest  # noqa: E402
 
 DRIVER = str(HERE / "_drive_log.py")
+ATHLETES_DRIVER = str(HERE / "_drive_athletes.py")
 
 _failures: list[str] = []
 _passes = 0
@@ -60,16 +61,39 @@ def open_log(**session_state) -> AppTest:
     return at
 
 
+def open_athlete(**session_state) -> AppTest:
+    """The Αθλητές screen, signed in, with the seeded athlete's sheet open."""
+    at = AppTest.from_file(ATHLETES_DRIVER, default_timeout=60)
+    at.session_state[db.ACCESS_KEY] = "fake-access"
+    at.session_state[db.REFRESH_KEY] = "fake-refresh"
+    at.session_state[db.USER_ID_KEY] = state.USER_ID
+    at.session_state["_auth_expires_at"] = 9e12
+    at.session_state["athlete"] = state.STORE["athletes"][0]
+    for key, value in session_state.items():
+        at.session_state[key] = value
+    at.run()
+    raise_on_exception(at)
+    return at
+
+
 def raise_on_exception(at: AppTest) -> None:
     if at.exception:
         raise AssertionError("; ".join(str(e.value) for e in at.exception))
 
 
 def button(at: AppTest, key: str):
+    """The button with this key, or the submit button of the form with this id.
+
+    Exact before prefix, and never a loose substring: "athlete_edit" matched
+    "athlete_edit_session" that way and the test pressed a navigation button
+    while believing it had saved a form.
+    """
     for widget in at.button:
-        # A form's submit button is keyed "FormSubmitter:<form>-<label>", so the
-        # form id is a substring rather than the whole key.
-        if widget.key == key or key in (widget.key or ""):
+        if widget.key == key:
+            return widget
+    # A form's submit button is keyed "FormSubmitter:<form id>-<label>".
+    for widget in at.button:
+        if (widget.key or "").startswith(f"FormSubmitter:{key}-"):
             return widget
     raise AssertionError(f"no button {key!r}; have {[b.key for b in at.button]}")
 
@@ -141,6 +165,59 @@ def test_adding_an_exercise_stays_on_the_workout() -> None:
           any(b["exercise_id"] == "e-smith" for b in blocks), str(blocks))
     check("the coach is still on the workout",
           "Δημήτρης Καμουτσής" in texts(at))
+
+
+def test_an_athletes_details_can_be_corrected() -> None:
+    state.reset()
+    at = open_athlete()
+    [t for t in at.text_input if t.label == "Ονοματεπώνυμο"][0].set_value("Δημήτρης Καμουτσής")
+    [t for t in at.text_input if t.label == "Φάση προγράμματος"][0].set_value("Δύναμη")
+    [t for t in at.text_input if t.label == "Έμφαση"][0].set_value("Πλάτη")
+    [s for s in at.selectbox if s.label == "Προπονητής"][0].set_value(state.TRAINER)
+    button(at, "athlete_edit").click().run()
+    raise_on_exception(at)
+
+    row = state.rows("athletes", id=state.ATHLETE)[0]
+    check("the phase is saved", row.get("plan_phase") == "Δύναμη", str(row.get("plan_phase")))
+    check("the focus is saved", row.get("plan_focus") == "Πλάτη")
+    check("the coach is saved", row.get("coach_membership_id") == state.TRAINER)
+
+
+def test_removing_an_athlete_asks_first() -> None:
+    """The one screen that keeps a confirm: removal takes a whole history off every screen."""
+    state.reset()
+    at = open_athlete()
+    button(at, "athlete_remove").click().run()
+    raise_on_exception(at)
+
+    check("the athlete is still there after the first press",
+          not state.deleted("athletes", state.ATHLETE))
+    check("and the screen asks", "Να αφαιρεθεί" in texts(at), texts(at)[:200])
+
+    button(at, "athlete_remove_cancel").click().run()
+    raise_on_exception(at)
+    check("cancelling leaves the athlete alone", not state.deleted("athletes", state.ATHLETE))
+
+    button(at, "athlete_remove").click().run()
+    button(at, "athlete_remove_confirm").click().run()
+    raise_on_exception(at)
+    check("confirming removes them", state.deleted("athletes", state.ATHLETE))
+    check("the open sheet is dropped with them", "athlete" not in at.session_state)
+
+
+def test_a_trainer_is_not_offered_a_removal_the_database_would_refuse() -> None:
+    """athletes_delete_owner_only is AS RESTRICTIVE; a refused button reads as a bug."""
+    state.reset()
+    # The signed-in member becomes the trainer rather than the owner.
+    for row in state.STORE["memberships"]:
+        row["role"] = "trainer" if row["id"] == state.OWNER else row["role"]
+    at = open_athlete()
+    keys = [b.key for b in at.button]
+    check("no removal button for a trainer", "athlete_remove" not in keys, str(keys))
+    check("and the screen says why",
+          "Μόνο ο ιδιοκτήτης" in texts(at), texts(at)[:200])
+    check("editing the details is still offered",
+          any("athlete_edit" in (b.key or "") for b in at.button), str(keys))
 
 
 def test_choosing_an_exercise_adds_it_exactly_once() -> None:
@@ -253,6 +330,45 @@ def test_editing_the_workout_saves_what_may_change() -> None:
     check("the notes are saved", row.get("notes") == "Πονάει ο δεξιός ώμος.")
     check("the credit moved to the colleague", row.get("credited_to") == state.TRAINER)
     check("who typed it did NOT move", row.get("logged_by") == state.OWNER)
+
+
+def test_one_entry_can_stand_for_several_straight_sets() -> None:
+    """3×80×8 is one number typed once, not the same two numbers typed three times."""
+    state.reset()
+    at = open_log()
+    at.text_input(key=f"log_kg_{state.BLOCK}").set_value("80")
+    at.number_input(key=f"log_reps_{state.BLOCK}").set_value(8)
+    at.number_input(key=f"log_times_{state.BLOCK}").set_value(3)
+    button(at, f"log_set_{state.BLOCK}").click().run()
+    raise_on_exception(at)
+
+    written = [r for r in state.rows("sets", block_id=state.BLOCK) if r["id"] != state.SET]
+    check("three sets were written", len(written) == 3, str(len(written)))
+    check("all three carry the numbers that were typed once",
+          all(r.get("load_kg") == 80.0 and r.get("reps") == 8 for r in written), str(written))
+    check("and they take consecutive positions, so they read 1., 2., 3.",
+          sorted(r["position"] for r in written) == [1, 2, 3],
+          str(sorted(r["position"] for r in written)))
+    check("the card shows all three", texts(at).count("80×8") >= 3, texts(at)[:300])
+
+
+def test_the_multiplier_defaults_to_one_set() -> None:
+    """A coach who ignores it gets exactly the old behaviour."""
+    state.reset()
+    at = open_log()
+    times = at.number_input(key=f"log_times_{state.BLOCK}")
+    check("«× σετ» starts at 1", times.value == 1, str(times.value))
+    check("and it is capped, because this multiplies into INSERTs",
+          times.max == 12, str(times.max))
+
+    at.text_input(key=f"log_kg_{state.BLOCK}").set_value("82,5")
+    at.number_input(key=f"log_reps_{state.BLOCK}").set_value(6)
+    button(at, f"log_set_{state.BLOCK}").click().run()
+    raise_on_exception(at)
+    written = [r for r in state.rows("sets", block_id=state.BLOCK) if r["id"] != state.SET]
+    check("one entry, one set", len(written) == 1, str(written))
+    check("and the next set could be heavier than the last",
+          written[0].get("load_kg") == 82.5, str(written))
 
 
 def test_moving_the_workout_to_another_day_keeps_the_time() -> None:
