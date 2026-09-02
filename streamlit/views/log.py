@@ -1481,18 +1481,29 @@ def _new_exercise(gym_id: str, session_id: str, next_position: int,
             max_chars=120,
             placeholder="π.χ. Πιέσεις στήθους σε Smith",
         )
-        gear_label = st.selectbox("Όργανο", options=list(exercises.EQUIPMENT_CHOICES))
-        gear = exercises.EQUIPMENT_CHOICES[gear_label]
+        # Blank, not «Μπάρα». A preselected όργανο is one nobody reads, and this
+        # field is what keeps 40 kg of dumbbells from being read as 80 kg of
+        # barbell for the rest of the exercise's life.
+        gear_label = st.selectbox(
+            "Όργανο",
+            options=list(exercises.EQUIPMENT_CHOICES),
+            index=None,
+            placeholder="Διάλεξε όργανο",
+        )
+        gear = exercises.EQUIPMENT_CHOICES.get(gear_label or "", "")
         kinds = list(exercises.KIND_CHOICES)
         kind_label = st.selectbox(
             "Τι μετράει",
             options=kinds,
-            # Preselected from the όργανο: a coach picking «Cardio» almost
-            # always means time, and the wrong answer here stores twenty
-            # treadmill minutes as twenty repetitions of nothing.
-            index=kinds.index(
-                exercises.KIND_LABELS[exercises.KIND_FOR_EQUIPMENT.get(gear, "weight_reps")]
+            # Preselected from the όργανο once there is one: a coach picking
+            # «Cardio» almost always means time, and the wrong answer here
+            # stores twenty treadmill minutes as twenty repetitions of nothing.
+            index=(
+                kinds.index(exercises.KIND_LABELS[exercises.KIND_FOR_EQUIPMENT[gear]])
+                if gear in exercises.KIND_FOR_EQUIPMENT
+                else None
             ),
+            placeholder="Διάλεξε τι μετράει",
         )
         submitted = st.form_submit_button("Πρόσθεσε και βάλ' την στην προπόνηση")
 
@@ -1500,6 +1511,9 @@ def _new_exercise(gym_id: str, session_id: str, next_position: int,
         return
     if not name_el.strip():
         st.error("Γράψε το όνομα της άσκησης.")
+        return
+    if not gear or not kind_label:
+        st.error("Διάλεξε όργανο και τι μετράει.")
         return
     if not group_id:
         st.error("Διάλεξε πρώτα μυϊκή ομάδα από πάνω.")

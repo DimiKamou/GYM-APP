@@ -57,6 +57,13 @@ _SEED: dict[str, list[dict[str, Any]]] = {
          "region": "upper", "position": 2, "deleted_at": None},
     ],
     "exercises": [
+        # The gym's own row. Everything else is the shared catalogue, which the
+        # policies make read-only for every gym — the screen must not offer to
+        # edit what the database will refuse.
+        {"id": "e-mine", "gym_id": GYM, "name_el": "Πιέσεις σε μηχάνημα",
+         "name_en": None, "category": "upper", "equipment": "machine",
+         "default_set_kind": "weight_reps", "is_archived": False,
+         "merged_into_id": None, "deleted_at": None},
         # One implement only, which is the case the third list must not turn
         # into a pointless extra tap.
         {"id": "e-pullup", "gym_id": None, "name_el": "Έλξεις", "name_en": "Pull-up",
@@ -75,6 +82,8 @@ _SEED: dict[str, list[dict[str, Any]]] = {
     "exercise_muscles": [
         {"exercise_id": "e-pullup", "muscle_group_id": BACK, "role": "primary",
          "gym_id": None, "deleted_at": None},
+        {"exercise_id": "e-mine", "muscle_group_id": CHEST, "role": "primary",
+         "gym_id": GYM, "deleted_at": None},
         {"exercise_id": "e-bar", "muscle_group_id": CHEST, "role": "primary",
          "gym_id": None, "deleted_at": None},
         {"exercise_id": "e-db", "muscle_group_id": CHEST, "role": "primary",

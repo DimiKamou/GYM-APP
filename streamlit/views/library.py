@@ -13,6 +13,7 @@ which is nobody's mental model of a body.
 
 from __future__ import annotations
 
+from datetime import datetime, timezone
 from typing import Any
 
 import streamlit as st
@@ -136,10 +137,174 @@ def _index_by_group(
     return {heading: rows for heading, rows in buckets.items() if rows}
 
 
-def _exercise_row(exercise: dict[str, Any], can_edit: bool) -> None:
+_EDITING = "library_editing"
+
+
+def _update_exercise(exercise_id: str, gym_id: str, values: dict[str, Any]) -> int:
+    """Rewrite a gym's own exercise. Returns the rows the UPDATE actually reached."""
+    rows = (
+        db.client()
+        .table("exercises")
+        .update(values)
+        .eq("gym_id", gym_id)
+        .eq("id", exercise_id)
+        .execute()
+        .data
+        or []
+    )
+    return len(rows)
+
+
+def _refile(exercise_id: str, gym_id: str, group_id: str | None) -> None:
+    """Move the exercise to another primary muscle group.
+
+    The old mappings are soft-deleted rather than rewritten: exercise_muscles
+    has no natural key this screen can rely on, and a stale primary left behind
+    puts the exercise under two headings in the picker at once.
+    """
+    client = db.client()
+    client.table("exercise_muscles").update(
+        {"deleted_at": datetime.now(timezone.utc).isoformat()}
+    ).eq("exercise_id", exercise_id).eq("role", "primary").execute()
+    if group_id:
+        client.table("exercise_muscles").insert(
+            {"exercise_id": exercise_id, "muscle_group_id": group_id,
+             "role": "primary", "gym_id": gym_id}
+        ).execute()
+
+
+def _delete_exercise(exercise_id: str, gym_id: str) -> int:
+    rows = (
+        db.client()
+        .table("exercises")
+        .update({"deleted_at": datetime.now(timezone.utc).isoformat()})
+        .eq("gym_id", gym_id)
+        .eq("id", exercise_id)
+        .execute()
+        .data
+        or []
+    )
+    return len(rows)
+
+
+def _restore(payload: dict[str, Any]) -> None:
+    """Undo a deleted exercise. Same shape as the delete, deleted_at back to null."""
+    ids = [str(value) for value in (payload.get("ids") or []) if value]
+    gym_id = str(payload.get("gym_id") or "")
+    if not ids or not gym_id:
+        return
+    try:
+        db.client().table("exercises").update({"deleted_at": None}).eq(
+            "gym_id", gym_id
+        ).in_("id", ids).execute()
+    except Exception as exc:
+        ui.notice(_NOTICE, "error", f"Η επαναφορά δεν έγινε: {exc}")
+        st.rerun()
+    _clear()
+    ui.notice(_NOTICE, "ok", "Η άσκηση επανήλθε.")
+    st.rerun()
+
+
+def _edit_form(exercise: dict[str, Any], gym_id: str, groups: list[dict[str, Any]]) -> None:
+    """The row, replaced in place by a form to change it.
+
+    In place and not in an expander: this row is already inside the muscle
+    group's expander, and Streamlit refuses to nest one inside another.
+    """
+    exercise_id = str(exercise["id"])
+    name = fmt.exercise_name(exercise)
+
+    with st.form(f"library_edit_{exercise_id}"):
+        st.caption(f"Επεξεργασία: {fmt.md(name)}")
+        name_el = st.text_input("Όνομα", value=str(exercise.get("name_el") or ""), max_chars=120)
+
+        equipment_labels = list(_EQUIPMENT_CHOICES)
+        current_gear = _EQUIPMENT_LABELS.get(str(exercise.get("equipment") or ""), "")
+        gear_label = st.selectbox(
+            "Εξοπλισμός",
+            options=equipment_labels,
+            index=equipment_labels.index(current_gear) if current_gear in equipment_labels else None,
+            placeholder="Διάλεξε όργανο",
+        )
+
+        kind_labels = list(_KIND_CHOICES)
+        current_kind = _KIND_LABELS.get(str(exercise.get("default_set_kind") or ""), "")
+        kind_label = st.selectbox(
+            "Τι μετράει",
+            options=kind_labels,
+            index=kind_labels.index(current_kind) if current_kind in kind_labels else None,
+            placeholder="Διάλεξε τι μετράει",
+        )
+
+        by_id = {str(g["id"]): g["name_el"] for g in groups}
+        group_id = st.selectbox(
+            "Μυϊκή ομάδα",
+            options=list(by_id),
+            format_func=lambda key: by_id[key],
+            index=None,
+            placeholder="Άφησέ το κενό για να μείνει όπως είναι",
+            help="Άλλαξέ την μόνο αν η άσκηση είναι φιλαρισμένη σε λάθος ομάδα.",
+        )
+
+        save_col, cancel_col = st.columns(2)
+        saved = save_col.form_submit_button("Αποθήκευση", type="primary")
+        cancelled = cancel_col.form_submit_button("Άκυρο")
+
+    if cancelled:
+        st.session_state.pop(_EDITING, None)
+        st.rerun()
+
+    if not saved:
+        return
+
+    if not (name_el or "").strip():
+        st.error("Το όνομα δεν μπορεί να μείνει κενό.")
+        return
+    if not gear_label or not kind_label:
+        st.error("Διάλεξε εξοπλισμό και τι μετράει.")
+        return
+
+    try:
+        touched = _update_exercise(
+            exercise_id,
+            gym_id,
+            {
+                "name_el": name_el.strip(),
+                "equipment": _EQUIPMENT_CHOICES[gear_label],
+                "default_set_kind": _KIND_CHOICES[kind_label],
+            },
+        )
+        if group_id:
+            _refile(exercise_id, gym_id, group_id)
+    except Exception as exc:
+        st.error("Οι αλλαγές δεν αποθηκεύτηκαν.")
+        st.caption(str(exc))
+        return
+    if not touched:
+        # An UPDATE no policy let through matches zero rows and reports success.
+        st.error("Οι αλλαγές δεν αποθηκεύτηκαν. Δοκίμασε ξανά.")
+        return
+
+    _clear()
+    st.session_state.pop(_EDITING, None)
+    ui.notice(_NOTICE, "ok", f"Η «{name_el.strip()}» ενημερώθηκε.")
+    st.rerun()
+
+
+def _exercise_row(
+    exercise: dict[str, Any],
+    can_edit: bool,
+    gym_id: str = "",
+    groups: list[dict[str, Any]] | None = None,
+) -> None:
+    exercise_id = str(exercise["id"])
     name = fmt.exercise_name(exercise)
     mine = exercise.get("gym_id") is not None
     archived = bool(exercise.get("is_archived"))
+
+    if mine and can_edit and st.session_state.get(_EDITING) == exercise_id:
+        _edit_form(exercise, gym_id, groups or [])
+        return
 
     label = fmt.md(name)
     if archived:
@@ -156,22 +321,48 @@ def _exercise_row(exercise: dict[str, Any], can_edit: bool) -> None:
     left.caption(" · ".join(b for b in bits if b))
 
     # Only a gym's own rows can be touched: the shared catalogue is read-only by
-    # policy, and offering a button that the database will refuse is worse than
+    # policy — `exercises_update` demands gym_id = app.my_gym() and a shared row
+    # has none — and offering a button the database will refuse is worse than
     # offering none.
-    if mine and can_edit:
-        if archived:
-            if right.button("Επαναφορά", key=f"un-{exercise['id']}"):
-                _set_archived(exercise["id"], False)
-                _clear()
-                ui.notice(_NOTICE, "ok", f"Η «{name}» επανήλθε.")
-                st.rerun()
-        elif right.button("Απόσυρση", key=f"ar-{exercise['id']}"):
-            # Archiving, not deleting. Historical blocks keep pointing at the
-            # row and must keep rendering its name.
-            _set_archived(exercise["id"], True)
+    if not (mine and can_edit):
+        return
+
+    if archived:
+        if right.button("Επαναφορά", key=f"un-{exercise_id}"):
+            _set_archived(exercise_id, False)
             _clear()
-            ui.notice(_NOTICE, "ok", f"Η «{name}» αποσύρθηκε από τον κατάλογο.")
+            ui.notice(_NOTICE, "ok", f"Η «{name}» επανήλθε.")
             st.rerun()
+        return
+
+    if right.button("✏️", key=f"ed-{exercise_id}", help="Άλλαξε όνομα, εξοπλισμό ή ομάδα"):
+        st.session_state[_EDITING] = exercise_id
+        st.rerun()
+
+    hide_col, drop_col = st.columns(2)
+    if hide_col.button("Απόσυρση", key=f"ar-{exercise_id}"):
+        # Archiving, not deleting. Historical blocks keep pointing at the row
+        # and must keep rendering its name.
+        _set_archived(exercise_id, True)
+        _clear()
+        ui.notice(_NOTICE, "ok", f"Η «{name}» αποσύρθηκε από τον κατάλογο.")
+        st.rerun()
+    if drop_col.button("Διαγραφή", key=f"rm-{exercise_id}"):
+        try:
+            removed = _delete_exercise(exercise_id, gym_id)
+        except Exception as exc:
+            ui.notice(_NOTICE, "error", f"Η άσκηση δεν διαγράφηκε: {exc}")
+            st.rerun()
+        if not removed:
+            ui.notice(_NOTICE, "error", "Η άσκηση δεν διαγράφηκε. Δοκίμασε ξανά.")
+            st.rerun()
+        _clear()
+        ui.undoable(
+            _NOTICE,
+            f"Διαγράφηκε: {name}",
+            {"table": "exercises", "ids": [exercise_id], "gym_id": gym_id},
+        )
+        st.rerun()
 
 
 def _new_exercise_form(gym_id: str, groups: list[dict[str, Any]]) -> None:
@@ -184,7 +375,14 @@ def _new_exercise_form(gym_id: str, groups: list[dict[str, Any]]) -> None:
                 help="Τα ελληνικά είναι υποχρεωτικά — έτσι τη λένε οι προπονητές και έτσι θα την ψάξουν.",
             )
             category_label = st.selectbox("Περιοχή σώματος", options=list(_CATEGORY_CHOICES))
-            equipment_label = st.selectbox("Εξοπλισμός", options=list(_EQUIPMENT_CHOICES))
+            # Blank, not «Μπάρα». A preselected όργανο is one nobody reads, and
+            # this field decides whether 40 kg means dumbbells or a barbell.
+            equipment_label = st.selectbox(
+                "Εξοπλισμός",
+                options=list(_EQUIPMENT_CHOICES),
+                index=None,
+                placeholder="Διάλεξε όργανο",
+            )
             kind_label = st.selectbox(
                 "Τι μετράει",
                 options=list(_KIND_CHOICES),
@@ -212,6 +410,9 @@ def _new_exercise_form(gym_id: str, groups: list[dict[str, Any]]) -> None:
             return
         if not name_el.strip():
             st.error("Γράψε το ελληνικό όνομα.")
+            return
+        if not equipment_label:
+            st.error("Διάλεξε εξοπλισμό — με τι γίνεται η άσκηση.")
             return
         if not primary:
             st.error("Διάλεξε κύρια μυϊκή ομάδα, αλλιώς η άσκηση δεν θα βρίσκεται στην προπόνηση.")
@@ -245,6 +446,7 @@ def render() -> None:
         return
 
     ui.flush_notice(_NOTICE)
+    ui.flush_undo(_NOTICE, lambda payload: _restore(payload))
 
     try:
         exercises = _exercises(gym_id)
@@ -269,7 +471,11 @@ def render() -> None:
     ]
 
     mine = sum(1 for e in visible if e.get("gym_id"))
-    st.caption(f"{len(visible)} ασκήσεις, από τις οποίες {mine} δικές σας.")
+    st.caption(
+        f"{len(visible)} ασκήσεις, από τις οποίες {mine} δικές σας. "
+        "Μόνο τις δικές σας μπορείτε να αλλάξετε ή να διαγράψετε — ο κοινός "
+        "κατάλογος είναι κλειδωμένος από τη βάση για όλα τα γυμναστήρια."
+    )
 
     if not visible:
         st.info("Καμία άσκηση δεν ταιριάζει.")
@@ -277,7 +483,7 @@ def render() -> None:
         for heading, rows in _index_by_group(visible, groups, links).items():
             with st.expander(f"{heading} · {len(rows)}", expanded=bool(search)):
                 for exercise in rows:
-                    _exercise_row(exercise, can_edit=True)
+                    _exercise_row(exercise, True, gym_id, groups)
 
     st.divider()
     _new_exercise_form(gym_id, groups)
