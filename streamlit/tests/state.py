@@ -16,6 +16,8 @@ from copy import deepcopy
 from datetime import datetime, timezone
 from typing import Any
 
+import fake_supabase
+
 GYM = "g1"
 OWNER = "m1"
 TRAINER = "m2"
@@ -26,6 +28,7 @@ LAST_SESSION = "s0"
 BLOCK = "b1"
 SET = "set1"
 CHEST = "mg-chest"
+BACK = "mg-back"
 
 NOW = "2026-09-01T07:00:00+00:00"
 
@@ -50,8 +53,15 @@ _SEED: dict[str, list[dict[str, Any]]] = {
     "muscle_groups": [
         {"id": CHEST, "gym_id": None, "name_el": "Στήθος", "name_en": "Chest",
          "region": "upper", "position": 1, "deleted_at": None},
+        {"id": BACK, "gym_id": None, "name_el": "Πλάτη", "name_en": "Back",
+         "region": "upper", "position": 2, "deleted_at": None},
     ],
     "exercises": [
+        # One implement only, which is the case the third list must not turn
+        # into a pointless extra tap.
+        {"id": "e-pullup", "gym_id": None, "name_el": "Έλξεις", "name_en": "Pull-up",
+         "category": "upper", "equipment": "bodyweight", "default_set_kind": "bodyweight",
+         "is_archived": False, "merged_into_id": None, "deleted_at": None},
         {"id": "e-bar", "gym_id": None, "name_el": "Πιέσεις Στήθους", "name_en": "Bench Press",
          "category": "upper", "equipment": "barbell", "default_set_kind": "weight_reps",
          "is_archived": False, "merged_into_id": None, "deleted_at": None},
@@ -63,6 +73,8 @@ _SEED: dict[str, list[dict[str, Any]]] = {
          "is_archived": False, "merged_into_id": None, "deleted_at": None},
     ],
     "exercise_muscles": [
+        {"exercise_id": "e-pullup", "muscle_group_id": BACK, "role": "primary",
+         "gym_id": None, "deleted_at": None},
         {"exercise_id": "e-bar", "muscle_group_id": CHEST, "role": "primary",
          "gym_id": None, "deleted_at": None},
         {"exercise_id": "e-db", "muscle_group_id": CHEST, "role": "primary",
@@ -133,6 +145,17 @@ def stamp(table: str, row: dict[str, Any]) -> None:
 def reset() -> None:
     STORE.clear()
     STORE.update(deepcopy(_SEED))
+    fake_supabase.reset_round_trips()
+    # Streamlit's caches outlive an AppTest run — they belong to the process,
+    # not the script — so a seeded store with stale cache entries over it is a
+    # different world from a fresh one. This bit the suite the moment the ttls
+    # were raised: one test's answer was served to the next.
+    try:
+        import streamlit as st
+
+        st.cache_data.clear()
+    except Exception:
+        pass
 
 
 def rows(table: str, **where: Any) -> list[dict[str, Any]]:

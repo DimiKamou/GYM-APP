@@ -42,10 +42,15 @@ _PROBE_PAUSE_S = 0.4
 
 _MANAGER_KEY = "_cookie_manager"
 _PENDING_COOKIE_KEY = "_cookie_pending"
-_COOKIE_OP_KEY = "_cookie_op_seq"
 _EXPIRES_KEY = "_auth_expires_at"
 _EMAIL_KEY = "_auth_email"
 _PROBE_KEY = "_cookie_probes"
+# When the last token refresh died without reaching the server, and how long to
+# leave it alone. A network failure is not a verdict on the token, so it must
+# not sign anyone out — but retrying it on every rerun turns one dead spot in
+# the gym's wifi into a screen that stalls on every tap.
+_REFRESH_FAILED_KEY = "_auth_refresh_failed_at"
+_REFRESH_RETRY_S = 20.0
 # Sign-out is decided here and nowhere else. The cookie component answers with
 # what the browser posted BEFORE the delete this run flushed, so a snapshot read
 # in that run still carries the refresh token that was just destroyed — and
@@ -243,12 +248,30 @@ def _reauthenticate(current_password: str) -> None:
 
 def _ensure_session() -> bool:
     if st.session_state.get(db.ACCESS_KEY):
-        if _needs_refresh():
+        if _needs_refresh() and not _refresh_on_cooldown():
             return _use_refresh_token(st.session_state.get(db.REFRESH_KEY))
         # Re-attaches the stored JWT if the client object itself was dropped.
         db.client()
         return True
+    if _refresh_on_cooldown():
+        # The token in hand may still be spent, but a screen that says so is
+        # better than one that stalls on the same dead call every few seconds.
+        return False
     return _restore_from_cookie()
+
+
+def _refresh_on_cooldown() -> bool:
+    """True while a refresh that died on the network is still too recent to retry."""
+    failed_at = st.session_state.get(_REFRESH_FAILED_KEY)
+    if not failed_at:
+        return False
+    try:
+        if time.time() - float(failed_at) < _REFRESH_RETRY_S:
+            return True
+    except (TypeError, ValueError):
+        pass
+    st.session_state.pop(_REFRESH_FAILED_KEY, None)
+    return False
 
 
 def _needs_refresh() -> bool:
@@ -279,7 +302,14 @@ def _use_refresh_token(token: str | None) -> bool:
         # A token the server actively rejected is spent; a token that never
         # reached the server is not. Dropping the cookie on a dead gym wifi
         # would sign a trainer out for the rest of the shift.
-        _sign_out_state(drop_cookie=getattr(exc, "status", None) is not None)
+        status = getattr(exc, "status", None)
+        if status is None:
+            # The network failed, so the cookie stays — and WITHOUT this latch
+            # the next run reads that same cookie, makes the same blocking call
+            # and fails again. On gym wifi that turned every tap into a stalled
+            # round trip, which is what the gym reported as the screen hanging.
+            st.session_state[_REFRESH_FAILED_KEY] = time.time()
+        _sign_out_state(drop_cookie=status is not None)
         _flush_cookie()
         return False
 
@@ -345,12 +375,14 @@ def _sign_out_state(drop_cookie: bool = True) -> None:
         # confirms the cookie is gone, this flag — never a cookie snapshot — is
         # the answer to "is anyone signed in".
         st.session_state[_SIGNED_OUT_KEY] = True
-    try:
-        # @st.cache_data is global to the server process. Every cached function
-        # is keyed by gym_id, so this is belt and braces — and cheap.
-        st.cache_data.clear()
-    except Exception:
-        pass
+    # No st.cache_data.clear() here, deliberately. It is global to the server
+    # PROCESS, and one process serves every trainer of every gym: one coach
+    # signing out — or one refresh failing on bad wifi, which lands here too —
+    # threw away the athletes, the catalogue and the open workout of everybody
+    # else on the box, and they each paid a full reload for it. It was written
+    # as belt and braces over the gym_id in every cache key. The braces hold on
+    # their own: a cached entry another tenant cannot name is a cached entry
+    # they cannot read.
 
 
 # ---------------------------------------------------------------------------
@@ -377,9 +409,17 @@ def _cookie_snapshot() -> dict[str, Any] | None:
     manager = _cookie_manager()
     if manager is None:
         return {}
-    read_all = getattr(manager, "get_all", None)
     try:
-        cookies = read_all() if callable(read_all) else {_COOKIE_NAME: manager.get(_COOKIE_NAME)}
+        # `manager.cookies`, NOT `manager.get_all()`. Constructing a
+        # CookieManager already renders a getAll component as a side effect —
+        # `self.cookies = self.cookie_manager(method="getAll", key=key, ...)` in
+        # extra_streamlit_components/CookieManager/__init__.py:22 — and
+        # get_all() renders a SECOND one under the library's own default key
+        # "get_all". Two components, two iframes, and each posts its value once
+        # on mount. Every post is a backMsg, and every backMsg is a rerun, so
+        # asking twice for the same answer cost the app an extra full refresh
+        # of the page every time it looked for a session.
+        cookies = getattr(manager, "cookies", None)
     except Exception:
         # In private mode and locked-down browsers the accessor itself throws.
         return {}
@@ -434,11 +474,15 @@ def _flush_cookie() -> None:
         return
 
     action, token = pending
-    sequence = int(st.session_state.get(_COOKIE_OP_KEY, 0) or 0) + 1
-    st.session_state[_COOKIE_OP_KEY] = sequence
-    # Each write renders its own component; a shared key would be a duplicate
-    # widget id the moment two writes land in one run.
-    key = f"trainhub_cookie_{action}_{sequence}"
+    # One key per action, stable for the life of the session. It used to carry a
+    # sequence number, which made every single write a widget Streamlit had
+    # never seen — so it mounted a fresh iframe, the iframe posted on mount, and
+    # the post rerun the page. A cookie write is not a thing the coach asked
+    # for, so the refresh it caused had no visible cause either.
+    #
+    # Two writes cannot collide on the key: this function pops ONE pending
+    # operation per run and returns if there is none.
+    key = f"trainhub_cookie_{action}"
 
     try:
         if action == "set" and token:

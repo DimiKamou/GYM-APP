@@ -35,6 +35,7 @@ about who actually typed it.
 
 from __future__ import annotations
 
+import time
 from datetime import date, datetime, timezone
 from typing import Any
 
@@ -72,13 +73,13 @@ _MAX_REPEAT = 12
 _UNFILED_GROUP = "Χωρίς μυϊκή ομάδα"
 
 _NOTICE = "log_notice"
-# The exercise search box. Streamlit refuses to let a script write a widget's
-# own key after the widget exists, so the box cannot be cleared in place once it
-# has been acted on — and left uncleared it would re-add the same exercise on
-# every following rerun. It is given a fresh key instead: a new widget starts
-# with nothing selected, which is exactly the state wanted after an add.
-_PICK_KEY = "log_pick_exercise"
-_PICK_NONCE = "log_pick_generation"
+# The last set this screen wrote, and how long an identical one is treated as
+# the same tap rather than a new one. A write is followed by a rerun, and on a
+# slow connection the coach taps «Καταχώρηση σετ» again during the dead time —
+# which replays the submit and logs the set twice. Three seconds is far longer
+# than the gap Streamlit needs and far shorter than typing two numbers again.
+_LAST_WRITE_KEY = "log_last_set_write"
+_DOUBLE_TAP_S = 3.0
 # Set by the finish button. render() consults it BEFORE opening a workout,
 # because clearing session_id on its own would make the very next rerun insert a
 # fresh empty session and the coach could never leave the screen.
@@ -187,7 +188,7 @@ def _exercise_muscles(gym_id: str) -> list[dict[str, Any]]:
     )
 
 
-@st.cache_data(ttl=15, show_spinner=False)
+@st.cache_data(ttl=60, show_spinner=False)
 def _blocks(gym_id: str, session_id: str) -> list[dict[str, Any]]:
     return (
         db.client()
@@ -206,9 +207,17 @@ def _blocks(gym_id: str, session_id: str) -> list[dict[str, Any]]:
     )
 
 
-@st.cache_data(ttl=15, show_spinner=False)
-def _sets(gym_id: str, session_id: str, block_ids: tuple[str, ...]) -> list[dict[str, Any]]:
-    """Every live set of one workout. block_ids is in the key so adding a block misses."""
+@st.cache_data(ttl=60, show_spinner=False)
+def _sets(gym_id: str, session_id: str) -> list[dict[str, Any]]:
+    """Every live set of one workout.
+
+    The block ids used to be a third argument, so that adding a block missed the
+    cache. They are looked up here instead, from the cached `_blocks` — because
+    an argument in the key is an argument every clear has to reproduce exactly,
+    and without it this cache could only ever be emptied for every tenant at
+    once. Every local write clears both by (gym_id, session_id) now.
+    """
+    block_ids = tuple(str(block["id"]) for block in _blocks(gym_id, session_id))
     if not block_ids:
         return []
     return (
@@ -382,14 +391,18 @@ def _last_performance(
     return result
 
 
-@st.cache_data(ttl=60, show_spinner=False)
+@st.cache_data(ttl=600, show_spinner=False)
 def _recent_exercise_ids(gym_id: str, athlete_id: str) -> tuple[str, ...]:
     """The exercises of this athlete's last few workouts, most recent first.
 
-    Two queries and a short ttl, because this is drawn inside an expander the
-    coach opens mid-workout. It is a convenience, not a source of truth: a
-    caller that cannot read it falls back to the search, which reaches every
-    exercise anyway.
+    Two queries, and a LONG ttl, because Streamlit executes the body of a
+    collapsed expander anyway — so a short one meant the closed picker quietly
+    spent two round trips of the coach's time every time the screen redrew. The
+    answer only changes when this athlete's history changes, and the one action
+    on this screen that changes it clears the entry itself.
+
+    It is a convenience, not a source of truth: a caller that cannot read it
+    falls back to the search, which reaches every exercise anyway.
     """
     client = db.client()
     sessions = (
@@ -437,8 +450,17 @@ def _recent_exercise_ids(gym_id: str, athlete_id: str) -> tuple[str, ...]:
     )
 
 
+@st.cache_data(ttl=20, show_spinner=False)
 def _session_row(gym_id: str, session_id: str) -> dict[str, Any] | None:
-    """The open workout. Deliberately uncached — its status is what the screen turns on."""
+    """The open workout, and the row the whole screen turns on.
+
+    It was uncached, on the reasoning that its status decides what is drawn —
+    which is true, and cost one blocking round trip before a single pixel, on
+    every rerun, including the one that follows every tap. Twenty seconds is
+    short enough to still notice a colleague finishing this workout from
+    another phone, and _clear_workout_caches() drops it after every local
+    write, so the coach's own changes are never stale by even one render.
+    """
     rows = (
         db.client()
         .table("sessions")
@@ -454,13 +476,30 @@ def _session_row(gym_id: str, session_id: str) -> dict[str, Any] | None:
     return rows[0] if rows else None
 
 
-def _clear_workout_caches() -> None:
-    _blocks.clear()
-    _sets.clear()
-    # The catalogue is cached for minutes and the blocks for seconds, so a
-    # colleague's brand-new exercise can be on this screen as a block while the
-    # row that says what it is measured in is still missing from this tab's copy.
-    _catalogue.clear()
+def _clear_workout_caches(gym_id: str = "", session_id: str = "") -> None:
+    """Drop what this workout's own write just made stale. Nothing else.
+
+    Two things this deliberately no longer does.
+
+    It no longer clears `_catalogue`. Logging a set does not change the exercise
+    catalogue, and clearing it made the next render refetch two hundred rows —
+    once per set, per block added, per delete, per undo. The catalogue is still
+    cleared where it actually changes: _new_exercise() and the «Δοκίμασε ξανά»
+    button. `_exercise` stays, because it is the one-row fallback for a block
+    whose exercise the catalogue copy has not heard of yet.
+
+    And it clears by KEY where it can. `.clear()` with no arguments empties the
+    entry for every tenant in the process, so one coach logging a set threw away
+    another gym's open workout and made them wait for it to be read again.
+    """
+    if gym_id and session_id:
+        _blocks.clear(gym_id, session_id)
+        _sets.clear(gym_id, session_id)
+        _session_row.clear(gym_id, session_id)
+    else:
+        _blocks.clear()
+        _sets.clear()
+        _session_row.clear()
     _exercise.clear()
 
 
@@ -1017,6 +1056,25 @@ def _last_time_line(
     return f"Τελευταία φορά: {performed} · {when} · {who}"
 
 
+def _is_double_tap(signature: tuple[Any, ...]) -> bool:
+    """Has this exact set just been written from this exact form?
+
+    Stamps the signature either way, so the caller can go ahead when it returns
+    False. The window is short enough that logging 80×8 twice on purpose — which
+    means typing it again, or using «× σετ» — is never mistaken for a stutter.
+    """
+    now = time.monotonic()
+    last = st.session_state.get(_LAST_WRITE_KEY)
+    st.session_state[_LAST_WRITE_KEY] = (signature, now)
+    if not last:
+        return False
+    try:
+        previous, when = last
+    except (TypeError, ValueError):
+        return False
+    return previous == signature and (now - when) < _DOUBLE_TAP_S
+
+
 def _set_line(
     row: dict[str, Any],
     kind: str,
@@ -1039,6 +1097,7 @@ def _set_line(
 
 def _block_edit(
     gym_id: str,
+    session_id: str,
     block_id: str,
     exercise: dict[str, Any] | None,
     rows: list[dict[str, Any]],
@@ -1067,7 +1126,7 @@ def _block_edit(
                 if not removed:
                     ui.notice(_NOTICE, "error", "Το σετ δεν διαγράφηκε. Δοκίμασε ξανά.")
                     st.rerun()
-                _clear_workout_caches()
+                _clear_workout_caches(gym_id, session_id)
                 ui.undoable(
                     _NOTICE,
                     f"Διαγράφηκε: {fmt.format_set(row, kind)}",
@@ -1096,7 +1155,7 @@ def _block_edit(
             if not removed:
                 ui.notice(_NOTICE, "error", "Η άσκηση δεν αφαιρέθηκε. Δοκίμασε ξανά.")
                 st.rerun()
-            _clear_workout_caches()
+            _clear_workout_caches(gym_id, session_id)
             ui.undoable(
                 _NOTICE,
                 f"Αφαιρέθηκε: {_labelled(exercise)}",
@@ -1109,6 +1168,7 @@ def _block_edit(
 
 def _block_card(
     gym_id: str,
+    session_id: str,
     block: dict[str, Any],
     exercise: dict[str, Any] | None,
     rows: list[dict[str, Any]],
@@ -1152,21 +1212,28 @@ def _block_card(
         else:
             st.caption(f"Κανένα σετ ακόμα · {_KIND_LABELS.get(kind, kind)}")
 
-        _block_edit(gym_id, block_id, exercise, rows, kind, names, session_author)
+        _block_edit(gym_id, session_id, block_id, exercise, rows, kind, names, session_author)
 
         entry = _set_form(block_id, kind, rows[-1] if rows else None)
         if entry is None:
             return
         values, times = entry
 
+        signature = (block_id, kind, times, tuple(sorted(values.items())))
+        if _is_double_tap(signature):
+            ui.notice(_NOTICE, "ok", "Το σετ είχε ήδη καταχωρηθεί.")
+            st.rerun()
+
         try:
-            _add_set(gym_id, block_id, kind, _next_position(rows), values, times)
+            with st.spinner("Καταχώρηση…"):
+                _add_set(gym_id, block_id, kind, _next_position(rows), values, times)
         except Exception as exc:
+            st.session_state.pop(_LAST_WRITE_KEY, None)
             st.error("Το σετ δεν καταχωρήθηκε.")
             st.caption(str(exc))
             return
 
-        _clear_workout_caches()
+        _clear_workout_caches(gym_id, session_id)
         written = fmt.format_set(values, kind)
         ui.notice(
             _NOTICE,
@@ -1184,19 +1251,26 @@ def _picker(
     next_position: int,
     on_screen: set[str],
 ) -> None:
-    """Add an exercise in one tap where possible, two where not.
+    """Three lists, in the order a coach describes a movement: ομάδα, άσκηση, τρόπος.
 
-    The first version made the coach open the picker, scroll a list of sixteen
-    muscle groups to Πλάτη, scroll a second list to Έλξεις, and then press a
-    submit button — five actions, standing at a rack, holding a phone. The gym
-    reported it as "3 scroll down".
+    The gym asked for exactly this shape, and it is also the shape the data has:
+    the same movement on two implements is two rows of `exercises` sharing a
+    name_el, so «Πιέσεις Στήθους» belongs in the second list once and its
+    barbell/dumbbell/Smith variants belong in a third.
 
-    So: the exercises this athlete did last are one button each; the search
-    covers the whole catalogue at once, so «ελξ» finds Έλξεις without knowing
-    which group it is filed under; and choosing an exercise adds it, because a
-    separate «Προσθήκη» press only confirms what the previous tap already said.
-    The muscle group is still there, now as an optional narrowing rather than a
-    gate — and it is what the "add a new exercise" form files into.
+    Two rules the third list follows, and they are not the same rule:
+
+      * one variant — it is selected, and shown anyway. The coach spends no
+        thought on it and still reads which όργανο is going on the sheet.
+      * more than one — NOTHING is selected, and «Προσθήκη» refuses until the
+        coach picks. Preselecting the first would put 40 kg of dumbbells on the
+        sheet as 80 kg of barbell the first time somebody moved fast, and the
+        whole reason equipment lives on the exercise is that those two numbers
+        must never be read as each other's.
+
+    Above them all, the exercises of this athlete's last workouts stay one tap
+    each: the lists are for finding something new, not for repeating a
+    programme.
     """
     with st.expander("Προσθήκη άσκησης"):
         try:
@@ -1212,55 +1286,96 @@ def _picker(
             return
 
         by_id = {str(row["id"]): row for row in rows}
-
         _repeat_buttons(gym_id, session_id, athlete_id, next_position, by_id, on_screen)
 
-        # «Όλες» first and selected by default: the search below is useless
-        # behind a group the coach has to choose first, and the common case is
-        # that they know the name of the movement and not its filing.
-        options: list[int] = [-1] + list(range(len(grouped)))
-        group_index = st.selectbox(
-            "Μυϊκή ομάδα",
-            options,
-            format_func=lambda index: (
-                "Όλες οι ασκήσεις"
-                if index < 0
-                else f"{grouped[index][0]} ({len(grouped[index][2])})"
-            ),
-            key="log_group",
+        # --- 1. μυϊκή ομάδα ------------------------------------------------
+        # «Όλες» first and selected by default, because the second list is
+        # typeable: a coach who knows the name should not have to answer where
+        # it is filed before they can search for it.
+        group_index = int(
+            st.selectbox(
+                "Μυϊκή ομάδα",
+                [-1] + list(range(len(grouped))),
+                format_func=lambda index: (
+                    "Όλες οι ασκήσεις"
+                    if index < 0
+                    else f"{grouped[index][0]} ({len(grouped[index][2])})"
+                ),
+                key="log_group",
+            )
         )
-        group_index = int(group_index)
         if group_index < 0:
-            label, group_id, members = "", None, rows
+            group_label, group_id, members = "", None, rows
         else:
-            label, group_id, members = grouped[group_index]
+            group_label, group_id, members = grouped[group_index]
 
-        # Sorted by the whole label, όργανο included, so the three «Πιέσεις
-        # Στήθους» always come out in the same order.
-        members = sorted(members, key=lambda row: fmt.fold(_labelled(row)))
+        # --- 2. άσκηση, by name, each name once -----------------------------
+        by_name: dict[str, list[dict[str, Any]]] = {}
+        for row in sorted(members, key=lambda row: fmt.fold(fmt.exercise_name(row))):
+            by_name.setdefault(fmt.exercise_name(row), []).append(row)
 
-        generation = int(st.session_state.get(_PICK_NONCE, 0) or 0)
-        choice = st.selectbox(
+        # The group index is IN the key, so changing the group builds a new
+        # widget with nothing selected instead of leaving a name from the
+        # previous group on screen under a heading it does not belong to.
+        name = st.selectbox(
             "Άσκηση",
-            options=[str(row["id"]) for row in members],
-            format_func=lambda key: _labelled(by_id.get(key) or {}),
+            options=list(by_name),
             index=None,
             placeholder="Γράψε ή διάλεξε — π.χ. έλξεις",
-            key=f"{_PICK_KEY}_{generation}",
+            key=f"log_name_{group_index}",
             help="Γράφοντας φιλτράρει: «ελξ» φέρνει τις Έλξεις χωρίς να ψάξεις ομάδα.",
         )
 
-        if choice:
-            # A generation up, so the next run draws an empty box. The counter is
-            # not a widget key, which is why this assignment is allowed at all.
-            st.session_state[_PICK_NONCE] = generation + 1
-            _put_in_workout(gym_id, session_id, str(choice), next_position, by_id)
+        if name:
+            _ways_and_add(
+                gym_id, session_id, next_position, by_id, group_index, name, by_name[name]
+            )
 
         if group_id:
-            _new_exercise(gym_id, session_id, next_position, group_id, label)
+            _new_exercise(gym_id, session_id, next_position, group_id, group_label)
         else:
             st.divider()
             st.caption("Δεν τη βρίσκεις; Διάλεξε μυϊκή ομάδα από πάνω για να την προσθέσεις.")
+
+
+def _ways_and_add(
+    gym_id: str,
+    session_id: str,
+    next_position: int,
+    by_id: dict[str, dict[str, Any]],
+    group_index: int,
+    name: str,
+    variants: list[dict[str, Any]],
+) -> None:
+    """The third list — «Τρόπος άσκησης» — and the button that commits all three."""
+    ways = {
+        str(variant["id"]): (exercises.equipment_of(variant) or "Χωρίς όργανο")
+        for variant in sorted(variants, key=lambda row: fmt.fold(exercises.equipment_of(row)))
+    }
+    only_one = len(ways) == 1
+
+    # The name is in the key with the group, so choosing a different exercise
+    # cannot leave the previous one's όργανο selected underneath it.
+    chosen = st.selectbox(
+        "Τρόπος άσκησης",
+        options=list(ways),
+        format_func=lambda key: ways[key],
+        index=0 if only_one else None,
+        placeholder="Διάλεξε όργανο",
+        key=f"log_way_{group_index}_{fmt.fold(name)}",
+        disabled=only_one,
+        help=(
+            "Η μόνη καταχωρημένη εκτέλεση αυτής της άσκησης."
+            if only_one
+            else "40 κιλά με αλτήρες δεν είναι 80 με μπάρα — γι' αυτό χωρίζονται."
+        ),
+    )
+
+    if st.button("Προσθήκη άσκησης", key=f"log_add_{group_index}", type="primary"):
+        if not chosen:
+            st.error("Διάλεξε τρόπο εκτέλεσης — με τι γίνεται η άσκηση.")
+            return
+        _put_in_workout(gym_id, session_id, str(chosen), next_position, by_id)
 
 
 def _put_in_workout(
@@ -1277,7 +1392,10 @@ def _put_in_workout(
         ui.notice(_NOTICE, "error", f"Η άσκηση δεν προστέθηκε: {exc}")
         st.rerun()
 
-    _clear_workout_caches()
+    _clear_workout_caches(gym_id, session_id)
+    # This athlete's recent exercises just changed, and this is the only action
+    # on the screen that changes them.
+    _recent_exercise_ids.clear()
     ui.notice(_NOTICE, "ok", f"Μπήκε: {_labelled(by_id.get(exercise_id) or {})}")
     st.rerun()
 
@@ -1385,7 +1503,7 @@ def _new_exercise(gym_id: str, session_id: str, next_position: int,
         st.caption(str(exc))
         return
 
-    _clear_workout_caches()
+    _clear_workout_caches(gym_id, session_id)
     _catalogue.clear()
     _muscle_groups.clear()
     _exercise_muscles.clear()
@@ -1477,7 +1595,7 @@ def _edit_session(
             if not ok:
                 st.error("Η προπόνηση δεν αποθηκεύτηκε. Δοκίμασε ξανά.")
                 return
-            _clear_workout_caches()
+            _clear_workout_caches(gym_id, session_id)
             ui.notice(_NOTICE, "ok", "Η προπόνηση ενημερώθηκε.")
             st.rerun()
 
@@ -1498,7 +1616,7 @@ def _edit_session(
             # deleted_at, so one stamped row hides the whole workout — and undo
             # is then one row too, instead of a restore that has to remember
             # exactly which sets were already deleted before this.
-            _clear_workout_caches()
+            _clear_workout_caches(gym_id, session_id)
             st.session_state.pop("session_id", None)
             # Same stop-state as finishing, for the same reason: render() opens a
             # fresh workout whenever session_id is empty, so without this the
@@ -1537,7 +1655,7 @@ def _deleted_screen(gym_id: str, athlete: dict[str, Any], deleted: dict[str, Any
                 return
             st.session_state.pop(_FINISHED, None)
             st.session_state["session_id"] = session_id
-            _clear_workout_caches()
+            _clear_workout_caches(gym_id, session_id)
             ui.notice(_NOTICE, "ok", "Η προπόνηση επανήλθε.")
             st.rerun()
     with back_col:
@@ -1548,6 +1666,9 @@ def _deleted_screen(gym_id: str, athlete: dict[str, Any], deleted: dict[str, Any
 
 def _undo_restore(gym_id: str, payload: dict[str, Any]) -> None:
     """Put back whatever the last delete on this screen took away."""
+    # The undo bar is drawn before a workout is opened, so the scope for the
+    # cache clear comes from the same place the screen itself gets it.
+    session_id = str(st.session_state.get("session_id") or "")
     table = str(payload.get("table") or "")
     ids = [str(value) for value in (payload.get("ids") or []) if value]
     if not table or not ids:
@@ -1560,7 +1681,7 @@ def _undo_restore(gym_id: str, payload: dict[str, Any]) -> None:
     except Exception as exc:
         ui.notice(_NOTICE, "error", f"Η επαναφορά δεν έγινε: {exc}")
         st.rerun()
-    _clear_workout_caches()
+    _clear_workout_caches(gym_id, session_id)
     ui.notice(_NOTICE, "ok", "Επανήλθε.")
     st.rerun()
 
@@ -1579,7 +1700,7 @@ def _finished_screen(gym_id: str, athlete: dict[str, Any], finished: dict[str, A
     if session_id:
         try:
             blocks = _blocks(gym_id, session_id)
-            rows = _sets(gym_id, session_id, tuple(str(block["id"]) for block in blocks))
+            rows = _sets(gym_id, session_id)
         except Exception:
             blocks, rows = [], []
 
@@ -1658,7 +1779,10 @@ def _open_or_reuse(gym_id: str, athlete_id: str) -> dict[str, Any] | None:
         return None
 
     st.session_state["session_id"] = str(row["id"])
-    _clear_workout_caches()
+    # The workout that was just created, not the one that was stored: `stored`
+    # is empty or stale by the time this line runs, which is why the row's own
+    # id is the only scope this clear can be given.
+    _clear_workout_caches(gym_id, str(row["id"]))
     return row
 
 
@@ -1693,9 +1817,8 @@ def _workout(gym_id: str, athlete: dict[str, Any], session: dict[str, Any]) -> N
         st.caption(str(exc))
         return
 
-    block_ids = tuple(str(block["id"]) for block in blocks)
     try:
-        rows = _sets(gym_id, session_id, block_ids)
+        rows = _sets(gym_id, session_id)
     except Exception as exc:
         st.error("Τα σετ δεν φορτώθηκαν.")
         st.caption(str(exc))
@@ -1743,6 +1866,7 @@ def _workout(gym_id: str, athlete: dict[str, Any], session: dict[str, Any]) -> N
         exercise_id = str(block.get("exercise_id") or "")
         _block_card(
             gym_id,
+            session_id,
             block,
             _resolve_exercise(gym_id, catalogue, canonical, exercise_id),
             by_block.get(str(block["id"]), []),
@@ -1789,7 +1913,7 @@ def _workout(gym_id: str, athlete: dict[str, Any], session: dict[str, Any]) -> N
             return
         st.session_state.pop("session_id", None)
         st.session_state[_FINISHED] = {"session_id": session_id, "athlete_id": athlete_id}
-        _clear_workout_caches()
+        _clear_workout_caches(gym_id, session_id)
         st.rerun()
 
 

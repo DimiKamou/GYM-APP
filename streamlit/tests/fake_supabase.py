@@ -29,6 +29,16 @@ from typing import Any
 
 _counter = itertools.count(1)
 
+# Every execute() against the fake, counted. The gym's complaint was that the
+# screen hangs, and on a free-tier database over gym wifi a "hang" is a count:
+# each round trip is hundreds of milliseconds, and they are sequential. A test
+# that asserts a number here is the only kind that can stop that regressing.
+ROUND_TRIPS: list[str] = []
+
+
+def reset_round_trips() -> None:
+    ROUND_TRIPS.clear()
+
 
 class _Response:
     def __init__(self, data: list[dict[str, Any]]) -> None:
@@ -121,6 +131,7 @@ class _Query:
 
     # --- execution -----------------------------------------------------
     def execute(self) -> _Response:
+        ROUND_TRIPS.append(f"{self._mode}:{self._table}")
         if self._mode == "insert":
             return _Response([self._project(r) for r in self._written])
         if self._mode == "update":
