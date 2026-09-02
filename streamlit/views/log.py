@@ -61,6 +61,10 @@ _RECENT_SESSIONS = 3
 _MAX_KG = 999.0
 _MAX_METERS = 100_000.0
 _MAX_SECONDS = 86_400
+# The most identical sets one «Καταχώρηση σετ» may write. Straight sets are why
+# the multiplier exists; a slipped digit is why it has a ceiling, because every
+# extra row here has to be deleted one at a time.
+_MAX_REPEAT = 12
 
 # Exercises filed under no visible muscle group at all. They are still reachable
 # here rather than dropped: an exercise nobody can pick is an exercise nobody can
@@ -627,23 +631,35 @@ def _add_set(
     kind: str,
     position: int,
     values: dict[str, Any],
+    times: int = 1,
 ) -> None:
-    """Insert one performed set. `done_at` is what makes it performed.
+    """Insert `times` identical performed sets. `done_at` is what makes them performed.
 
     A row with done_at null is legal and means "prescribed, or the coach is
     halfway through typing" — not "missed". Everything written from this screen
     happened, so it carries the instant and the columns its kind is measured in,
     which is exactly what sets_complete_for_kind demands.
+
+    ONE insert with a list, never a loop of inserts: three straight sets on gym
+    wifi would be three round trips, and this screen is already the one the gym
+    says hangs. They share a done_at because they share the moment the coach
+    wrote them down, which is the only instant this app actually witnessed.
     """
-    payload: dict[str, Any] = {
-        "gym_id": gym_id,
-        "block_id": block_id,
-        "kind": kind,
-        "position": position,
-        "done_at": datetime.now(timezone.utc).isoformat(),
-    }
-    payload.update(values)
-    db.client().table("sets").insert(payload).execute()
+    stamp = datetime.now(timezone.utc).isoformat()
+    rows = []
+    for offset in range(max(1, int(times))):
+        payload: dict[str, Any] = {
+            "gym_id": gym_id,
+            "block_id": block_id,
+            "kind": kind,
+            # Consecutive, so the sets read 1..N down the card in the order they
+            # were performed rather than sharing one position and sorting by id.
+            "position": position + offset,
+            "done_at": stamp,
+        }
+        payload.update(values)
+        rows.append(payload)
+    db.client().table("sets").insert(rows).execute()
 
 
 def _soft_delete(gym_id: str, table: str, ids: list[str]) -> int:
@@ -796,8 +812,34 @@ def _next_position(rows: list[dict[str, Any]]) -> int:
 # The set form — one round trip per set
 # ---------------------------------------------------------------------------
 
-def _set_form(block_id: str, kind: str, previous: dict[str, Any] | None) -> dict[str, Any] | None:
-    """Draw one block's entry form; return the columns to write, or None.
+def _repeat_input(block_id: str) -> int:
+    """«× σετ» — how many identical sets this one entry stands for.
+
+    Straight sets are the common case in this gym: 3×80×8 is one number typed
+    once, not the same two numbers typed three times with a round trip between
+    each. It defaults to 1, so a coach who ignores it keeps exactly the old
+    behaviour and can still make the next set heavier.
+
+    Capped at _MAX_REPEAT because this multiplies straight into INSERTs, and a
+    slipped digit here would be thirty rows to undo one at a time.
+    """
+    return int(
+        st.number_input(
+            "× σετ",
+            min_value=1,
+            max_value=_MAX_REPEAT,
+            step=1,
+            value=1,
+            key=f"log_times_{block_id}",
+            help="Πόσες φορές το ίδιο σετ. Άφησέ το 1 για ένα σετ.",
+        )
+    )
+
+
+def _set_form(
+    block_id: str, kind: str, previous: dict[str, Any] | None
+) -> tuple[dict[str, Any], int] | None:
+    """Draw one block's entry form; return (columns to write, how many), or None.
 
     Everything a trainer touches between sets is inside this form, so typing
     weight and reps and pressing the button is ONE round trip. The boxes start
@@ -812,7 +854,9 @@ def _set_form(block_id: str, kind: str, previous: dict[str, Any] | None) -> dict
 
     with st.form(f"log_set_{block_id}", clear_on_submit=True):
         if kind == "duration":
-            minute_col, second_col, go_col = st.columns([3, 3, 4], vertical_alignment="bottom")
+            minute_col, second_col, times_col, go_col = st.columns(
+                [3, 3, 2, 4], vertical_alignment="bottom"
+            )
             seconds_before = fmt.integer(prev.get("seconds")) or 0
             with minute_col:
                 minutes = st.number_input(
@@ -832,6 +876,8 @@ def _set_form(block_id: str, kind: str, previous: dict[str, Any] | None) -> dict
                     value=seconds_before % 60,
                     key=f"log_sec_{block_id}",
                 )
+            with times_col:
+                times = _repeat_input(block_id)
             with go_col:
                 submitted = st.form_submit_button("Καταχώρηση σετ", type="primary")
             if not submitted:
@@ -843,10 +889,10 @@ def _set_form(block_id: str, kind: str, previous: dict[str, Any] | None) -> dict
             if total > _MAX_SECONDS:
                 st.error("Ο χρόνος είναι πολύ μεγάλος.")
                 return None
-            return {"seconds": total}
+            return {"seconds": total}, times
 
         if kind == "distance":
-            meters_col, go_col = st.columns([6, 4], vertical_alignment="bottom")
+            meters_col, times_col, go_col = st.columns([4, 2, 4], vertical_alignment="bottom")
             with meters_col:
                 meters_text = st.text_input(
                     "μέτρα",
@@ -854,6 +900,8 @@ def _set_form(block_id: str, kind: str, previous: dict[str, Any] | None) -> dict
                     placeholder="2000",
                     key=f"log_m_{block_id}",
                 )
+            with times_col:
+                times = _repeat_input(block_id)
             with go_col:
                 submitted = st.form_submit_button("Καταχώρηση σετ", type="primary")
             if not submitted:
@@ -865,10 +913,12 @@ def _set_form(block_id: str, kind: str, previous: dict[str, Any] | None) -> dict
             if meters > _MAX_METERS:
                 st.error("Η απόσταση είναι πολύ μεγάλη.")
                 return None
-            return {"meters": round(meters, 2)}
+            return {"meters": round(meters, 2)}, times
 
         if kind == "bodyweight":
-            reps_col, extra_col, go_col = st.columns([3, 3, 4], vertical_alignment="bottom")
+            reps_col, extra_col, times_col, go_col = st.columns(
+                [3, 3, 2, 4], vertical_alignment="bottom"
+            )
             with reps_col:
                 reps = st.number_input(
                     "επαναλήψεις",
@@ -885,6 +935,8 @@ def _set_form(block_id: str, kind: str, previous: dict[str, Any] | None) -> dict
                     placeholder="0",
                     key=f"log_bwkg_{block_id}",
                 )
+            with times_col:
+                times = _repeat_input(block_id)
             with go_col:
                 submitted = st.form_submit_button("Καταχώρηση σετ", type="primary")
             if not submitted:
@@ -900,11 +952,13 @@ def _set_form(block_id: str, kind: str, previous: dict[str, Any] | None) -> dict
                     st.error("Τα επιπλέον κιλά δεν διαβάζονται — π.χ. 12,5.")
                     return None
                 values["load_kg"] = round(extra, 2)
-            return values
+            return values, times
 
         # weight_reps, and anything unknown falls back to it: it is the only kind
         # whose two columns are legible for every exercise in the catalogue.
-        kg_col, reps_col, go_col = st.columns([3, 3, 4], vertical_alignment="bottom")
+        kg_col, reps_col, times_col, go_col = st.columns(
+            [3, 3, 2, 4], vertical_alignment="bottom"
+        )
         with kg_col:
             load_text = st.text_input(
                 "κιλά",
@@ -921,6 +975,8 @@ def _set_form(block_id: str, kind: str, previous: dict[str, Any] | None) -> dict
                 value=fmt.integer(prev.get("reps")) or 0,
                 key=f"log_reps_{block_id}",
             )
+        with times_col:
+            times = _repeat_input(block_id)
         with go_col:
             submitted = st.form_submit_button("Καταχώρηση σετ", type="primary")
         if not submitted:
@@ -935,7 +991,7 @@ def _set_form(block_id: str, kind: str, previous: dict[str, Any] | None) -> dict
         if int(reps) < 1:
             st.error("Γράψε τουλάχιστον μία επανάληψη.")
             return None
-        return {"load_kg": round(load, 2), "reps": int(reps)}
+        return {"load_kg": round(load, 2), "reps": int(reps)}, times
 
 
 # ---------------------------------------------------------------------------
@@ -1098,20 +1154,25 @@ def _block_card(
 
         _block_edit(gym_id, block_id, exercise, rows, kind, names, session_author)
 
-        values = _set_form(block_id, kind, rows[-1] if rows else None)
-        if values is None:
+        entry = _set_form(block_id, kind, rows[-1] if rows else None)
+        if entry is None:
             return
+        values, times = entry
 
         try:
-            _add_set(gym_id, block_id, kind, _next_position(rows), values)
+            _add_set(gym_id, block_id, kind, _next_position(rows), values, times)
         except Exception as exc:
             st.error("Το σετ δεν καταχωρήθηκε.")
             st.caption(str(exc))
             return
 
         _clear_workout_caches()
+        written = fmt.format_set(values, kind)
         ui.notice(
-            _NOTICE, "ok", f"{fmt.exercise_name(exercise)} · {fmt.format_set(values, kind)}"
+            _NOTICE,
+            "ok",
+            f"{fmt.exercise_name(exercise)} · {written}"
+            + (f" × {times} σετ" if times > 1 else ""),
         )
         st.rerun()
 
