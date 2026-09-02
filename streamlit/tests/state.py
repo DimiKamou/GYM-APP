@@ -84,6 +84,12 @@ _SEED: dict[str, list[dict[str, Any]]] = {
          "gym_id": None, "deleted_at": None},
         {"exercise_id": "e-mine", "muscle_group_id": CHEST, "role": "primary",
          "gym_id": GYM, "deleted_at": None},
+        # The SAME exercise, also filed under a second group. The Ασκήσεις
+        # screen draws a row per heading an exercise is linked to, so this one
+        # is drawn twice — which crashed the live app with a duplicate widget
+        # key the moment the gym owned any exercise at all.
+        {"exercise_id": "e-mine", "muscle_group_id": BACK, "role": "secondary",
+         "gym_id": GYM, "deleted_at": None},
         {"exercise_id": "e-bar", "muscle_group_id": CHEST, "role": "primary",
          "gym_id": None, "deleted_at": None},
         {"exercise_id": "e-db", "muscle_group_id": CHEST, "role": "primary",
