@@ -1329,10 +1329,15 @@ def _picker(
             help="Γράφοντας φιλτράρει: «ελξ» φέρνει τις Έλξεις χωρίς να ψάξεις ομάδα.",
         )
 
-        if name:
-            _ways_and_add(
-                gym_id, session_id, next_position, by_id, group_index, name, by_name[name]
-            )
+        # Always drawn, even with nothing chosen above it. The gym asked for three
+        # drop-downs and got two plus one that appeared later, which from their
+        # side is two — they said so, holding the screen. A list that is on
+        # screen and waiting says what the next step is; a list that is absent
+        # says the feature was never built.
+        _ways_and_add(
+            gym_id, session_id, next_position, by_id, group_index,
+            name or "", by_name.get(name or "", []),
+        )
 
         if group_id:
             _new_exercise(gym_id, session_id, next_position, group_id, group_label)
@@ -1355,6 +1360,7 @@ def _ways_and_add(
         str(variant["id"]): (exercises.equipment_of(variant) or "Χωρίς όργανο")
         for variant in sorted(variants, key=lambda row: fmt.fold(exercises.equipment_of(row)))
     }
+    waiting = not name or not ways
     only_one = len(ways) == 1
 
     # The name is in the key with the group, so choosing a different exercise
@@ -1362,19 +1368,29 @@ def _ways_and_add(
     chosen = st.selectbox(
         "Τρόπος άσκησης",
         options=list(ways),
-        format_func=lambda key: ways[key],
-        index=0 if only_one else None,
-        placeholder="Διάλεξε όργανο",
+        format_func=lambda key: ways.get(key, key),
+        # Preselected only when there is nothing to decide. With two or more, a
+        # default would write 40 kg of dumbbells onto the sheet as 80 kg of
+        # barbell the first time somebody moved fast.
+        index=0 if (only_one and not waiting) else None,
+        placeholder="Διάλεξε πρώτα άσκηση" if waiting else "Διάλεξε όργανο",
         key=f"log_way_{group_index}_{fmt.fold(name)}",
-        disabled=only_one,
+        disabled=waiting or only_one,
         help=(
-            "Η μόνη καταχωρημένη εκτέλεση αυτής της άσκησης."
+            "Πρώτα διάλεξε άσκηση από πάνω."
+            if waiting
+            else "Η μόνη καταχωρημένη εκτέλεση αυτής της άσκησης."
             if only_one
             else "40 κιλά με αλτήρες δεν είναι 80 με μπάρα — γι' αυτό χωρίζονται."
         ),
     )
 
-    if st.button("Προσθήκη άσκησης", key=f"log_add_{group_index}", type="primary"):
+    if st.button(
+        "Προσθήκη άσκησης",
+        key=f"log_add_{group_index}",
+        type="primary",
+        disabled=waiting,
+    ):
         if not chosen:
             st.error("Διάλεξε τρόπο εκτέλεσης — με τι γίνεται η άσκηση.")
             return

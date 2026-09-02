@@ -22,7 +22,7 @@ from __future__ import annotations
 
 import streamlit as st
 
-from lib import auth
+from lib import auth, version
 from views import athletes, calendar, library, log, progress, settings, team
 
 st.set_page_config(
@@ -174,3 +174,13 @@ def _tab_bar() -> None:
 
 _tab_bar()
 nav.run()
+
+# The version, on every screen, in the smallest type the page has.
+#
+# It lives here rather than only in Ρυθμίσεις because the question it answers —
+# "is what I am looking at the build you told me about?" — is asked from a phone,
+# in the middle of a workout, by someone who has no reason to go hunting through
+# a settings screen to find out. Community Cloud serves the last build it made
+# until a push or a reboot wakes it, so "it is on main" and "your phone has it"
+# are different facts, and only one of them was ever visible from the gym.
+st.caption(f"TrainHub {version.VERSION}")
