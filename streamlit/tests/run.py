@@ -146,8 +146,29 @@ def test_the_second_list_names_a_movement_once() -> None:
     names = list(name_list(at).options)
     check("each movement appears once, not once per implement",
           names == ["Έλξεις", "Πιέσεις Στήθους"], str(names))
-    check("and there is no implement list until a movement is chosen",
-          way_list(at) is None)
+    # Present, not absent. The gym asked for three drop-downs and got two plus
+    # one that appeared later — which, holding the screen, is two.
+    ways = way_list(at)
+    check("the implement list is on screen from the start", ways is not None)
+    check("waiting rather than empty-looking",
+          ways is not None and ways.placeholder == "Διάλεξε πρώτα άσκηση",
+          str(getattr(ways, "placeholder", None)))
+    check("and it cannot be used yet", ways is not None and ways.disabled is True,
+          str(getattr(ways, "disabled", None)))
+
+
+def test_the_add_button_is_dead_until_there_is_something_to_add() -> None:
+    """A button that looks live and does nothing is worse than one that says wait."""
+    state.reset()
+    at = open_log()
+    add = button(at, "log_add_-1")
+    check("«Προσθήκη άσκησης» starts disabled", add.disabled is True, str(add.disabled))
+
+    name_list(at).set_value("Έλξεις").run()
+    raise_on_exception(at)
+    check("and comes alive once a movement is chosen",
+          button(at, "log_add_-1").disabled is False,
+          str(button(at, "log_add_-1").disabled))
 
 
 def test_the_third_list_holds_the_implements() -> None:
