@@ -471,11 +471,16 @@ def render() -> None:
     ]
 
     mine = sum(1 for e in visible if e.get("gym_id"))
-    st.caption(
-        f"{len(visible)} ασκήσεις, από τις οποίες {mine} δικές σας. "
-        "Μόνο τις δικές σας μπορείτε να αλλάξετε ή να διαγράψετε — ο κοινός "
-        "κατάλογος είναι κλειδωμένος από τη βάση για όλα τα γυμναστήρια."
-    )
+    line = f"{len(visible)} ασκήσεις, από τις οποίες {mine} δικές σας."
+    if mine < len(visible):
+        # Only worth saying while there is something locked to explain. After
+        # 006 the whole catalogue belongs to the gym and this sentence would be
+        # a rule about nothing.
+        line += (
+            " Μόνο τις δικές σας μπορείτε να αλλάξετε ή να διαγράψετε — ο κοινός"
+            " κατάλογος είναι κλειδωμένος από τη βάση για όλα τα γυμναστήρια."
+        )
+    st.caption(line)
 
     if not visible:
         st.info("Καμία άσκηση δεν ταιριάζει.")
