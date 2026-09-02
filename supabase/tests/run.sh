@@ -29,7 +29,10 @@ psql -h "$WORK/sock" -U trainhub -d postgres -v ON_ERROR_STOP=1 -q -f "$HERE/00_
 for migration in "$HERE"/../migrations/*.sql; do
   psql -h "$WORK/sock" -U trainhub -d postgres -v ON_ERROR_STOP=1 -q -f "$migration"
 done
-psql -h "$WORK/sock" -U trainhub -d postgres -q -f "$HERE/01_rls_test.sql" 2>&1 \
-  | grep -v '^NOTICE' | sed 's/^psql:[^ ]*sql:[0-9]*: //'
+for test in "$HERE"/0[0-9]_*_test.sql; do
+  psql -h "$WORK/sock" -U trainhub -d postgres -q \
+       -v migrations="$HERE/../migrations" -f "$test" 2>&1 \
+    | grep -v '^NOTICE' | sed 's/^psql:[^ ]*sql:[0-9]*: //'
+done
 
 run "pg_ctl -D $WORK/data stop" >/dev/null 2>&1 || true
