@@ -205,7 +205,25 @@ def _restore(payload: dict[str, Any]) -> None:
     st.rerun()
 
 
-def _edit_form(exercise: dict[str, Any], gym_id: str, groups: list[dict[str, Any]]) -> None:
+def _key(scope: str, prefix: str, exercise_id: str) -> str:
+    """A widget key that survives the same exercise appearing under two headings.
+
+    _index_by_group files an exercise under EVERY muscle group it is linked to,
+    primary and secondary both — deliberately, or Τραπεζοειδείς and Προσαγωγοί
+    come out empty. So one row is drawn more than once, and a key built from the
+    exercise alone is a duplicate the second time.
+
+    This never fired before the catalogue was adopted: the buttons are only
+    drawn for a gym's OWN rows, and the gym had none. The migration that gave
+    them all an owner turned a latent collision into a screen that would not
+    load.
+    """
+    return f"{prefix}-{fmt.fold(scope).replace(' ', '_')}-{exercise_id}"
+
+
+def _edit_form(
+    exercise: dict[str, Any], gym_id: str, groups: list[dict[str, Any]], scope: str
+) -> None:
     """The row, replaced in place by a form to change it.
 
     In place and not in an expander: this row is already inside the muscle
@@ -214,7 +232,7 @@ def _edit_form(exercise: dict[str, Any], gym_id: str, groups: list[dict[str, Any
     exercise_id = str(exercise["id"])
     name = fmt.exercise_name(exercise)
 
-    with st.form(f"library_edit_{exercise_id}"):
+    with st.form(_key(scope, "library_edit", exercise_id)):
         st.caption(f"Επεξεργασία: {fmt.md(name)}")
         name_el = st.text_input("Όνομα", value=str(exercise.get("name_el") or ""), max_chars=120)
 
@@ -296,14 +314,19 @@ def _exercise_row(
     can_edit: bool,
     gym_id: str = "",
     groups: list[dict[str, Any]] | None = None,
+    scope: str = "",
 ) -> None:
     exercise_id = str(exercise["id"])
     name = fmt.exercise_name(exercise)
     mine = exercise.get("gym_id") is not None
     archived = bool(exercise.get("is_archived"))
 
-    if mine and can_edit and st.session_state.get(_EDITING) == exercise_id:
-        _edit_form(exercise, gym_id, groups or [])
+    # The heading is part of the identity here too: the same exercise under two
+    # headings must not open two copies of the form, which would collide on the
+    # form key the same way the buttons did.
+    editing = _key(scope, "editing", exercise_id)
+    if mine and can_edit and st.session_state.get(_EDITING) == editing:
+        _edit_form(exercise, gym_id, groups or [], scope)
         return
 
     label = fmt.md(name)
@@ -328,26 +351,26 @@ def _exercise_row(
         return
 
     if archived:
-        if right.button("Επαναφορά", key=f"un-{exercise_id}"):
+        if right.button("Επαναφορά", key=_key(scope, "un", exercise_id)):
             _set_archived(exercise_id, False)
             _clear()
             ui.notice(_NOTICE, "ok", f"Η «{name}» επανήλθε.")
             st.rerun()
         return
 
-    if right.button("✏️", key=f"ed-{exercise_id}", help="Άλλαξε όνομα, εξοπλισμό ή ομάδα"):
-        st.session_state[_EDITING] = exercise_id
+    if right.button("✏️", key=_key(scope, "ed", exercise_id), help="Άλλαξε όνομα, εξοπλισμό ή ομάδα"):
+        st.session_state[_EDITING] = editing
         st.rerun()
 
     hide_col, drop_col = st.columns(2)
-    if hide_col.button("Απόσυρση", key=f"ar-{exercise_id}"):
+    if hide_col.button("Απόσυρση", key=_key(scope, "ar", exercise_id)):
         # Archiving, not deleting. Historical blocks keep pointing at the row
         # and must keep rendering its name.
         _set_archived(exercise_id, True)
         _clear()
         ui.notice(_NOTICE, "ok", f"Η «{name}» αποσύρθηκε από τον κατάλογο.")
         st.rerun()
-    if drop_col.button("Διαγραφή", key=f"rm-{exercise_id}"):
+    if drop_col.button("Διαγραφή", key=_key(scope, "rm", exercise_id)):
         try:
             removed = _delete_exercise(exercise_id, gym_id)
         except Exception as exc:
@@ -488,7 +511,7 @@ def render() -> None:
         for heading, rows in _index_by_group(visible, groups, links).items():
             with st.expander(f"{heading} · {len(rows)}", expanded=bool(search)):
                 for exercise in rows:
-                    _exercise_row(exercise, True, gym_id, groups)
+                    _exercise_row(exercise, True, gym_id, groups, heading)
 
     st.divider()
     _new_exercise_form(gym_id, groups)

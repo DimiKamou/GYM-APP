@@ -570,13 +570,40 @@ def test_moving_the_workout_to_another_day_keeps_the_time() -> None:
     check("and it is still a 10:00 session", athens.hour == 10, str(athens))
 
 
+def test_an_exercise_in_two_groups_does_not_collide_with_itself() -> None:
+    """It is drawn once per heading it is filed under, and each needs its own key.
+
+    This crashed the live app — StreamlitDuplicateElementKey on the ✏️ — the
+    moment 006 gave the gym an owner for every catalogue row. Until then the
+    buttons were only drawn for the gym's own exercises and the gym had none,
+    so the collision was there and unreachable.
+    """
+    state.reset()
+    at = open_library()  # raises on any exception, which is most of this test
+
+    edits = [b for b in at.button if (b.key or "").startswith("ed-")]
+    check("the exercise offers an edit under each heading", len(edits) == 2, str([b.key for b in edits]))
+    check("with different keys", len({b.key for b in edits}) == 2, str([b.key for b in edits]))
+
+    # And editing from one heading opens exactly one form, not two.
+    edits[0].click().run()
+    raise_on_exception(at)
+    check("one heading opens one form",
+          len([t for t in at.text_input if t.label == "Όνομα"]) == 1,
+          str([t.label for t in at.text_input]))
+
+
 def test_only_the_gyms_own_exercises_offer_an_edit() -> None:
     """exercises_update demands gym_id = app.my_gym(); a shared row has none."""
     state.reset()
     at = open_library()
     keys = [b.key for b in at.button]
-    check("the gym's own exercise can be edited", "ed-e-mine" in keys, str(keys))
-    check("the shared catalogue cannot", "ed-e-bar" not in keys, str(keys))
+    # Keys carry the heading now: one exercise is drawn once per group it is
+    # filed under, and each drawing needs a key of its own.
+    check("the gym's own exercise can be edited",
+          any(k and k.startswith("ed-") and k.endswith("-e-mine") for k in keys), str(keys))
+    check("the shared catalogue cannot",
+          not any(k and k.endswith("-e-bar") for k in keys), str(keys))
     check("and the screen says why",
           "κλειδωμένος από τη βάση" in texts(at), texts(at)[:400])
 
@@ -584,12 +611,12 @@ def test_only_the_gyms_own_exercises_offer_an_edit() -> None:
 def test_an_exercise_can_be_renamed_and_re_equipped() -> None:
     state.reset()
     at = open_library()
-    button(at, "ed-e-mine").click().run()
+    button(at, "ed-στηθοσ-e-mine").click().run()
     raise_on_exception(at)
 
     [t for t in at.text_input if t.label == "Όνομα"][0].set_value("Πιέσεις σε Smith")
     [s for s in at.selectbox if s.label == "Εξοπλισμός"][0].set_value("Smith")
-    button(at, "library_edit_e-mine").click().run()
+    button(at, "library_edit-στηθοσ-e-mine").click().run()
     raise_on_exception(at)
 
     row = state.rows("exercises", id="e-mine")[0]
@@ -600,7 +627,7 @@ def test_an_exercise_can_be_renamed_and_re_equipped() -> None:
 def test_deleting_an_exercise_can_be_taken_back() -> None:
     state.reset()
     at = open_library()
-    button(at, "rm-e-mine").click().run()
+    button(at, "rm-στηθοσ-e-mine").click().run()
     raise_on_exception(at)
     check("it is gone", state.deleted("exercises", "e-mine"))
     check("with an offer to undo", "Διαγράφηκε" in texts(at), texts(at)[:300])
