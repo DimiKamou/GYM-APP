@@ -31,6 +31,7 @@ from streamlit.testing.v1 import AppTest  # noqa: E402
 
 DRIVER = str(HERE / "_drive_log.py")
 ATHLETES_DRIVER = str(HERE / "_drive_athletes.py")
+LIBRARY_DRIVER = str(HERE / "_drive_library.py")
 
 _failures: list[str] = []
 _passes = 0
@@ -73,6 +74,20 @@ def open_athlete(**session_state) -> AppTest:
     at.session_state[db.USER_ID_KEY] = state.USER_ID
     at.session_state["_auth_expires_at"] = 9e12
     at.session_state["athlete"] = state.STORE["athletes"][0]
+    for key, value in session_state.items():
+        at.session_state[key] = value
+    at.run()
+    raise_on_exception(at)
+    return at
+
+
+def open_library(**session_state) -> AppTest:
+    """The Ασκήσεις screen, signed in."""
+    at = AppTest.from_file(LIBRARY_DRIVER, default_timeout=60)
+    at.session_state[db.ACCESS_KEY] = "fake-access"
+    at.session_state[db.REFRESH_KEY] = "fake-refresh"
+    at.session_state[db.USER_ID_KEY] = state.USER_ID
+    at.session_state["_auth_expires_at"] = 9e12
     for key, value in session_state.items():
         at.session_state[key] = value
     at.run()
@@ -145,7 +160,7 @@ def test_the_second_list_names_a_movement_once() -> None:
     at = open_log()
     names = list(name_list(at).options)
     check("each movement appears once, not once per implement",
-          names == ["Έλξεις", "Πιέσεις Στήθους"], str(names))
+          names == ["Έλξεις", "Πιέσεις σε μηχάνημα", "Πιέσεις Στήθους"], str(names))
     # Present, not absent. The gym asked for three drop-downs and got two plus
     # one that appeared later — which, holding the screen, is two.
     ways = way_list(at)
@@ -329,7 +344,8 @@ def test_the_search_reaches_every_exercise_without_choosing_a_group() -> None:
     check("and it is the one selected", groups.value == -1, str(groups.value))
     names = name_list(at)
     check("and the exercise list reaches every movement in the gym",
-          list(names.options) == ["Έλξεις", "Πιέσεις Στήθους"], str(names.options))
+          list(names.options) == ["Έλξεις", "Πιέσεις σε μηχάνημα", "Πιέσεις Στήθους"],
+          str(names.options))
     check("with nothing preselected, so opening the picker adds nothing",
           names.value is None, str(names.value))
 
@@ -552,6 +568,61 @@ def test_moving_the_workout_to_another_day_keeps_the_time() -> None:
     check("the workout moved to the chosen day", athens.date() == datetime.date(2026, 8, 25),
           str(row["started_at"]))
     check("and it is still a 10:00 session", athens.hour == 10, str(athens))
+
+
+def test_only_the_gyms_own_exercises_offer_an_edit() -> None:
+    """exercises_update demands gym_id = app.my_gym(); a shared row has none."""
+    state.reset()
+    at = open_library()
+    keys = [b.key for b in at.button]
+    check("the gym's own exercise can be edited", "ed-e-mine" in keys, str(keys))
+    check("the shared catalogue cannot", "ed-e-bar" not in keys, str(keys))
+    check("and the screen says why",
+          "κλειδωμένος από τη βάση" in texts(at), texts(at)[:400])
+
+
+def test_an_exercise_can_be_renamed_and_re_equipped() -> None:
+    state.reset()
+    at = open_library()
+    button(at, "ed-e-mine").click().run()
+    raise_on_exception(at)
+
+    [t for t in at.text_input if t.label == "Όνομα"][0].set_value("Πιέσεις σε Smith")
+    [s for s in at.selectbox if s.label == "Εξοπλισμός"][0].set_value("Smith")
+    button(at, "library_edit_e-mine").click().run()
+    raise_on_exception(at)
+
+    row = state.rows("exercises", id="e-mine")[0]
+    check("the name is saved", row["name_el"] == "Πιέσεις σε Smith", str(row["name_el"]))
+    check("the equipment is saved", row["equipment"] == "smith", str(row["equipment"]))
+
+
+def test_deleting_an_exercise_can_be_taken_back() -> None:
+    state.reset()
+    at = open_library()
+    button(at, "rm-e-mine").click().run()
+    raise_on_exception(at)
+    check("it is gone", state.deleted("exercises", "e-mine"))
+    check("with an offer to undo", "Διαγράφηκε" in texts(at), texts(at)[:300])
+
+    button(at, "library_notice_undo_button").click().run()
+    raise_on_exception(at)
+    check("undo brings it back", not state.deleted("exercises", "e-mine"))
+
+
+def test_a_new_exercise_starts_with_no_equipment_chosen() -> None:
+    """A preselected όργανο is one nobody reads, and it decides what 40 kg means."""
+    state.reset()
+    at = open_library()
+    gear = [s for s in at.selectbox if s.label == "Εξοπλισμός"]
+    check("the new-exercise form asks rather than assumes",
+          any(w.value is None for w in gear), str([w.value for w in gear]))
+
+    [t for t in at.text_input if t.label == "Όνομα στα ελληνικά"][0].set_value("Κάτι νέο")
+    button(at, "library_new").click().run()
+    raise_on_exception(at)
+    check("and refuses to save without one",
+          "Διάλεξε εξοπλισμό" in texts(at), texts(at)[:300])
 
 
 def test_a_fresh_workout_can_be_started_from_nothing() -> None:
