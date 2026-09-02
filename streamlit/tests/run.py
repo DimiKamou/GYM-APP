@@ -24,6 +24,7 @@ HERE = pathlib.Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE.parent))
 sys.path.insert(0, str(HERE))
 
+import fake_supabase  # noqa: E402
 import state  # noqa: E402
 from lib import db  # noqa: E402
 from streamlit.testing.v1 import AppTest  # noqa: E402
@@ -55,7 +56,10 @@ def open_log(**session_state) -> AppTest:
     at.session_state["athlete"] = state.STORE["athletes"][0]
     at.session_state["session_id"] = state.SESSION
     for key, value in session_state.items():
-        at.session_state[key] = value
+        if value is None:
+            del at.session_state[key]
+        else:
+            at.session_state[key] = value
     at.run()
     raise_on_exception(at)
     return at
@@ -98,9 +102,15 @@ def button(at: AppTest, key: str):
     raise AssertionError(f"no button {key!r}; have {[b.key for b in at.button]}")
 
 
-def exercise_picker(at: AppTest):
-    """The «Άσκηση» search box. Its key carries a generation counter."""
+def name_list(at: AppTest):
+    """The second list: one entry per movement, whatever it is loaded with."""
     return [widget for widget in at.selectbox if widget.label == "Άσκηση"][0]
+
+
+def way_list(at: AppTest):
+    """The third list. It exists only once a movement is chosen."""
+    found = [widget for widget in at.selectbox if widget.label == "Τρόπος άσκησης"]
+    return found[0] if found else None
 
 
 def texts(at: AppTest) -> str:
@@ -129,42 +139,94 @@ def test_equipment_is_on_the_block_card() -> None:
     )
 
 
-def test_picker_offers_the_three_variants_apart() -> None:
+def test_the_second_list_names_a_movement_once() -> None:
+    """«Πιέσεις Στήθους» is one exercise to a coach, whatever it is loaded with."""
     state.reset()
     at = open_log()
-    picker = [s for s in at.selectbox if s.label == "Άσκηση"][0]
-    # AppTest reports the options as the coach sees them, already formatted.
-    labels = list(picker.options)
-    check("picker separates the three variants",
-          # Latin before Greek is what fold() gives, and any stable order beats
-          # the id order this replaced: the point is that a coach who saw
-          # «Smith» second yesterday sees it second today.
-          labels == ["Πιέσεις Στήθους · Smith",
-                     "Πιέσεις Στήθους · Αλτήρες",
-                     "Πιέσεις Στήθους · Μπάρα"],
-          str(labels))
+    names = list(name_list(at).options)
+    check("each movement appears once, not once per implement",
+          names == ["Έλξεις", "Πιέσεις Στήθους"], str(names))
+    check("and there is no implement list until a movement is chosen",
+          way_list(at) is None)
+
+
+def test_the_third_list_holds_the_implements() -> None:
+    state.reset()
+    at = open_log()
+    name_list(at).set_value("Πιέσεις Στήθους").run()
+    raise_on_exception(at)
+
+    ways = way_list(at)
+    check("all three implements are offered",
+          sorted(ways.options) == ["Smith", "Αλτήρες", "Μπάρα"], str(ways.options))
+    check("with none of them preselected", ways.value is None, str(ways.value))
+
+
+def test_an_implement_must_be_chosen_before_the_exercise_is_added() -> None:
+    """40 kg of dumbbells is not 80 kg of barbell; a default here writes the wrong one."""
+    state.reset()
+    at = open_log()
+    name_list(at).set_value("Πιέσεις Στήθους").run()
+    button(at, "log_add_-1").click().run()
+    raise_on_exception(at)
+
+    check("nothing was added",
+          len(state.rows("blocks", session_id=state.SESSION)) == 1,
+          str(state.rows("blocks", session_id=state.SESSION)))
+    check("and the screen says what is missing",
+          "Διάλεξε τρόπο εκτέλεσης" in texts(at), texts(at)[:200])
+
+
+def test_a_movement_with_one_implement_shows_it_and_asks_nothing() -> None:
+    state.reset()
+    at = open_log()
+    name_list(at).set_value("Έλξεις").run()
+    raise_on_exception(at)
+
+    ways = way_list(at)
+    check("the one implement is named on screen",
+          ways.options == ["Σωματικό βάρος"], str(ways.options))
+    check("and already chosen, so it costs no tap", ways.value == "e-pullup", str(ways.value))
+
+    button(at, "log_add_-1").click().run()
+    raise_on_exception(at)
+    blocks = state.rows("blocks", session_id=state.SESSION)
+    check("one press adds it", any(b["exercise_id"] == "e-pullup" for b in blocks), str(blocks))
+
+
+def test_changing_the_muscle_group_clears_the_exercise_under_it() -> None:
+    """A name left from another group is a name filed under a heading it is not in."""
+    state.reset()
+    at = open_log()
+    name_list(at).set_value("Πιέσεις Στήθους").run()
+    raise_on_exception(at)
+    check("a movement is chosen", name_list(at).value == "Πιέσεις Στήθους")
+
+    groups = [w for w in at.selectbox if w.label == "Μυϊκή ομάδα"][0]
+    back = [i for i, option in enumerate(groups.options) if option.startswith("Πλάτη")][0]
+    # options[0] is «Όλες», which the screen keys as -1; the real groups follow.
+    groups.set_value(back - 1).run()
+    raise_on_exception(at)
+    check("the exercise list came back empty", name_list(at).value is None,
+          str(name_list(at).value))
 
 
 def test_adding_an_exercise_stays_on_the_workout() -> None:
     """The bug the gym reported: adding an exercise threw them back to the roster."""
     state.reset()
     at = open_log()
-    picker = exercise_picker(at)
-    check("the Smith variant is offered by name",
-          any("Smith" in option for option in picker.options), str(picker.options))
+    name_list(at).set_value("Πιέσεις Στήθους").run()
     # set_value takes the option's underlying value — an exercise id — while
-    # .options reports the formatted labels the coach reads.
-    # One tap: choosing the exercise IS adding it, with no second press to
-    # confirm what the first one already said.
-    picker.set_value("e-smith").run()
+    # .options reports the labels the coach reads.
+    way_list(at).set_value("e-smith").run()
+    button(at, "log_add_-1").click().run()
     raise_on_exception(at)
 
     blocks = state.rows("blocks", session_id=state.SESSION)
     check("the exercise went into the workout", len(blocks) == 2, str(blocks))
     check("and it is the Smith one, not the barbell",
           any(b["exercise_id"] == "e-smith" for b in blocks), str(blocks))
-    check("the coach is still on the workout",
-          "Δημήτρης Καμουτσής" in texts(at))
+    check("the coach is still on the workout", "Δημήτρης Καμουτσής" in texts(at))
 
 
 def test_an_athletes_details_can_be_corrected() -> None:
@@ -220,20 +282,19 @@ def test_a_trainer_is_not_offered_a_removal_the_database_would_refuse() -> None:
           any("athlete_edit" in (b.key or "") for b in at.button), str(keys))
 
 
-def test_choosing_an_exercise_adds_it_exactly_once() -> None:
-    """The widget keeps its value across reruns; the add must not repeat with it."""
+def test_choosing_an_exercise_adds_nothing_until_the_button() -> None:
+    """Opening the lists and picking must not write; the button is the commitment."""
     state.reset()
     at = open_log()
-    picker = exercise_picker(at)
-    picker.set_value("e-smith").run()
+    before = len(state.rows("blocks", session_id=state.SESSION))
+    name_list(at).set_value("Έλξεις").run()
     raise_on_exception(at)
-    # Any later interaction reruns the script with the widget state as it stands.
     at.run()
     raise_on_exception(at)
 
-    smith = [b for b in state.rows("blocks", session_id=state.SESSION)
-             if b["exercise_id"] == "e-smith"]
-    check("added once, not once per rerun", len(smith) == 1, str(smith))
+    check("browsing the lists wrote nothing",
+          len(state.rows("blocks", session_id=state.SESSION)) == before,
+          str(state.rows("blocks", session_id=state.SESSION)))
 
 
 def test_the_search_reaches_every_exercise_without_choosing_a_group() -> None:
@@ -245,11 +306,11 @@ def test_the_search_reaches_every_exercise_without_choosing_a_group() -> None:
           groups.options[0].startswith("Όλες"), str(groups.options))
     # -1 is the sentinel the screen uses for «Όλες»; the real groups are indexes.
     check("and it is the one selected", groups.value == -1, str(groups.value))
-    picker = exercise_picker(at)
-    check("and the search offers all three variants at once",
-          len(picker.options) == 3, str(picker.options))
-    check("with nothing preselected, so nothing is added by opening the picker",
-          picker.value is None, str(picker.value))
+    names = name_list(at)
+    check("and the exercise list reaches every movement in the gym",
+          list(names.options) == ["Έλξεις", "Πιέσεις Στήθους"], str(names.options))
+    check("with nothing preselected, so opening the picker adds nothing",
+          names.value is None, str(names.value))
 
 
 def test_last_weeks_exercises_are_one_tap() -> None:
@@ -332,6 +393,88 @@ def test_editing_the_workout_saves_what_may_change() -> None:
     check("who typed it did NOT move", row.get("logged_by") == state.OWNER)
 
 
+def test_a_replayed_submit_does_not_log_the_set_twice() -> None:
+    """A write is followed by a rerun; on slow wifi the coach taps again during it."""
+    state.reset()
+    at = open_log()
+    at.text_input(key=f"log_kg_{state.BLOCK}").set_value("80")
+    at.number_input(key=f"log_reps_{state.BLOCK}").set_value(8)
+    button(at, f"log_set_{state.BLOCK}").click().run()
+    raise_on_exception(at)
+    after_first = len(state.rows("sets", block_id=state.BLOCK))
+
+    # The same submission arriving again, which is what a second tap during the
+    # dead time replays.
+    at.text_input(key=f"log_kg_{state.BLOCK}").set_value("80")
+    at.number_input(key=f"log_reps_{state.BLOCK}").set_value(8)
+    button(at, f"log_set_{state.BLOCK}").click().run()
+    raise_on_exception(at)
+
+    check("the second tap wrote nothing",
+          len(state.rows("sets", block_id=state.BLOCK)) == after_first,
+          str(len(state.rows("sets", block_id=state.BLOCK))))
+    check("and the coach is told it already landed",
+          "είχε ήδη καταχωρηθεί" in texts(at), texts(at)[:200])
+
+
+def test_a_different_set_straight_after_is_still_written() -> None:
+    """The guard is about the same numbers twice, not about logging quickly."""
+    state.reset()
+    at = open_log()
+    at.text_input(key=f"log_kg_{state.BLOCK}").set_value("80")
+    at.number_input(key=f"log_reps_{state.BLOCK}").set_value(8)
+    button(at, f"log_set_{state.BLOCK}").click().run()
+    raise_on_exception(at)
+    at.text_input(key=f"log_kg_{state.BLOCK}").set_value("82,5")
+    at.number_input(key=f"log_reps_{state.BLOCK}").set_value(6)
+    button(at, f"log_set_{state.BLOCK}").click().run()
+    raise_on_exception(at)
+
+    written = [r for r in state.rows("sets", block_id=state.BLOCK) if r["id"] != state.SET]
+    check("both sets are there", len(written) == 2, str(written))
+    check("the heavier one included",
+          any(r.get("load_kg") == 82.5 for r in written), str(written))
+
+
+def test_logging_a_set_does_not_refetch_the_whole_catalogue() -> None:
+    """The gym said the screen hangs. On this database a hang is a round-trip count.
+
+    Clearing the catalogue after every set meant the rerun that follows a set
+    refetched two hundred exercise rows to show a number the coach had just
+    typed. Nothing about a set changes the catalogue.
+    """
+    state.reset()
+    at = open_log()
+
+    fake_supabase.reset_round_trips()
+    at.text_input(key=f"log_kg_{state.BLOCK}").set_value("60")
+    at.number_input(key=f"log_reps_{state.BLOCK}").set_value(10)
+    button(at, f"log_set_{state.BLOCK}").click().run()
+    raise_on_exception(at)
+
+    trips = list(fake_supabase.ROUND_TRIPS)
+    check("the set was written", "insert:sets" in trips, str(trips))
+    check("and the catalogue was not read again to show it",
+          "select:exercises" not in trips, " ".join(trips))
+    # A ceiling, not a target: it is here so that adding a read to this path is
+    # a decision somebody makes on purpose.
+    check(f"the whole tap cost {len(trips)} round trips, not a dozen",
+          len(trips) <= 8, " ".join(trips))
+
+
+def test_an_idle_rerun_costs_nothing() -> None:
+    """Every tap reruns the whole script. A rerun that re-reads everything is the hang."""
+    state.reset()
+    at = open_log()
+
+    fake_supabase.reset_round_trips()
+    at.run()
+    raise_on_exception(at)
+    trips = list(fake_supabase.ROUND_TRIPS)
+    check(f"a rerun with nothing changed cost {len(trips)} round trips",
+          len(trips) <= 2, " ".join(trips))
+
+
 def test_one_entry_can_stand_for_several_straight_sets() -> None:
     """3×80×8 is one number typed once, not the same two numbers typed three times."""
     state.reset()
@@ -388,6 +531,29 @@ def test_moving_the_workout_to_another_day_keeps_the_time() -> None:
     check("the workout moved to the chosen day", athens.date() == datetime.date(2026, 8, 25),
           str(row["started_at"]))
     check("and it is still a 10:00 session", athens.hour == 10, str(athens))
+
+
+def test_a_fresh_workout_can_be_started_from_nothing() -> None:
+    """«Νέα προπόνηση» arrives with no session_id, and that path had no test.
+
+    It shipped a NameError for one commit: the screen crashed the moment a coach
+    started a workout rather than continuing one, and every test passed, because
+    every test handed the screen a session that already existed.
+    """
+    state.reset()
+    before = len(state.STORE["sessions"])
+    at = open_log(session_id=None)
+
+    check("a workout was started", len(state.STORE["sessions"]) == before + 1,
+          str(len(state.STORE["sessions"])))
+    check("and the screen is the workout, not an error",
+          "Δημήτρης Καμουτσής" in texts(at), texts(at)[:200])
+    check("it belongs to this athlete",
+          state.STORE["sessions"][-1]["athlete_id"] == state.ATHLETE,
+          str(state.STORE["sessions"][-1]))
+    check("with the author stamped by the trigger, not sent by the client",
+          state.STORE["sessions"][-1]["logged_by"] == state.OWNER,
+          str(state.STORE["sessions"][-1].get("logged_by")))
 
 
 def test_deleting_the_workout_does_not_start_another_one() -> None:
