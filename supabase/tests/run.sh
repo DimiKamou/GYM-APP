@@ -31,7 +31,7 @@ for migration in "$HERE"/../migrations/*.sql; do
 done
 for test in "$HERE"/0[0-9]_*_test.sql; do
   psql -h "$WORK/sock" -U trainhub -d postgres -q \
-       -v migrations="$HERE/../migrations" -f "$test" 2>&1 \
+       -v migrations="$HERE/../migrations" -v root="$HERE/../.." -f "$test" 2>&1 \
     | grep -v '^NOTICE' | sed 's/^psql:[^ ]*sql:[0-9]*: //'
 done
 
