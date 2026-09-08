@@ -72,11 +72,11 @@ _SEED: dict[str, list[dict[str, Any]]] = {
         {"id": "e-bar", "gym_id": None, "name_el": "Πιέσεις Στήθους", "name_en": "Bench Press",
          "category": "upper", "equipment": "barbell", "default_set_kind": "weight_reps",
          "is_archived": False, "merged_into_id": None, "deleted_at": None},
-        {"id": "e-db", "gym_id": None, "name_el": "Πιέσεις Στήθους", "name_en": "DB Press",
+        # One name, one row. exercises_gym_el_uniq forbids more, which the fake
+        # now enforces — and which the old seed quietly broke, taking a whole
+        # design down with it.
+        {"id": "e-db", "gym_id": None, "name_el": "Κωπηλατική", "name_en": "Row",
          "category": "upper", "equipment": "dumbbell", "default_set_kind": "weight_reps",
-         "is_archived": False, "merged_into_id": None, "deleted_at": None},
-        {"id": "e-smith", "gym_id": None, "name_el": "Πιέσεις Στήθους", "name_en": "Smith Press",
-         "category": "upper", "equipment": "smith", "default_set_kind": "weight_reps",
          "is_archived": False, "merged_into_id": None, "deleted_at": None},
     ],
     "exercise_muscles": [
@@ -92,10 +92,9 @@ _SEED: dict[str, list[dict[str, Any]]] = {
          "gym_id": GYM, "deleted_at": None},
         {"exercise_id": "e-bar", "muscle_group_id": CHEST, "role": "primary",
          "gym_id": None, "deleted_at": None},
-        {"exercise_id": "e-db", "muscle_group_id": CHEST, "role": "primary",
+        {"exercise_id": "e-db", "muscle_group_id": BACK, "role": "primary",
          "gym_id": None, "deleted_at": None},
-        {"exercise_id": "e-smith", "muscle_group_id": CHEST, "role": "primary",
-         "gym_id": None, "deleted_at": None},
+
     ],
     "sessions": [
         # Last week's workout, so the picker has something to offer as a repeat.
@@ -157,9 +156,28 @@ def stamp(table: str, row: dict[str, Any]) -> None:
         row.setdefault("created_by", OWNER)
 
 
+def _assert_seed_is_possible() -> None:
+    """The seed must describe a database Postgres would actually accept.
+
+    It did not. Three exercises shared the name «Πιέσεις Στήθους», which
+    exercises_gym_el_uniq forbids within a gym — so every test about the
+    three-list picker was passing against a world that cannot exist, while the
+    live app could only ever show one implement per movement.
+    """
+    seen: set[tuple[Any, str]] = set()
+    for row in STORE.get("exercises", []):
+        if row.get("deleted_at") is not None:
+            continue
+        key = (row.get("gym_id"), str(row.get("name_el") or "").lower())
+        if key in seen:
+            raise AssertionError(f"seed breaks exercises_gym_el_uniq: {key}")
+        seen.add(key)
+
+
 def reset() -> None:
     STORE.clear()
     STORE.update(deepcopy(_SEED))
+    _assert_seed_is_possible()
     fake_supabase.reset_round_trips()
     # Streamlit's caches outlive an AppTest run — they belong to the process,
     # not the script — so a seeded store with stale cache entries over it is a

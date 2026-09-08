@@ -68,6 +68,32 @@ class _Query:
             self._columns = [c.strip() for c in columns.split(",") if c.strip()]
         return self
 
+    # (table, columns) that Postgres has a unique index on. The fake enforced
+    # nothing, and that let a whole design through: the three-list picker was
+    # built on «Πιέσεις Στήθους» existing once per implement, which
+    # exercises_gym_el_uniq forbids. The tests passed and the live app could
+    # only ever show one option. An index the fake ignores is an index the
+    # tests cannot defend.
+    _UNIQUE = {"exercises": ("gym_id", "name_el")}
+
+    def _check_unique(self, row: dict[str, Any]) -> None:
+        columns = self._UNIQUE.get(self._table)
+        if not columns:
+            return
+        def key(candidate: dict[str, Any]) -> tuple[Any, ...]:
+            return tuple(
+                str(candidate.get(c) or "").lower() if isinstance(candidate.get(c), str)
+                else candidate.get(c)
+                for c in columns
+            )
+        wanted = key(row)
+        for existing in self._store.get(self._table, []):
+            if existing.get("deleted_at") is None and key(existing) == wanted:
+                raise ValueError(
+                    f"duplicate key value violates unique constraint "
+                    f"\"{self._table}_{'_'.join(columns)}_uniq\": {wanted}"
+                )
+
     def insert(self, payload: Any, **_: Any) -> "_Query":
         rows = payload if isinstance(payload, list) else [payload]
         self._mode = "insert"
@@ -75,6 +101,7 @@ class _Query:
             row = dict(item)
             row.setdefault("id", f"{self._table}-{next(_counter)}")
             row.setdefault("deleted_at", None)
+            self._check_unique(row)
             if self._stamp is not None:
                 # The BEFORE INSERT triggers the screens are written around.
                 # Without them a new workout comes back with no author and no
