@@ -193,7 +193,7 @@ def _blocks(gym_id: str, session_id: str) -> list[dict[str, Any]]:
     return (
         db.client()
         .table("blocks")
-        .select("id, exercise_id, position")
+        .select("id, exercise_id, position, note")
         .eq("gym_id", gym_id)
         .eq("session_id", session_id)
         .is_("deleted_at", "null")
@@ -875,6 +875,22 @@ def _repeat_input(block_id: str) -> int:
     )
 
 
+def _note_input(block_id: str) -> str:
+    """An optional word about this set. `sets.note` has always existed for it.
+
+    Inside the form, so it costs no extra round trip: it rides along with the
+    numbers on the one submit the coach already makes.
+    """
+    return (
+        st.text_input(
+            "Σχόλιο (προαιρετικό)",
+            key=f"log_setnote_{block_id}",
+            placeholder="π.χ. εύκολο, ή πόνεσε ο ώμος",
+        )
+        or ""
+    ).strip()
+
+
 def _set_form(
     block_id: str, kind: str, previous: dict[str, Any] | None
 ) -> tuple[dict[str, Any], int] | None:
@@ -892,6 +908,8 @@ def _set_form(
     prev = previous or {}
 
     with st.form(f"log_set_{block_id}", clear_on_submit=True):
+        note = _note_input(block_id)
+
         if kind == "duration":
             minute_col, second_col, times_col, go_col = st.columns(
                 [3, 3, 2, 4], vertical_alignment="bottom"
@@ -928,7 +946,7 @@ def _set_form(
             if total > _MAX_SECONDS:
                 st.error("Ο χρόνος είναι πολύ μεγάλος.")
                 return None
-            return {"seconds": total}, times
+            return {"seconds": total, "note": note or None}, times
 
         if kind == "distance":
             meters_col, times_col, go_col = st.columns([4, 2, 4], vertical_alignment="bottom")
@@ -952,7 +970,7 @@ def _set_form(
             if meters > _MAX_METERS:
                 st.error("Η απόσταση είναι πολύ μεγάλη.")
                 return None
-            return {"meters": round(meters, 2)}, times
+            return {"meters": round(meters, 2), "note": note or None}, times
 
         if kind == "bodyweight":
             reps_col, extra_col, times_col, go_col = st.columns(
@@ -991,6 +1009,7 @@ def _set_form(
                     st.error("Τα επιπλέον κιλά δεν διαβάζονται — π.χ. 12,5.")
                     return None
                 values["load_kg"] = round(extra, 2)
+            values["note"] = note or None
             return values, times
 
         # weight_reps, and anything unknown falls back to it: it is the only kind
@@ -1030,7 +1049,7 @@ def _set_form(
         if int(reps) < 1:
             st.error("Γράψε τουλάχιστον μία επανάληψη.")
             return None
-        return {"load_kg": round(load, 2), "reps": int(reps)}, times
+        return {"load_kg": round(load, 2), "reps": int(reps), "note": note or None}, times
 
 
 # ---------------------------------------------------------------------------
@@ -1095,6 +1114,73 @@ def _set_line(
     return line
 
 
+_OPEN_BLOCKS = "log_open_blocks"
+
+
+def _is_open(block_id: str) -> bool:
+    """Whether this exercise is unfolded. Open unless the coach folded it.
+
+    Remembered per block for the browser session, so a workout with six
+    exercises can be folded down to the one in front of the coach and stay that
+    way while they work through it.
+    """
+    folded = st.session_state.get(_OPEN_BLOCKS)
+    return block_id not in folded if isinstance(folded, set) else True
+
+
+def _fold(block_id: str, closed: bool) -> None:
+    folded = st.session_state.get(_OPEN_BLOCKS)
+    if not isinstance(folded, set):
+        folded = set()
+    folded.discard(block_id) if not closed else folded.add(block_id)
+    st.session_state[_OPEN_BLOCKS] = folded
+
+
+def _save_block_note(gym_id: str, block_id: str, note: str) -> int:
+    rows = (
+        db.client()
+        .table("blocks")
+        .update({"note": note or None})
+        .eq("gym_id", gym_id)
+        .eq("id", block_id)
+        .execute()
+        .data
+        or []
+    )
+    return len(rows)
+
+
+def _block_note_form(gym_id: str, session_id: str, block_id: str, current: str) -> None:
+    """A comment about this exercise, in this workout, today.
+
+    On the block and not on the exercise: «πονάει ο ώμος, πήγαμε ελαφρύ» is true
+    of today, and written on the exercise it would follow the movement into
+    every athlete's sheet forever.
+    """
+    with st.form(f"log_block_note_{block_id}"):
+        text = st.text_area(
+            "Σχόλιο για την άσκηση",
+            value=current,
+            max_chars=2000,
+            placeholder="π.χ. πονούσε ο ώμος, πήγαμε ελαφρύ",
+        )
+        saved = st.form_submit_button("Αποθήκευση σχολίου")
+
+    if not saved:
+        return
+    try:
+        touched = _save_block_note(gym_id, block_id, (text or "").strip())
+    except Exception as exc:
+        ui.notice(_NOTICE, "error", f"Το σχόλιο δεν αποθηκεύτηκε: {exc}")
+        st.rerun()
+    if not touched:
+        ui.notice(_NOTICE, "error", "Το σχόλιο δεν αποθηκεύτηκε. Δοκίμασε ξανά.")
+        st.rerun()
+    _clear_workout_caches(gym_id, session_id)
+    ui.notice(_NOTICE, "ok", "Το σχόλιο αποθηκεύτηκε.")
+    st.rerun()
+
+
 def _block_edit(
     gym_id: str,
     session_id: str,
@@ -1104,15 +1190,28 @@ def _block_edit(
     kind: str,
     names: dict[str, str],
     session_author: Any,
+    block_note: str = "",
 ) -> None:
-    """Take a set back, or take the whole exercise out.
+    """Take a set back, write on the exercise, or take the whole exercise out.
 
     Behind a closed expander and not beside «Καταχώρηση σετ», which is the
     button the same thumb is aiming at forty times an hour. Nothing here asks
     "σίγουρα;" — every one of these is a stamped deleted_at with «Αναίρεση»
     waiting at the top of the screen.
     """
-    with st.expander("Διόρθωση"):
+    # A button and a session_state flag, not an expander: this panel now lives
+    # inside the block's own expander, and Streamlit refuses to nest one in
+    # another.
+    open_key = f"log_fix_open_{block_id}"
+    if st.button(
+        "Κλείσιμο διόρθωσης" if st.session_state.get(open_key) else "Διόρθωση / σχόλιο",
+        key=f"log_fix_{block_id}",
+    ):
+        st.session_state[open_key] = not st.session_state.get(open_key)
+        st.rerun()
+
+    if st.session_state.get(open_key):
+        _block_note_form(gym_id, session_id, block_id, block_note)
         for number, row in enumerate(rows, 1):
             set_id = str(row["id"])
             body, button = st.columns([3, 1])
@@ -1197,12 +1296,41 @@ def _block_card(
 
     kind = _kind_of(rows, exercise)
 
+    # With the όργανο, exactly as the picker offered it. Reading back «Πιέσεις
+    # Στήθους · 40×10» without knowing it was dumbbells is how a coach loads
+    # 40 kg on a barbell for an athlete who pressed two 20s.
+    #
+    # The heading carries the sets too, so a folded exercise still says what was
+    # done on it — a collapsed card that reads only "Πιέσεις Στήθους" costs a
+    # tap to learn what the coach folded it away knowing.
+    heading = _labelled(exercise)
+    if rows:
+        heading += f" · {len(rows)} σετ · {fmt.format_set(fmt.top_set(rows, kind) or rows[-1], kind)}"
+
+    # A bordered container and a fold button of our own, not st.expander: an
+    # expander never tells the script whether it is open, so the coach's choice
+    # could not be remembered — and it would forbid the correction panel from
+    # living inside it.
+    open_now = _is_open(block_id)
     with st.container(border=True):
-        # With the όργανο, exactly as the picker offered it. Reading back
-        # «Πιέσεις Στήθους · 40×10» without knowing it was dumbbells is how a
-        # coach loads 40 kg on a barbell for an athlete who pressed two 20s.
-        st.markdown(f"**{fmt.md(_labelled(exercise))}**")
+        title_col, fold_col = st.columns([5, 1], vertical_alignment="center")
+        title_col.markdown(f"**{fmt.md(heading)}**")
+        if fold_col.button(
+            "▾" if open_now else "▸",
+            key=f"log_fold_{block_id}",
+            help="Δίπλωσε την άσκηση" if open_now else "Άνοιξε την άσκηση",
+        ):
+            _fold(block_id, closed=open_now)
+            st.rerun()
+
+        if not open_now:
+            return
+
         st.caption(fmt.md(_last_time_line(last, names, today)))
+
+        note = (block.get("note") or "").strip()
+        if note:
+            st.info(fmt.md(note))
 
         if rows:
             lines = []
@@ -1212,14 +1340,22 @@ def _block_card(
         else:
             st.caption(f"Κανένα σετ ακόμα · {_KIND_LABELS.get(kind, kind)}")
 
-        _block_edit(gym_id, session_id, block_id, exercise, rows, kind, names, session_author)
+        _block_edit(
+            gym_id, session_id, block_id, exercise, rows, kind, names, session_author,
+            str(block.get("note") or ""),
+        )
 
         entry = _set_form(block_id, kind, rows[-1] if rows else None)
         if entry is None:
             return
         values, times = entry
 
-        signature = (block_id, kind, times, tuple(sorted(values.items())))
+        # The note is left out on purpose: retyping the same numbers with a
+        # different comment is still the same set arriving twice.
+        signature = (
+            block_id, kind, times,
+            tuple(sorted((k, v) for k, v in values.items() if k != "note")),
+        )
         if _is_double_tap(signature):
             ui.notice(_NOTICE, "ok", "Το σετ είχε ήδη καταχωρηθεί.")
             st.rerun()
