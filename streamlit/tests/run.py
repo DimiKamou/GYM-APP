@@ -161,21 +161,44 @@ def test_equipment_is_on_the_block_card() -> None:
 
 
 def test_the_second_list_names_a_movement_once() -> None:
-    """«Πιέσεις Στήθους» is one exercise to a coach, whatever it is loaded with."""
+    """One row per movement. exercises_gym_el_uniq guarantees it, in fact."""
     state.reset()
     at = open_log()
-    names = list(name_list(at).options)
-    check("each movement appears once, not once per implement",
-          names == ["Έλξεις", "Πιέσεις σε μηχάνημα", "Πιέσεις Στήθους"], str(names))
-    # Present, not absent. The gym asked for three drop-downs and got two plus
-    # one that appeared later — which, holding the screen, is two.
+    check("each movement appears once", list(name_list(at).options) == ["Έλξεις", "Κωπηλατική", "Πιέσεις σε μηχάνημα", "Πιέσεις Στήθους"],
+          str(name_list(at).options))
+
+
+def test_the_third_list_offers_every_implement() -> None:
+    """One movement, any implement — which is the whole of 008.
+
+    The list used to hold only the rows that existed, and since a gym cannot
+    have two exercises with the same name it always held exactly one. A coach
+    who wanted «Πιέσεις Στήθους» with dumbbells had nowhere to say so.
+    """
+    state.reset()
+    at = open_log()
+    name_list(at).set_value("Πιέσεις Στήθους").run()
+    raise_on_exception(at)
+
     ways = way_list(at)
-    check("the implement list is on screen from the start", ways is not None)
-    check("waiting rather than empty-looking",
-          ways is not None and ways.placeholder == "Διάλεξε πρώτα άσκηση",
-          str(getattr(ways, "placeholder", None)))
-    check("and it cannot be used yet", ways is not None and ways.disabled is True,
-          str(getattr(ways, "disabled", None)))
+    check("every implement is offered", len(ways.options) == 9, str(ways.options))
+    check("μπάρα and αλτήρες both among them",
+          "Μπάρα" in ways.options and "Αλτήρες" in ways.options, str(ways.options))
+    check("the exercise's own is the default", ways.value == "barbell", str(ways.value))
+
+
+def test_the_implement_the_coach_picks_is_what_gets_written() -> None:
+    state.reset()
+    at = open_log()
+    name_list(at).set_value("Πιέσεις Στήθους").run()
+    way_list(at).set_value("dumbbell").run()
+    button(at, "log_add_-1").click().run()
+    raise_on_exception(at)
+
+    added = [b for b in state.rows("blocks", session_id=state.SESSION) if b["id"] != state.BLOCK]
+    check("the block records dumbbells, not the exercise's barbell",
+          added and added[0].get("equipment") == "dumbbell", str(added))
+    check("and the card says so", "Πιέσεις Στήθους · Αλτήρες" in texts(at), texts(at)[:400])
 
 
 def test_the_add_button_is_dead_until_there_is_something_to_add() -> None:
@@ -192,48 +215,43 @@ def test_the_add_button_is_dead_until_there_is_something_to_add() -> None:
           str(button(at, "log_add_-1").disabled))
 
 
-def test_the_third_list_holds_the_implements() -> None:
+def test_last_time_does_not_read_one_implement_under_another() -> None:
+    """40 kg of dumbbells is not 80 kg of barbell, and must never be shown as it.
+
+    This is the reason equipment exists as a column at all, and moving it onto
+    the block is exactly what could have broken it.
+    """
+    state.reset()
+    # Last week: the same movement, on dumbbells.
+    state.STORE["blocks"].append({
+        "id": "b-db-hist", "gym_id": state.GYM, "session_id": state.LAST_SESSION,
+        "exercise_id": "e-bar", "position": 1, "note": None,
+        "equipment": "dumbbell", "deleted_at": None,
+    })
+    state.STORE["sets"].append({
+        "id": "s-db-hist", "gym_id": state.GYM, "block_id": "b-db-hist", "position": 0,
+        "kind": "weight_reps", "load_kg": "40.00", "reps": 10, "seconds": None,
+        "meters": None, "note": None, "done_at": state.NOW, "created_by": state.OWNER,
+        "deleted_at": None,
+    })
+    at = open_log()
+
+    body = texts(at)
+    check("today's barbell block does not quote the dumbbell numbers",
+          "40×10" not in body, body[:400])
+    check("it quotes nothing, because this is the first barbell press",
+          "Πρώτη φορά" in body, body[:400])
+
+
+def test_the_add_button_waits_for_a_movement() -> None:
     state.reset()
     at = open_log()
-    name_list(at).set_value("Πιέσεις Στήθους").run()
-    raise_on_exception(at)
-
+    check("«Προσθήκη άσκησης» starts disabled",
+          button(at, "log_add_-1").disabled is True)
     ways = way_list(at)
-    check("all three implements are offered",
-          sorted(ways.options) == ["Smith", "Αλτήρες", "Μπάρα"], str(ways.options))
-    check("with none of them preselected", ways.value is None, str(ways.value))
-
-
-def test_an_implement_must_be_chosen_before_the_exercise_is_added() -> None:
-    """40 kg of dumbbells is not 80 kg of barbell; a default here writes the wrong one."""
-    state.reset()
-    at = open_log()
-    name_list(at).set_value("Πιέσεις Στήθους").run()
-    button(at, "log_add_-1").click().run()
-    raise_on_exception(at)
-
-    check("nothing was added",
-          len(state.rows("blocks", session_id=state.SESSION)) == 1,
-          str(state.rows("blocks", session_id=state.SESSION)))
-    check("and the screen says what is missing",
-          "Διάλεξε τρόπο εκτέλεσης" in texts(at), texts(at)[:200])
-
-
-def test_a_movement_with_one_implement_shows_it_and_asks_nothing() -> None:
-    state.reset()
-    at = open_log()
-    name_list(at).set_value("Έλξεις").run()
-    raise_on_exception(at)
-
-    ways = way_list(at)
-    check("the one implement is named on screen",
-          ways.options == ["Σωματικό βάρος"], str(ways.options))
-    check("and already chosen, so it costs no tap", ways.value == "e-pullup", str(ways.value))
-
-    button(at, "log_add_-1").click().run()
-    raise_on_exception(at)
-    blocks = state.rows("blocks", session_id=state.SESSION)
-    check("one press adds it", any(b["exercise_id"] == "e-pullup" for b in blocks), str(blocks))
+    check("and so does the implement list", ways.disabled is True)
+    check("which says what to do first", ways.placeholder == "Διάλεξε πρώτα άσκηση",
+          str(ways.placeholder))
 
 
 def test_changing_the_muscle_group_clears_the_exercise_under_it() -> None:
@@ -257,17 +275,14 @@ def test_adding_an_exercise_stays_on_the_workout() -> None:
     """The bug the gym reported: adding an exercise threw them back to the roster."""
     state.reset()
     at = open_log()
-    name_list(at).set_value("Πιέσεις Στήθους").run()
-    # set_value takes the option's underlying value — an exercise id — while
-    # .options reports the labels the coach reads.
-    way_list(at).set_value("e-smith").run()
+    name_list(at).set_value("Έλξεις").run()
     button(at, "log_add_-1").click().run()
     raise_on_exception(at)
 
     blocks = state.rows("blocks", session_id=state.SESSION)
     check("the exercise went into the workout", len(blocks) == 2, str(blocks))
-    check("and it is the Smith one, not the barbell",
-          any(b["exercise_id"] == "e-smith" for b in blocks), str(blocks))
+    check("and it is the one that was chosen",
+          any(b["exercise_id"] == "e-pullup" for b in blocks), str(blocks))
     check("the coach is still on the workout", "Δημήτρης Καμουτσής" in texts(at))
 
 
@@ -350,8 +365,7 @@ def test_the_search_reaches_every_exercise_without_choosing_a_group() -> None:
     check("and it is the one selected", groups.value == -1, str(groups.value))
     names = name_list(at)
     check("and the exercise list reaches every movement in the gym",
-          list(names.options) == ["Έλξεις", "Πιέσεις σε μηχάνημα", "Πιέσεις Στήθους"],
-          str(names.options))
+          list(names.options) == ["Έλξεις", "Κωπηλατική", "Πιέσεις σε μηχάνημα", "Πιέσεις Στήθους"], str(names.options))
     check("with nothing preselected, so opening the picker adds nothing",
           names.value is None, str(names.value))
 
@@ -361,9 +375,9 @@ def test_last_weeks_exercises_are_one_tap() -> None:
     state.reset()
     at = open_log()
     labels = [b.label for b in at.button if b.label.startswith("+ ")]
-    check("last week's exercise is offered", labels == ["+ Πιέσεις Στήθους · Αλτήρες"], str(labels))
+    check("last week's exercise is offered", labels == ["+ Κωπηλατική · Αλτήρες"], str(labels))
     check("today's is not offered twice",
-          not any("Μπάρα" in label for label in labels), str(labels))
+          not any("Πιέσεις Στήθους" in label for label in labels), str(labels))
 
     button(at, "log_again_e-db").click().run()
     raise_on_exception(at)

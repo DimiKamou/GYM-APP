@@ -193,7 +193,7 @@ def _blocks(gym_id: str, session_id: str) -> list[dict[str, Any]]:
     return (
         db.client()
         .table("blocks")
-        .select("id, exercise_id, position, note")
+        .select("id, exercise_id, position, note, equipment")
         .eq("gym_id", gym_id)
         .eq("session_id", session_id)
         .is_("deleted_at", "null")
@@ -258,8 +258,18 @@ def _last_performance(
     athlete_id: str,
     exercise_keys: tuple[tuple[str, str], ...],
     current_session: tuple[str, str, str],
+    defaults: tuple[tuple[str, str], ...] = (),
 ) -> dict[str, dict[str, Any]]:
-    """canonical exercise id -> the athlete's last top set on it, with day and author.
+    """(canonical exercise, όργανο) -> the athlete's last top set, with day and author.
+
+    Keyed by the implement as well as the movement, since 008: one exercise can
+    now be pressed with a barbell today and dumbbells on Friday, and reading the
+    barbell number back under the dumbbells is exactly the mistake the whole
+    equipment column exists to prevent.
+
+    `defaults` maps an exercise to its own όργανο, so a block written before 008
+    — equipment NULL, meaning "whatever the exercise says" — lands in the same
+    bucket as a block that names that same implement explicitly.
 
     Three queries for the whole screen rather than one per block: the athlete's
     recent sessions, the blocks of those sessions that use these exercises, and
@@ -310,9 +320,10 @@ def _last_performance(
     rank_of = {str(row["id"]): rank for rank, row in enumerate(history)}
     session_of = {str(row["id"]): row for row in history}
 
+    fallback = dict(defaults)
     blocks = (
         client.table("blocks")
-        .select("id, session_id, exercise_id")
+        .select("id, session_id, exercise_id, equipment")
         .eq("gym_id", gym_id)
         .in_("session_id", list(rank_of))
         .in_("exercise_id", list(canonical))
@@ -334,9 +345,14 @@ def _last_performance(
             continue
         # Keyed by the canonical id: a block written before the merge and one
         # written after it are the same movement and must not answer separately.
-        exercise_id = canonical.get(str(block.get("exercise_id") or ""), "")
+        raw_id = str(block.get("exercise_id") or "")
+        exercise_id = canonical.get(raw_id, "")
         if not exercise_id:
             continue
+        # NULL on the block means "as the exercise says", so it resolves to the
+        # same key an explicit choice of that implement would.
+        gear = str(block.get("equipment") or fallback.get(raw_id, ""))
+        exercise_id = (exercise_id, gear)
         current = winners.get(exercise_id)
         if current is None or rank < current["rank"]:
             winners[exercise_id] = {
@@ -653,15 +669,28 @@ def _open_session(gym_id: str, athlete_id: str) -> dict[str, Any] | None:
     return rows[0] if rows else None
 
 
-def _add_block(gym_id: str, session_id: str, exercise_id: str, position: int) -> None:
-    db.client().table("blocks").insert(
-        {
-            "gym_id": gym_id,
-            "session_id": session_id,
-            "exercise_id": exercise_id,
-            "position": position,
-        }
-    ).execute()
+def _add_block(
+    gym_id: str,
+    session_id: str,
+    exercise_id: str,
+    position: int,
+    equipment: str = "",
+) -> None:
+    """Put one exercise in the workout, with the implement it is being done on.
+
+    `equipment` is the block's own answer and may differ from the exercise's
+    default — that is the whole point of 008. Left empty it stays NULL, which
+    reads as "whatever the exercise says".
+    """
+    payload: dict[str, Any] = {
+        "gym_id": gym_id,
+        "session_id": session_id,
+        "exercise_id": exercise_id,
+        "position": position,
+    }
+    if equipment:
+        payload["equipment"] = equipment
+    db.client().table("blocks").insert(payload).execute()
 
 
 def _add_set(
@@ -1303,7 +1332,7 @@ def _block_card(
     # The heading carries the sets too, so a folded exercise still says what was
     # done on it — a collapsed card that reads only "Πιέσεις Στήθους" costs a
     # tap to learn what the coach folded it away knowing.
-    heading = _labelled(exercise)
+    heading = _labelled(exercise, str(block.get("equipment") or ""))
     if rows:
         heading += f" · {len(rows)} σετ · {fmt.format_set(fmt.top_set(rows, kind) or rows[-1], kind)}"
 
@@ -1491,33 +1520,38 @@ def _ways_and_add(
     name: str,
     variants: list[dict[str, Any]],
 ) -> None:
-    """The third list — «Τρόπος άσκησης» — and the button that commits all three."""
-    ways = {
-        str(variant["id"]): (exercises.equipment_of(variant) or "Χωρίς όργανο")
-        for variant in sorted(variants, key=lambda row: fmt.fold(exercises.equipment_of(row)))
-    }
-    waiting = not name or not ways
-    only_one = len(ways) == 1
+    """The third list — «Τρόπος άσκησης» — and the button that commits all three.
 
-    # The name is in the key with the group, so choosing a different exercise
-    # cannot leave the previous one's όργανο selected underneath it.
+    Every implement is offered, not only the one the exercise was filed under.
+    `exercises_gym_el_uniq` makes name_el unique within a gym, so «Πιέσεις
+    Στήθους» cannot exist once per implement the way this screen first assumed —
+    each name has exactly one, and the list had exactly one thing in it. 008 put
+    the όργανο on the block instead, so one movement can be pressed with a
+    barbell today and dumbbells on Friday, and each block says which.
+
+    The exercise's own όργανο is the default, because it is what the movement is
+    usually done on. It is a default and not a lock: changing it is one tap and
+    the sheet then reads what actually happened.
+    """
+    exercise = variants[0] if variants else None
+    waiting = not name or exercise is None
+
+    options = list(exercises.EQUIPMENT_LABELS)
+    own = str((exercise or {}).get("equipment") or "")
+    index = options.index(own) if own in options else None
+
     chosen = st.selectbox(
         "Τρόπος άσκησης",
-        options=list(ways),
-        format_func=lambda key: ways.get(key, key),
-        # Preselected only when there is nothing to decide. With two or more, a
-        # default would write 40 kg of dumbbells onto the sheet as 80 kg of
-        # barbell the first time somebody moved fast.
-        index=0 if (only_one and not waiting) else None,
+        options=options,
+        format_func=lambda key: exercises.EQUIPMENT_LABELS.get(key, key),
+        index=None if waiting else index,
         placeholder="Διάλεξε πρώτα άσκηση" if waiting else "Διάλεξε όργανο",
         key=f"log_way_{group_index}_{fmt.fold(name)}",
-        disabled=waiting or only_one,
+        disabled=waiting,
         help=(
             "Πρώτα διάλεξε άσκηση από πάνω."
             if waiting
-            else "Η μόνη καταχωρημένη εκτέλεση αυτής της άσκησης."
-            if only_one
-            else "40 κιλά με αλτήρες δεν είναι 80 με μπάρα — γι' αυτό χωρίζονται."
+            else "Άλλαξέ το αν σήμερα γίνεται με άλλο όργανο — 40 κιλά με αλτήρες δεν είναι 80 με μπάρα."
         ),
     )
 
@@ -1527,10 +1561,12 @@ def _ways_and_add(
         type="primary",
         disabled=waiting,
     ):
-        if not chosen:
+        if not chosen or exercise is None:
             st.error("Διάλεξε τρόπο εκτέλεσης — με τι γίνεται η άσκηση.")
             return
-        _put_in_workout(gym_id, session_id, str(chosen), next_position, by_id)
+        _put_in_workout(
+            gym_id, session_id, str(exercise["id"]), next_position, by_id, str(chosen)
+        )
 
 
 def _put_in_workout(
@@ -1539,10 +1575,11 @@ def _put_in_workout(
     exercise_id: str,
     next_position: int,
     by_id: dict[str, dict[str, Any]],
+    equipment: str = "",
 ) -> None:
-    """One exercise into the open workout, from whichever way in was used."""
+    """One exercise into the open workout, on the implement it is being done on."""
     try:
-        _add_block(gym_id, session_id, exercise_id, next_position)
+        _add_block(gym_id, session_id, exercise_id, next_position, equipment)
     except Exception as exc:
         ui.notice(_NOTICE, "error", f"Η άσκηση δεν προστέθηκε: {exc}")
         st.rerun()
@@ -1551,7 +1588,7 @@ def _put_in_workout(
     # This athlete's recent exercises just changed, and this is the only action
     # on the screen that changes them.
     _recent_exercise_ids.clear()
-    ui.notice(_NOTICE, "ok", f"Μπήκε: {_labelled(by_id.get(exercise_id) or {})}")
+    ui.notice(_NOTICE, "ok", f"Μπήκε: {_labelled(by_id.get(exercise_id) or {}, equipment)}")
     st.rerun()
 
 
@@ -1588,9 +1625,14 @@ def _repeat_buttons(
     st.divider()
 
 
-def _labelled(exercise: dict[str, Any]) -> str:
-    """«Πιέσεις Στήθους · Μπάρα» — the name is not enough to pick by."""
-    gear = exercises.equipment_of(exercise)
+def _labelled(exercise: dict[str, Any], equipment: str = "") -> str:
+    """«Πιέσεις Στήθους · Μπάρα» — the name is not enough to pick by.
+
+    `equipment` overrides the exercise's own, for a block that recorded which
+    implement it was actually done on. One movement, several implements, and the
+    number on the sheet always says which.
+    """
+    gear = exercises.EQUIPMENT_LABELS.get(equipment, "") if equipment else exercises.equipment_of(exercise)
     name = fmt.exercise_name(exercise)
     return f"{name} · {gear}" if gear else name
 
@@ -2022,7 +2064,19 @@ def _workout(gym_id: str, athlete: dict[str, Any], session: dict[str, Any]) -> N
         session_id,
     )
     try:
-        last = _last_performance(gym_id, athlete_id, exercise_keys, current_session)
+        # Each exercise's own όργανο travels with the keys, so a block from
+        # before 008 — equipment NULL — is matched against the same implement an
+        # explicit choice would name.
+        defaults = tuple(
+            sorted(
+                (str(row["id"]), str(row.get("equipment") or ""))
+                for row in rows_of_catalogue
+                if row.get("id")
+            )
+        )
+        last = _last_performance(
+            gym_id, athlete_id, exercise_keys, current_session, defaults
+        )
     except Exception:
         # The history is the nicest thing on this screen and the least essential:
         # losing it must not stop the coach logging the set in front of them.
@@ -2039,7 +2093,11 @@ def _workout(gym_id: str, athlete: dict[str, Any], session: dict[str, Any]) -> N
             block,
             _resolve_exercise(gym_id, catalogue, canonical, exercise_id),
             by_block.get(str(block["id"]), []),
-            last.get(canonical.get(exercise_id, exercise_id)),
+            last.get((
+                canonical.get(exercise_id, exercise_id),
+                str(block.get("equipment") or "")
+                or str((catalogue.get(exercise_id) or {}).get("equipment") or ""),
+            )),
             names,
             session.get("logged_by"),
             today,
