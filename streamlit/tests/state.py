@@ -110,9 +110,9 @@ _SEED: dict[str, list[dict[str, Any]]] = {
     ],
     "blocks": [
         {"id": "b0", "gym_id": GYM, "session_id": LAST_SESSION, "exercise_id": "e-db",
-         "position": 0, "deleted_at": None},
+         "position": 0, "note": None, "deleted_at": None},
         {"id": BLOCK, "gym_id": GYM, "session_id": SESSION, "exercise_id": "e-bar",
-         "position": 0, "deleted_at": None},
+         "position": 0, "note": None, "deleted_at": None},
     ],
     "sets": [
         {"id": SET, "gym_id": GYM, "block_id": BLOCK, "position": 0, "kind": "weight_reps",

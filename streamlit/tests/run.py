@@ -18,6 +18,7 @@ from __future__ import annotations
 
 import pathlib
 import sys
+import time
 import traceback
 
 HERE = pathlib.Path(__file__).resolve().parent
@@ -27,7 +28,12 @@ sys.path.insert(0, str(HERE))
 import fake_supabase  # noqa: E402
 import state  # noqa: E402
 from lib import db  # noqa: E402
+from fake_supabase import FakeClient  # noqa: E402
 from streamlit.testing.v1 import AppTest  # noqa: E402
+
+# lib/auth.py reaches the server through db.client(); the unit tests below call
+# it outside any AppTest run, so the seam has to be open here too.
+db.create_client = lambda *args, **kwargs: FakeClient(state.STORE, state.USER_ID, state.stamp)
 
 DRIVER = str(HERE / "_drive_log.py")
 ATHLETES_DRIVER = str(HERE / "_drive_athletes.py")
@@ -383,6 +389,9 @@ def test_logging_a_set_reads_a_greek_decimal() -> None:
 def test_a_set_can_be_deleted_and_taken_back() -> None:
     state.reset()
     at = open_log()
+    # «Διόρθωση / σχόλιο» opens the panel; it used to be an expander, whose
+    # contents AppTest could reach without opening.
+    button(at, f"log_fix_{state.BLOCK}").click().run()
     button(at, f"log_del_set_{state.SET}").click().run()
     raise_on_exception(at)
     check("the set is gone", state.deleted("sets", state.SET))
@@ -398,6 +407,7 @@ def test_removing_an_exercise_takes_its_sets_and_gives_them_back() -> None:
     """Both halves together. A block restored without its sets is an empty heading."""
     state.reset()
     at = open_log()
+    button(at, f"log_fix_{state.BLOCK}").click().run()
     button(at, f"log_del_block_{state.BLOCK}").click().run()
     raise_on_exception(at)
     check("the exercise is gone", state.deleted("blocks", state.BLOCK))
@@ -650,6 +660,161 @@ def test_a_new_exercise_starts_with_no_equipment_chosen() -> None:
     raise_on_exception(at)
     check("and refuses to save without one",
           "Διάλεξε εξοπλισμό" in texts(at), texts(at)[:300])
+
+
+def test_a_network_blip_on_wake_keeps_the_coach_signed_in() -> None:
+    """Locking the phone must not sign anyone out or lose the open workout.
+
+    A phone waking from lock reconnects its websocket and its wifi at the same
+    moment, which is the likeliest second in the day for a token refresh to die
+    on the network. That used to run _sign_out_state(), which drops the session
+    AND pops "athlete" and "session_id" — so a one-second blip logged the coach
+    out and threw away the workout they were standing in.
+
+    This calls the function itself rather than a screen: the refresh lives in
+    gate(), which the screen drivers deliberately skip, so a screen test would
+    pass without ever reaching the line that changed.
+    """
+    import streamlit as st
+    from lib import auth, db as db_mod
+
+    state.reset()
+    st.session_state.clear()
+    st.session_state[db_mod.ACCESS_KEY] = "still-valid-for-two-more-minutes"
+    st.session_state[db_mod.REFRESH_KEY] = "some-refresh-token"
+    st.session_state[db_mod.USER_ID_KEY] = state.USER_ID
+    st.session_state["athlete"] = state.STORE["athletes"][0]
+    st.session_state["session_id"] = state.SESSION
+
+    fake_supabase.REFRESH_FAILURE = "network"
+    try:
+        kept = auth._use_refresh_token("some-refresh-token")
+    finally:
+        fake_supabase.REFRESH_FAILURE = None
+
+    check("the coach stays signed in", kept is True, str(kept))
+    check("the token in hand is untouched",
+          st.session_state.get(db_mod.ACCESS_KEY) == "still-valid-for-two-more-minutes",
+          str(st.session_state.get(db_mod.ACCESS_KEY)))
+    check("the open workout survived",
+          st.session_state.get("session_id") == state.SESSION,
+          str(st.session_state.get("session_id")))
+    check("and the athlete on screen with it",
+          st.session_state.get("athlete") is not None)
+    check("no cookie deletion was queued",
+          st.session_state.get("_cookie_pending") is None,
+          str(st.session_state.get("_cookie_pending")))
+    check("the dead call is latched so it is not remade every rerun",
+          auth._REFRESH_FAILED_KEY in st.session_state)
+
+
+def test_a_token_the_server_refuses_does_sign_out() -> None:
+    """The other half. A spent token is not a blip, and must not be treated as one."""
+    import streamlit as st
+    from lib import auth, db as db_mod
+
+    state.reset()
+    st.session_state.clear()
+    st.session_state[db_mod.ACCESS_KEY] = "spent"
+    st.session_state[db_mod.REFRESH_KEY] = "spent-refresh"
+    st.session_state["athlete"] = state.STORE["athletes"][0]
+    st.session_state["session_id"] = state.SESSION
+
+    fake_supabase.REFRESH_FAILURE = "rejected"
+    try:
+        kept = auth._use_refresh_token("spent-refresh")
+    finally:
+        fake_supabase.REFRESH_FAILURE = None
+
+    check("a refused token signs the coach out", kept is False, str(kept))
+    check("the session is dropped", not st.session_state.get(db_mod.ACCESS_KEY),
+          str(st.session_state.get(db_mod.ACCESS_KEY)))
+    # _flush_cookie() consumes the queued delete on the spot, so the durable
+    # evidence is the signed-out flag, which is what every later run reads.
+    check("and the browser is marked signed out, because this token is spent",
+          st.session_state.get(auth._SIGNED_OUT_KEY) is True,
+          str(st.session_state.get(auth._SIGNED_OUT_KEY)))
+
+
+def test_an_exercise_can_be_folded_away_and_stays_folded() -> None:
+    """Six exercises on a phone is a lot of scrolling to reach the one in hand."""
+    state.reset()
+    at = open_log()
+    check("the sets are on screen to begin with", "80×8" in texts(at), texts(at)[:200])
+
+    button(at, f"log_fold_{state.BLOCK}").click().run()
+    raise_on_exception(at)
+    # The numbered list goes; "80×8" itself stays, in the heading, which is the
+    # point — a folded exercise still says what was done on it.
+    check("folded away, the set list is gone", "1. 80×8" not in texts(at), texts(at)[:300])
+    check("but the heading still says what is in there",
+          "Πιέσεις Στήθους · Μπάρα · 1 σετ · 80×8" in texts(at), texts(at)[:300])
+
+    # Any later rerun must not quietly unfold it.
+    at.run()
+    raise_on_exception(at)
+    check("and it stays folded", "1. 80×8" not in texts(at))
+
+    button(at, f"log_fold_{state.BLOCK}").click().run()
+    raise_on_exception(at)
+    check("unfolding brings them back", "1. 80×8" in texts(at), texts(at)[:300])
+
+
+def test_a_set_can_carry_a_comment() -> None:
+    state.reset()
+    at = open_log()
+    at.text_input(key=f"log_kg_{state.BLOCK}").set_value("70")
+    at.number_input(key=f"log_reps_{state.BLOCK}").set_value(10)
+    at.text_input(key=f"log_setnote_{state.BLOCK}").set_value("πόνεσε ο ώμος")
+    button(at, f"log_set_{state.BLOCK}").click().run()
+    raise_on_exception(at)
+
+    written = [r for r in state.rows("sets", block_id=state.BLOCK) if r["id"] != state.SET]
+    check("the comment was saved with the set",
+          written and written[0].get("note") == "πόνεσε ο ώμος", str(written))
+    check("and it is on the card", "πόνεσε ο ώμος" in texts(at), texts(at)[:300])
+
+
+def test_the_comment_does_not_defeat_the_double_tap_guard() -> None:
+    """Same numbers twice is the same set, whatever was typed in the comment box."""
+    state.reset()
+    at = open_log()
+    at.text_input(key=f"log_kg_{state.BLOCK}").set_value("70")
+    at.number_input(key=f"log_reps_{state.BLOCK}").set_value(10)
+    button(at, f"log_set_{state.BLOCK}").click().run()
+    raise_on_exception(at)
+    after_first = len(state.rows("sets", block_id=state.BLOCK))
+
+    at.text_input(key=f"log_kg_{state.BLOCK}").set_value("70")
+    at.number_input(key=f"log_reps_{state.BLOCK}").set_value(10)
+    at.text_input(key=f"log_setnote_{state.BLOCK}").set_value("κάτι άλλο")
+    button(at, f"log_set_{state.BLOCK}").click().run()
+    raise_on_exception(at)
+
+    check("the replayed set was still recognised",
+          len(state.rows("sets", block_id=state.BLOCK)) == after_first,
+          str(len(state.rows("sets", block_id=state.BLOCK))))
+
+
+def test_an_exercise_can_carry_a_comment_for_this_workout() -> None:
+    """On the block, so it belongs to today rather than to the movement forever."""
+    state.reset()
+    at = open_log()
+    button(at, f"log_fix_{state.BLOCK}").click().run()
+    raise_on_exception(at)
+
+    [t for t in at.text_area if t.label == "Σχόλιο για την άσκηση"][0].set_value(
+        "πήγαμε ελαφρύ σήμερα"
+    )
+    button(at, f"log_block_note_{state.BLOCK}").click().run()
+    raise_on_exception(at)
+
+    row = state.rows("blocks", id=state.BLOCK)[0]
+    check("the comment is on the block", row.get("note") == "πήγαμε ελαφρύ σήμερα",
+          str(row.get("note")))
+    check("and shows on the exercise", "πήγαμε ελαφρύ σήμερα" in texts(at), texts(at)[:300])
+    check("the exercise row itself is untouched",
+          state.rows("exercises", id="e-bar")[0].get("note") is None)
 
 
 def test_a_fresh_workout_can_be_started_from_nothing() -> None:

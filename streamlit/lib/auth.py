@@ -37,8 +37,14 @@ _REFRESH_MARGIN_S = 120
 # The cookie component answers one round trip after it mounts. Two short waits
 # cover that; past them we stop guessing and draw the sign-in form, so a browser
 # that blocks the component can still be used.
-_PROBE_LIMIT = 2
-_PROBE_PAUSE_S = 0.4
+# A phone waking from lock is re-establishing its websocket at the same moment
+# the cookie component is trying to answer, so the old budget — two probes,
+# 0.8s in total — ran out while the answer was still in flight and dropped the
+# trainer on the sign-in form with a perfectly good session in the browser.
+# Past the budget we still stop guessing, so a browser that blocks the
+# component reaches the form.
+_PROBE_LIMIT = 5
+_PROBE_PAUSE_S = 0.5
 
 _MANAGER_KEY = "_cookie_manager"
 _PENDING_COOKIE_KEY = "_cookie_pending"
@@ -50,7 +56,10 @@ _PROBE_KEY = "_cookie_probes"
 # not sign anyone out — but retrying it on every rerun turns one dead spot in
 # the gym's wifi into a screen that stalls on every tap.
 _REFRESH_FAILED_KEY = "_auth_refresh_failed_at"
-_REFRESH_RETRY_S = 20.0
+# Short, because nothing is lost while it holds — it only stops the same failed
+# refresh being remade on every rerun. _REFRESH_MARGIN_S of still-valid token is
+# the real budget, and this fits inside it many times over.
+_REFRESH_RETRY_S = 8.0
 # Sign-out is decided here and nowhere else. The cookie component answers with
 # what the browser posted BEFORE the delete this run flushed, so a snapshot read
 # in that run still carries the refresh token that was just destroyed — and
@@ -253,10 +262,9 @@ def _ensure_session() -> bool:
         # Re-attaches the stored JWT if the client object itself was dropped.
         db.client()
         return True
-    if _refresh_on_cooldown():
-        # The token in hand may still be spent, but a screen that says so is
-        # better than one that stalls on the same dead call every few seconds.
-        return False
+    # No cooldown check here. The latch exists to stop a dead refresh being
+    # retried on every rerun; it must never decide whether anybody is signed in,
+    # which is how it came to put the sign-in form over a live session.
     return _restore_from_cookie()
 
 
@@ -299,17 +307,25 @@ def _use_refresh_token(token: str | None) -> bool:
     try:
         response = db.client().auth.refresh_session(token)
     except Exception as exc:
-        # A token the server actively rejected is spent; a token that never
-        # reached the server is not. Dropping the cookie on a dead gym wifi
-        # would sign a trainer out for the rest of the shift.
-        status = getattr(exc, "status", None)
-        if status is None:
-            # The network failed, so the cookie stays — and WITHOUT this latch
-            # the next run reads that same cookie, makes the same blocking call
-            # and fails again. On gym wifi that turned every tap into a stalled
-            # round trip, which is what the gym reported as the screen hanging.
+        # A token the server actively REJECTED is spent. A refresh that never
+        # reached the server says nothing about the token, and a phone waking
+        # from lock — reconnecting its websocket, its wifi, or both — is the
+        # single most likely moment for one.
+        #
+        # This used to sign the trainer out either way. _sign_out_state() drops
+        # the stored session AND pops "athlete" and "session_id", so a one-second
+        # network blip on wake logged the coach out and threw away the workout
+        # they were in the middle of. That is the whole of "it asks me to log in
+        # again when I lock my phone, and I lose the exercises".
+        if getattr(exc, "status", None) is None:
+            # Nothing is dropped: not the session, not the cookie, not the open
+            # workout. The access token in hand is still good — _needs_refresh
+            # fires _REFRESH_MARGIN_S BEFORE expiry, so there is a whole margin
+            # of valid token left to keep working with — and the latch only
+            # stops every rerun re-making the same dead call inside it.
             st.session_state[_REFRESH_FAILED_KEY] = time.time()
-        _sign_out_state(drop_cookie=status is not None)
+            return True
+        _sign_out_state(drop_cookie=True)
         _flush_cookie()
         return False
 

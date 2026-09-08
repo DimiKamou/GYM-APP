@@ -149,9 +149,40 @@ class _Query:
         return {c: row.get(c) for c in self._columns}
 
 
+# Set to "network" to make refresh_session raise the way a phone waking from
+# lock does — a transport error with no HTTP status — or to "rejected" for a
+# token the server actually refused. The two must not be handled alike: one is
+# a blip, the other is a spent token.
+REFRESH_FAILURE: str | None = None
+
+
+class _NetworkDown(Exception):
+    """No status attribute, exactly like an httpx transport error."""
+
+
+class _Rejected(Exception):
+    def __init__(self) -> None:
+        super().__init__("invalid refresh token")
+        self.status = 400
+
+
 class _Auth:
     def __init__(self, user_id: str) -> None:
         self._user_id = user_id
+
+    def refresh_session(self, token: str) -> Any:
+        if REFRESH_FAILURE == "network":
+            raise _NetworkDown("connection reset")
+        if REFRESH_FAILURE == "rejected":
+            raise _Rejected()
+
+        class _S:
+            access_token = "fresh-access"
+            refresh_token = "fresh-refresh"
+            expires_at = 4102444800.0
+            user = type("U", (), {"id": self._user_id, "email": "dimitris@powerhouse.gr"})()
+
+        return type("R", (), {"session": _S()})()
 
     def set_session(self, *_: Any, **__: Any) -> None:
         return None
