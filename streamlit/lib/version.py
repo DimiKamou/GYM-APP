@@ -16,10 +16,11 @@ a number a person bumps deliberately is one a person can also say out loud.
 from __future__ import annotations
 
 # Bump this in the same commit as any change the gym would notice.
-VERSION = "11"
+VERSION = "12"
 
 # What changed, newest first. Short enough that the whole list fits on a phone.
 CHANGELOG: tuple[tuple[str, str], ...] = (
+    ("12", "Το μήνυμα «δεν υπάρχει σύνδεση» λέει τώρα τι να κάνεις — συνήθως παγωμένο Supabase."),
     ("11", "Μία άσκηση, όποιο όργανο θες: διαλέγεις μπάρα/αλτήρες τη στιγμή της προπόνησης."),
     ("10", "Δεν σε βγάζει έξω όταν κλειδώνεις το κινητό. Δίπλωμα ασκήσεων, σχόλια σε σετ και άσκηση."),
     ("9", "Διόρθωση: η οθόνη Ασκήσεις έσκαγε σε άσκηση με δύο μυϊκές ομάδες."),
