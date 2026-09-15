@@ -77,7 +77,21 @@ _USERNAME_RE = re.compile(r"^[a-z0-9._-]{1,64}$")
 # used to find out which usernames exist.
 _BAD_CREDENTIALS = "Λάθος χρήστης ή κωδικός."
 _RATE_LIMITED = "Πολλές προσπάθειες. Περίμενε ένα λεπτό και δοκίμασε ξανά."
-_NO_CONNECTION = "Δεν υπάρχει σύνδεση με τον διακομιστή. Έλεγξε το δίκτυο και δοκίμασε ξανά."
+# Shown ONLY when the request never reached Supabase at all — _auth_error falls
+# back to it when the exception carries no HTTP status. A wrong username or
+# password answers with a status and says so, so this sentence must never send
+# anybody looking at their password.
+#
+# It names the free tier's one-week pause first because that is what it almost
+# always is: the gym trains, stops for a week, and comes back to a project
+# Supabase has frozen. "Έλεγξε το δίκτυο" sent them hunting the wrong thing
+# with a working phone in their hand.
+_NO_CONNECTION = (
+    "Ο διακομιστής δεν απαντά — δεν φταίει ο κωδικός σου. "
+    "Αν το Supabase είναι στο δωρεάν πλάνο, παγώνει μετά από μία εβδομάδα χωρίς χρήση: "
+    "μπες στο supabase.com, άνοιξε το project και πάτα «Restore». "
+    "Αλλιώς έλεγξε το δίκτυο και δοκίμασε ξανά."
+)
 _EMPTY_FIELDS = "Συμπλήρωσε χρήστη και κωδικό."
 
 # Zones a Greek gym actually runs in. A free-text zone that Postgres does not
