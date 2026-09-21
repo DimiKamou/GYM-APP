@@ -5,6 +5,12 @@
 # RLS is the one part of this app that cannot be checked by reading it: a policy
 # that looks right and a policy that is enforced are different things, and the
 # gap between them is silent. Two of these ten were wrong on the first pass.
+#
+# Exit status is the verdict. A test file prints «σωστό» per assertion and
+# «ΛΑΘΟΣ» when one fails; a "must FAIL" step that was allowed prints ΛΑΘΟΣ too
+# (tests.must_fail in 00_supabase_shim.sql). Until this script read its own
+# output it exited 0 on every regression — psql with ON_ERROR_STOP off does —
+# and check 2 of the RLS suite passed for months while asserting nothing.
 set -euo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
 PGBIN="${PGBIN:-/usr/lib/postgresql/16/bin}"
@@ -27,12 +33,46 @@ psql -h "$WORK/sock" -U trainhub -d postgres -v ON_ERROR_STOP=1 -q -f "$HERE/00_
 # committed and silently never applied here — the suite passed because it was testing a schema
 # that did not include it.
 for migration in "$HERE"/../migrations/*.sql; do
-  psql -h "$WORK/sock" -U trainhub -d postgres -v ON_ERROR_STOP=1 -q -f "$migration"
+  if ! out="$(psql -h "$WORK/sock" -U trainhub -d postgres -v ON_ERROR_STOP=1 -q -f "$migration" 2>&1)"; then
+    # 006 refuses an empty project on purpose: the catalogue can only be handed to a gym that
+    # exists, and this database has none until 01_rls_test.sql seeds one. That refusal is the
+    # migration doing its job; 02_adopt_test.sql runs it again with a gym in place. Anything
+    # else is a migration that does not apply to a fresh database.
+    if grep -q 'δεν υπάρχει γυμναστήριο' <<<"$out"; then
+      echo "$(basename "$migration"): αρνήθηκε να τρέξει χωρίς γυμναστήριο, όπως πρέπει"
+    else
+      printf '%s\n' "$out"
+      echo "ΛΑΘΟΣ: $(basename "$migration") δεν εφαρμόστηκε σε καθαρή βάση"
+      exit 1
+    fi
+  else
+    printf '%s\n' "$out"
+  fi
 done
+
+status=0
 for test in "$HERE"/0[0-9]_*_test.sql; do
+  out="$WORK/$(basename "$test" .sql).out"
+  rc=0
   psql -h "$WORK/sock" -U trainhub -d postgres -q \
-       -v migrations="$HERE/../migrations" -v root="$HERE/../.." -f "$test" 2>&1 \
-    | grep -v '^NOTICE' | sed 's/^psql:[^ ]*sql:[0-9]*: //'
+       -v migrations="$HERE/../migrations" -v root="$HERE/../.." -f "$test" >"$out" 2>&1 || rc=$?
+  # The "already exists, skipping" chatter is a migration being re-applied inside a test, which
+  # is the point of re-applying it; every other NOTICE (006 saying what it adopted) stays.
+  sed 's/^psql:[^ ]*sql:[0-9]*: //' "$out" | grep -v '^NOTICE:.*, skipping$' || true
+  # Any ERROR is unexpected now: the refusals a test wants go through tests.must_fail() and
+  # come out as a «σωστό» line, so a raw ERROR is a must-SUCCEED step that failed, or a broken
+  # statement in the test itself.
+  if [ "$rc" -ne 0 ] || grep -qE 'ΛΑΘΟΣ|STILL LIVE|ERROR:' "$out"; then
+    echo "ΑΠΕΤΥΧΕ: $(basename "$test")"
+    status=1
+  fi
 done
 
 run "pg_ctl -D $WORK/data stop" >/dev/null 2>&1 || true
+
+if [ "$status" -eq 0 ]; then
+  echo 'Όλα σωστά.'
+else
+  echo 'ΑΠΕΤΥΧΕ: δες τις γραμμές ΛΑΘΟΣ / ERROR παραπάνω.'
+fi
+exit "$status"

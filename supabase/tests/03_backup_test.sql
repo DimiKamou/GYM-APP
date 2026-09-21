@@ -8,24 +8,37 @@
 select set_config('trainhub.root', :'root', false);
 \echo '--- 21. Το αντίγραφο ασφαλείας τρέχει και σέβεται τις διαγραφές ---'
 
--- One workout with two sets, one of which is deleted.
+-- One workout, two blocks on the same barbell exercise. The first was done on
+-- dumbbells with a note (008 put the όργανο on the block, 007 the note); the
+-- second says nothing, so it must fall back to the exercise's own όργανο.
+-- Three sets in all, one of them deleted.
 insert into public.sessions (id, gym_id, athlete_id, logged_by, local_date, status)
 values ('55550000-0000-0000-0000-000000000001','aaaaaaaa-0000-0000-0000-000000000001',
         'dddddddd-0000-0000-0000-000000000001','cccccccc-0000-0000-0000-000000000001',
         current_date,'finished')
 on conflict do nothing;
 
-insert into public.blocks (id, gym_id, session_id, exercise_id, position)
+insert into public.blocks (id, gym_id, session_id, exercise_id, position, equipment, note)
 select '66660000-0000-0000-0000-000000000001','aaaaaaaa-0000-0000-0000-000000000001',
-       '55550000-0000-0000-0000-000000000001', id, 0
-  from public.exercises order by name_el limit 1
+       '55550000-0000-0000-0000-000000000001', id, 0, 'dumbbell', 'δοκιμή'
+  from public.exercises
+ where equipment = 'barbell' and deleted_at is null and merged_into_id is null
+ order by name_el limit 1
+on conflict do nothing;
+
+insert into public.blocks (id, gym_id, session_id, exercise_id, position)
+select '66660000-0000-0000-0000-000000000002','aaaaaaaa-0000-0000-0000-000000000001',
+       '55550000-0000-0000-0000-000000000001', exercise_id, 1
+  from public.blocks where id = '66660000-0000-0000-0000-000000000001'
 on conflict do nothing;
 
 insert into public.sets (id, gym_id, block_id, position, kind, load_kg, reps, done_at, deleted_at)
 values ('77770000-0000-0000-0000-000000000001','aaaaaaaa-0000-0000-0000-000000000001',
         '66660000-0000-0000-0000-000000000001',0,'weight_reps',80,8, now(), null),
        ('77770000-0000-0000-0000-000000000002','aaaaaaaa-0000-0000-0000-000000000001',
-        '66660000-0000-0000-0000-000000000001',1,'weight_reps',999,1, now(), now())
+        '66660000-0000-0000-0000-000000000001',1,'weight_reps',999,1, now(), now()),
+       ('77770000-0000-0000-0000-000000000003','aaaaaaaa-0000-0000-0000-000000000001',
+        '66660000-0000-0000-0000-000000000002',0,'weight_reps',60,10, now(), null)
 on conflict do nothing;
 
 -- The real file, run as-is. ON_ERROR_STOP means a column this schema does not
@@ -59,3 +72,17 @@ select case when bool_and("Αθλητής" is not null and "Άσκηση" is not
             then 'κάθε γραμμή έχει αθλητή, άσκηση και προπονητή με το όνομά τους: σωστό'
             else 'ΛΑΘΟΣ: υπάρχει γραμμή με κωδικό αντί για όνομα' end
   from backup_rows;
+
+-- The όργανο is the block's when the coach chose one, and the exercise's when
+-- not. Before this, the export said «Μπάρα» for a set done on dumbbells and
+-- never showed the note at all, and a backup that misreports the load-bearing
+-- column is the kind that gets believed.
+select case when "Όργανο" = 'Αλτήρες' and "Σημείωση άσκησης" = 'δοκιμή'
+            then 'το όργανο και η σημείωση της εκτέλεσης βγαίνουν στο αντίγραφο: σωστό'
+            else 'ΛΑΘΟΣ: όργανο «' || "Όργανο" || '», σημείωση «' || coalesce("Σημείωση άσκησης", '') || '»' end
+  from backup_rows where "Κιλά" = 80;
+
+select case when "Όργανο" = 'Μπάρα' and "Σημείωση άσκησης" is null
+            then 'χωρίς επιλογή στην εκτέλεση, το όργανο είναι της άσκησης: σωστό'
+            else 'ΛΑΘΟΣ: όργανο «' || "Όργανο" || '», σημείωση «' || coalesce("Σημείωση άσκησης", '') || '»' end
+  from backup_rows where "Κιλά" = 60;

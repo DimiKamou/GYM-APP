@@ -20,7 +20,10 @@ select
   s.title                                            as "Τίτλος",
   b.position + 1                                     as "Σειρά άσκησης",
   coalesce(e.name_el, e.name_en, '—')                as "Άσκηση",
-  case e.equipment
+  b.note                                             as "Σημείωση άσκησης",
+  -- Το όργανο της εκτέλεσης, όταν ο προπονητής διάλεξε άλλο από αυτό της
+  -- άσκησης (μπάρα ή αλτήρες στις ίδιες «Πιέσεις Στήθους»)· αλλιώς της άσκησης.
+  case coalesce(b.equipment, e.equipment)
     when 'barbell'    then 'Μπάρα'
     when 'dumbbell'   then 'Αλτήρες'
     when 'smith'      then 'Smith'

@@ -25,7 +25,10 @@
 -- `gym_id is null`, INSERT and UPDATE demand `gym_id = app.my_gym()`.
 --
 -- Idempotent, like 002: the ids are literal and stable so a re-run refreshes
--- the taxonomy in place instead of minting a second copy of it.
+-- the taxonomy in place instead of minting a second copy of it. The exercise
+-- mappings are refreshed only for exercises that are still shared; once 006
+-- has handed one to the gym, its mappings are the gym's and this file leaves
+-- them alone.
 -- ===========================================================================
 
 set search_path = public, extensions;
@@ -488,6 +491,13 @@ select v.exercise_id::uuid, g.id, v.role, null::uuid
   ('ca7a1000-0000-4000-8000-000000000028', 'σταθεροποιηση',      'secondary')
   ) as v(exercise_id, slug, role)
   join public.muscle_groups g on g.gym_id is null and g.slug = v.slug
+  -- Only exercises that are still shared. After 006 the exercise belongs to
+  -- the gym, so a shared mapping onto it is exactly what
+  -- exercise_muscles_exercise_scope refuses: stamp_scope() copies the gym onto
+  -- exercise_gym_id while the row claims no gym, and the CHECK runs before the
+  -- ON CONFLICT clause ever sees the row. The mappings it had went to the gym
+  -- in the same run of 006.
+  join public.exercises e on e.id = v.exercise_id::uuid and e.gym_id is null
 on conflict (exercise_id, muscle_group_id) do update set
   role       = excluded.role,
   deleted_at = null;
