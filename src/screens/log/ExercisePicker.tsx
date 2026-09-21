@@ -370,6 +370,7 @@ export function ExercisePicker({ open, onClose, athleteId, locale, onSelect }: E
   const [filingId, setFilingId] = useState<Uuid | null>(null)
   const [filingLinks, setFilingLinks] = useState<ExerciseMuscleInput[]>([])
   const [filingError, setFilingError] = useState<string | null>(null)
+  const [createError, setCreateError] = useState<string | null>(null)
 
   const exercises = useExercises()
   const recent = useRecentExercises(athleteId, 8)
@@ -440,6 +441,7 @@ export function ExercisePicker({ open, onClose, athleteId, locale, onSelect }: E
     setCategoryOverride(null)
     setActiveGroupId(null)
     setCreateLinks(null)
+    setCreateError(null)
     closeFiling()
   }
 
@@ -462,7 +464,7 @@ export function ExercisePicker({ open, onClose, athleteId, locale, onSelect }: E
     // which on the local repository is instant and on a queued write may be hours. The muscle
     // links ride along in the same call: a second step, mid-session, is a second chance never
     // to classify the movement at all.
-    await createExercise.mutateAsync({
+    const state = await createExercise.mutateAsync({
       id,
       nameEl,
       nameEn: nameEn.trim() === '' ? null : nameEn.trim(),
@@ -471,6 +473,13 @@ export function ExercisePicker({ open, onClose, athleteId, locale, onSelect }: E
       defaultSetKind: setKind,
       muscles: effectiveCreateLinks,
     })
+    // A refused exercise must not be chosen: the block would point at an id that will never
+    // exist, and every set logged under it would fail with it. The usual reason is a name the
+    // gym already has on an archived row, which is what the message says.
+    if (state === 'failed') {
+      setCreateError(t('library.createFailed'))
+      return
+    }
     choose(id)
   }
 
@@ -693,6 +702,12 @@ export function ExercisePicker({ open, onClose, athleteId, locale, onSelect }: E
               onChange={setSetKind}
               options={SET_KINDS.map((value) => ({ value, label: t(`setKinds.${value}`) }))}
             />
+
+            {createError ? (
+              <p role="status" style={{ ...hintText, color: 'var(--th-danger)' }}>
+                {createError}
+              </p>
+            ) : null}
 
             <Button
               variant="primary"

@@ -502,6 +502,7 @@ export const en: Translation = {
     bodyweight: 'Bodyweight',
     cardio: 'Cardio',
     kettlebell: 'Kettlebell',
+    smith: 'Smith',
     other: 'Other',
   },
 

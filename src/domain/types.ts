@@ -40,6 +40,8 @@ export type Equipment =
   | 'bodyweight'
   | 'cardio'
   | 'kettlebell'
+  /** Its own value, not `machine`: 60 kg on a Smith rack and on a chest press are not comparable. */
+  | 'smith'
   | 'other'
 
 /** Columns every table carries. Reads always filter `deletedAt === null`. */
@@ -185,6 +187,15 @@ export interface Session extends Auditable {
   localDate: LocalDate
 }
 
+/**
+ * One movement inside one session.
+ *
+ * It carries the όργανο as well as the exercise, because one movement can be done with
+ * several: «Πιέσεις Στήθους» is one catalogue row (the gym's unique-name index says so) and
+ * the block says whether today it was the bar or the dumbbells. It is on the block and not
+ * on the set because one block is one movement with one implement, so 40 kg of dumbbells can
+ * never be read as 80 kg of barbell — which is the whole reason equipment is stored at all.
+ */
 export interface Block extends Auditable {
   id: Uuid
   gymId: Uuid
@@ -192,6 +203,13 @@ export interface Block extends Auditable {
   exerciseId: Uuid
   /** Sort by `(position, id)` — two offline inserts can mint the same position. */
   position: number
+  /** About THIS workout ("πονάει ο ώμος, πήγαμε ελαφρύ") — not the athlete's durable notes. */
+  note: string | null
+  /**
+   * The implement of this execution. `null` means whatever the exercise says, which is every
+   * block written before the column existed. Resolve it with `blockEquipment`, never by hand.
+   */
+  equipment: Equipment | null
 }
 
 export interface WorkoutSet extends Auditable {

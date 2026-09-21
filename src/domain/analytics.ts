@@ -12,6 +12,7 @@
 
 import type {
   Block,
+  Equipment,
   Exercise,
   ExerciseCategory,
   ExerciseMuscle,
@@ -143,6 +144,21 @@ function num(value: number | null | undefined): number {
   return typeof value === 'number' && Number.isFinite(value) ? value : 0
 }
 
+/**
+ * The implement a block was actually done with: its own, else the exercise's default.
+ *
+ * Every block written before `blocks.equipment` existed carries `null`, and so does every
+ * block logged without choosing — both mean "whatever the exercise says". The one place this
+ * must not be resolved by hand is a comparison between two blocks: 40 kg of dumbbells beside
+ * 80 kg of barbell is exactly the misreading the column exists to prevent.
+ */
+export function blockEquipment(
+  block: Pick<Block, 'equipment'>,
+  exercise: Pick<Exercise, 'equipment'> | undefined,
+): Equipment | null {
+  return block.equipment ?? exercise?.equipment ?? null
+}
+
 // ---------------------------------------------------------------------------
 // Indexing
 // ---------------------------------------------------------------------------
@@ -151,6 +167,7 @@ interface Index {
   blocksBySession: Map<Uuid, Block[]>
   setsByBlock: Map<Uuid, WorkoutSet[]>
   categoryByExercise: Map<Uuid, ExerciseCategory>
+  exerciseById: Map<Uuid, Exercise>
   nameByMembership: Map<Uuid, string>
   /** Live links only, and only to groups that still exist. Empty for an unclassified exercise. */
   musclesByExercise: Map<Uuid, ExerciseMuscle[]>
@@ -178,6 +195,7 @@ function buildIndex(data: AnalyticsData): Index {
   const blocksBySession = new Map<Uuid, Block[]>()
   const setsByBlock = new Map<Uuid, WorkoutSet[]>()
   const categoryByExercise = new Map<Uuid, ExerciseCategory>()
+  const exerciseById = new Map<Uuid, Exercise>()
   const nameByMembership = new Map<Uuid, string>()
 
   for (const block of data.blocks) if (isLive(block)) push(blocksBySession, block.sessionId, block)
@@ -185,7 +203,10 @@ function buildIndex(data: AnalyticsData): Index {
   for (const list of blocksBySession.values()) list.sort(byPosition)
   for (const list of setsByBlock.values()) list.sort(byPosition)
 
-  for (const exercise of data.exercises) categoryByExercise.set(exercise.id, exercise.category)
+  for (const exercise of data.exercises) {
+    categoryByExercise.set(exercise.id, exercise.category)
+    exerciseById.set(exercise.id, exercise)
+  }
   for (const member of data.memberships ?? []) nameByMembership.set(member.id, member.displayName)
 
   const musclesByExercise = new Map<Uuid, ExerciseMuscle[]>()
@@ -206,6 +227,7 @@ function buildIndex(data: AnalyticsData): Index {
     blocksBySession,
     setsByBlock,
     categoryByExercise,
+    exerciseById,
     nameByMembership,
     musclesByExercise,
     positionByGroup,
@@ -672,15 +694,25 @@ function dominantKind(sets: readonly WorkoutSet[]): SetKind {
  * Returns the author with the number. The UI renders "80×8 · 12 Αυγ · Μαρία": a coach
  * loads a bar with this, and an unattributed number they cannot ask about is worse than
  * no number at all.
+ *
+ * `equipment` is the current block's own implement (`null` = the exercise's default), and
+ * only earlier blocks done with the SAME effective implement are candidates: the last time
+ * this athlete pressed 40 kg of dumbbells is not the number to load a barbell with. A block
+ * whose exercise the catalogue cannot resolve matches on its own override alone, so an
+ * orphaned row degrades to "same exercise" rather than vanishing.
  */
 export function lastPerformance(
   data: AnalyticsData,
   athleteId: Uuid,
   exerciseId: Uuid,
   currentSessionId: Uuid | null,
+  equipment: Equipment | null = null,
 ): LastPerformance | null {
   const index = buildIndex(data)
   const ordered = athleteSessionsAsc(data.sessions, athleteId)
+  const implement = equipment ?? index.exerciseById.get(exerciseId)?.equipment ?? null
+  const sameImplement = (block: Block) =>
+    blockEquipment(block, index.exerciseById.get(block.exerciseId)) === implement
 
   const current = currentSessionId
     ? (ordered.find((s) => s.id === currentSessionId) ?? null)
@@ -693,7 +725,7 @@ export function lastPerformance(
   for (let i = candidates.length - 1; i >= 0; i--) {
     const session = candidates[i]
     const sets = blocksOfSession(index, session.id)
-      .filter((block) => block.exerciseId === exerciseId)
+      .filter((block) => block.exerciseId === exerciseId && sameImplement(block))
       .flatMap((block) => setsOfBlock(index, block.id))
     if (sets.length === 0) continue
 

@@ -1,4 +1,4 @@
-import type { LocalDate, Uuid } from '@/domain/types'
+import type { Equipment, LocalDate, Uuid } from '@/domain/types'
 
 /**
  * The query-key factory.
@@ -49,9 +49,15 @@ export const keys = {
   /** Gym-scoped although the catalogue is shared: a gym's own additions merge into it. */
   exerciseCatalogue: (gymId: Uuid) => ['gym', gymId, 'exercises', 'catalogue'] as const,
   exercise: (gymId: Uuid, exerciseId: Uuid) => ['gym', gymId, 'exercises', exerciseId] as const,
-  /** "80×8 · 12 Αυγ · Μαρία" — per athlete *and* exercise, never cached per exercise alone. */
-  lastPerformance: (gymId: Uuid, athleteId: Uuid, exerciseId: Uuid) =>
-    ['gym', gymId, 'athletes', athleteId, 'last-performance', exerciseId] as const,
+  /**
+   * "80×8 · 12 Αυγ · Μαρία" — per athlete *and* exercise, never cached per exercise alone.
+   * The implement is the last segment and only present when asked with one, so the
+   * three-argument form stays a prefix that invalidates every implement's answer at once.
+   */
+  lastPerformance: (gymId: Uuid, athleteId: Uuid, exerciseId: Uuid, equipment?: Equipment | null) =>
+    equipment === undefined
+      ? (['gym', gymId, 'athletes', athleteId, 'last-performance', exerciseId] as const)
+      : (['gym', gymId, 'athletes', athleteId, 'last-performance', exerciseId, equipment ?? 'default'] as const),
 
   appointments: (gymId: Uuid) => ['gym', gymId, 'appointments'] as const,
   appointmentsWeek: (gymId: Uuid, weekStart: LocalDate) =>

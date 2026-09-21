@@ -258,9 +258,10 @@ function LogScreenBody() {
   const [finishing, setFinishing] = useState(false)
 
   // The pad's chips: what this athlete last did on THIS exercise, with the date and the coach
-  // who wrote it. Keyed per athlete and exercise, so opening the pad on a block already on
-  // screen is a cache hit rather than a round trip mid-set.
-  const padLast = useLastPerformance(athleteId, pad?.exerciseId, sessionId)
+  // who wrote it. Keyed per athlete, exercise and the block's implement, so opening the pad
+  // on a block already on screen is a cache hit rather than a round trip mid-set.
+  const padBlock = session?.blocks.find((candidate) => candidate.id === pad?.blockId)
+  const padLast = useLastPerformance(athleteId, pad?.exerciseId, sessionId, padBlock?.equipment ?? null)
 
   const addBlock = useAddBlock()
   const setBlockExercise = useSetBlockExercise()

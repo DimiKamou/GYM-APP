@@ -570,6 +570,7 @@ export const el = {
     bodyweight: 'Σωματικό βάρος',
     cardio: 'Αερόβιο',
     kettlebell: 'Kettlebell',
+    smith: 'Smith',
     other: 'Άλλο',
   },
 

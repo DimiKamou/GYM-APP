@@ -761,6 +761,10 @@ function buildHistory(today: LocalDate): History {
         sessionId,
         exerciseId: catalogueId(exercise.n),
         position: blockPosition,
+        note: null,
+        // Null on every seeded block: the implement is the exercise's own, exactly as for
+        // every row written before the column existed.
+        equipment: null,
         createdAt: startedAt,
         updatedAt: startedAt,
         deletedAt: null,

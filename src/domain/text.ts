@@ -50,6 +50,21 @@ export function matches(haystack: string, needle: string): boolean {
 }
 
 /**
+ * Whether two names collide under a database unique index on `lower(name)`.
+ *
+ * Postgres' `lower()` and JS's `toLowerCase()` disagree about exactly one thing that matters
+ * here: a word-final Σ becomes ς in JS and σ in Postgres. Folding the sigma after lowercasing
+ * makes the two agree, so a name this call says is free is one the index will accept. It is
+ * deliberately NOT `normalizeText`: accents stay, because the index keeps them, and refusing
+ * "Πιεσεις" beside "Πιέσεις" would refuse a row the server allows.
+ */
+export function sameName(a: string | null | undefined, b: string | null | undefined): boolean {
+  if (!a || !b) return false
+  const fold = (name: string) => name.trim().toLowerCase().replace(/ς/g, 'σ')
+  return fold(a) === fold(b)
+}
+
+/**
  * Avatar initials, Greek convention: first letter of the first two words, accentless and
  * uppercased. "Άννα Παπαδάκη" -> "ΑΠ".
  *
