@@ -17,14 +17,23 @@ act on carries both.
 
 from __future__ import annotations
 
-from datetime import date
+from datetime import date, datetime, timezone
 from typing import Any
 
 import streamlit as st
 
 from lib import db, fmt, gym
+from lib.exercises import EQUIPMENT_LABELS
 
 _MAX_POINTS = 40
+# Ids per `in_(...)` filter. PostgREST takes the list in the URL, and the
+# gateway refuses a URL past roughly 16 KB — about 400 uuids — so an athlete
+# with a year of history was exactly the athlete whose screen could not load.
+_IN_CHUNK = 100
+
+
+def _in_chunks(ids: list[Any]) -> list[list[Any]]:
+    return [ids[i:i + _IN_CHUNK] for i in range(0, len(ids), _IN_CHUNK)]
 
 
 # ---------------------------------------------------------------------------
@@ -74,55 +83,81 @@ def _history(gym_id: str, athlete_id: str) -> dict[str, list[dict[str, Any]]]:
         return {"sessions": [], "blocks": [], "sets": [], "exercises": [], "groups": [], "links": []}
 
     session_ids = [s["id"] for s in sessions]
-    blocks = (
-        client.table("blocks")
-        .select("id, session_id, exercise_id, position")
-        .eq("gym_id", gym_id)
-        .in_("session_id", session_ids)
-        .is_("deleted_at", "null")
-        .order("position")
-        .order("id")
-        .execute()
-        .data
-        or []
-    )
+    blocks: list[dict[str, Any]] = []
+    for chunk in _in_chunks(session_ids):
+        blocks += (
+            client.table("blocks")
+            .select("id, session_id, exercise_id, position, equipment")
+            .eq("gym_id", gym_id)
+            .in_("session_id", chunk)
+            .is_("deleted_at", "null")
+            .execute()
+            .data
+            or []
+        )
+    # (position, id), never position alone — and sorted here rather than per
+    # request, since the chunks come back one at a time.
+    blocks.sort(key=lambda b: (fmt.integer(b.get("position")) or 0, str(b.get("id"))))
     sets: list[dict[str, Any]] = []
-    if blocks:
-        sets = (
+    for chunk in _in_chunks([b["id"] for b in blocks]):
+        sets += (
             client.table("sets")
             .select("id, block_id, position, kind, load_kg, reps, seconds, meters, done_at")
             .eq("gym_id", gym_id)
-            .in_("block_id", [b["id"] for b in blocks])
+            .in_("block_id", chunk)
             .is_("deleted_at", "null")
-            .order("position")
-            .order("id")
             .execute()
             .data
             or []
         )
+    sets.sort(key=lambda r: (fmt.integer(r.get("position")) or 0, str(r.get("id"))))
 
     exercise_ids = sorted({b["exercise_id"] for b in blocks if b.get("exercise_id")})
-    exercises: list[dict[str, Any]] = []
-    links: list[dict[str, Any]] = []
-    if exercise_ids:
-        exercises = (
+    rows_of_catalogue: list[dict[str, Any]] = []
+    for chunk in _in_chunks(exercise_ids):
+        rows_of_catalogue += (
             client.table("exercises")
-            .select("id, name_el, name_en, merged_into_id")
-            .in_("id", exercise_ids)
+            .select("id, name_el, name_en, merged_into_id, equipment")
+            .in_("id", chunk)
             .execute()
             .data
             or []
         )
-        links = (
+    # A block written before a duplicate was folded in still points at the dead
+    # row, and the grouping below follows the arrow — but the target itself was
+    # never read when no block named it directly, so the movement was titled
+    # «—» in Επιδόσεις and fell out of Κατανομή. One hop is enough:
+    # exercises_guard_merge() refuses a target that is itself merged.
+    known = {row["id"] for row in rows_of_catalogue}
+    targets = sorted(
+        {
+            row["merged_into_id"]
+            for row in rows_of_catalogue
+            if row.get("merged_into_id") and row["merged_into_id"] not in known
+        }
+    )
+    for chunk in _in_chunks(targets):
+        rows_of_catalogue += (
+            client.table("exercises")
+            .select("id, name_el, name_en, merged_into_id, equipment")
+            .in_("id", chunk)
+            .execute()
+            .data
+            or []
+        )
+    links: list[dict[str, Any]] = []
+    for chunk in _in_chunks(sorted(exercise_ids + targets)):
+        links += (
             client.table("exercise_muscles")
             .select("exercise_id, muscle_group_id, role")
-            .in_("exercise_id", exercise_ids)
+            .in_("exercise_id", chunk)
             .is_("deleted_at", "null")
             .eq("role", "primary")
             .execute()
             .data
             or []
         )
+    exercises = rows_of_catalogue
 
     groups = (
         client.table("muscle_groups")
@@ -256,8 +291,18 @@ def _volume_chart(
             # A session of nothing but cardio has no kilos in it. Plotting a
             # zero would read as a bad day rather than a different kind of day.
             continue
-        day = fmt.parse_local_date(session.get("local_date"))
-        points.append({"Ημέρα": fmt.format_day(day, day) if day else "—", "Κιλά": round(volume)})
+        # A real instant on the axis, not the Greek day label: a text axis is
+        # sorted alphabetically, so «1 Σεπ, 12 Σεπ, 2 Οκτ, 28 Αυγ» was the order
+        # the line was drawn in, and the trend the coach read was scrambled.
+        # The instant rather than the day also keeps two workouts on one day
+        # as two points.
+        when = fmt.parse_instant(session.get("started_at"))
+        if when is None:
+            day = fmt.parse_local_date(session.get("local_date"))
+            if day is None:
+                continue
+            when = datetime(day.year, day.month, day.day, tzinfo=timezone.utc)
+        points.append({"Ημέρα": when, "Κιλά": round(volume)})
 
     if len(points) < 2:
         st.caption("Χρειάζονται τουλάχιστον δύο προπονήσεις με κιλά για γραμμή.")
@@ -315,12 +360,18 @@ def _records(
 ) -> None:
     canonical = _canonical(exercises)
     titles = {e["id"]: fmt.exercise_name(e) for e in exercises}
+    default_gear = {e["id"]: str(e.get("equipment") or "") for e in exercises}
     by_session = {s["id"]: s for s in sessions}
     by_block = {b["id"]: b for b in blocks}
 
-    # exercise -> every performed set, remembered with the session it came from
-    # so the number can never be shown without its date and author.
-    grouped: dict[str, list[tuple[dict[str, Any], dict[str, Any]]]] = {}
+    # (exercise, όργανο) -> every performed set, remembered with the session it
+    # came from so the number can never be shown without its date and author.
+    # The implement is part of the key: one row per movement merged barbell
+    # and dumbbell presses into one «Καλύτερο», and a coach at the dumbbell
+    # rack read 80 kg as the athlete's dumbbell best — the misread 008 moved
+    # equipment onto the block to prevent. NULL on the block means "as the
+    # exercise says", the same resolution the log screen makes.
+    grouped: dict[tuple[str, str], list[tuple[dict[str, Any], dict[str, Any]]]] = {}
     for row in _performed(sets):
         block = by_block.get(row.get("block_id") or "")
         if not block:
@@ -328,7 +379,11 @@ def _records(
         session = by_session.get(block.get("session_id") or "")
         if not session:
             continue
-        key = canonical.get(block.get("exercise_id") or "", block.get("exercise_id") or "")
+        raw_id = block.get("exercise_id") or ""
+        key = (
+            canonical.get(raw_id, raw_id),
+            str(block.get("equipment") or default_gear.get(raw_id, "")),
+        )
         grouped.setdefault(key, []).append((row, session))
 
     if not grouped:
@@ -336,7 +391,7 @@ def _records(
         return
 
     lines = []
-    for exercise_id, pairs in grouped.items():
+    for (exercise_id, gear), pairs in grouped.items():
         rows = [r for r, _ in pairs]
         kind = fmt.dominant_kind(rows)
         best = fmt.top_set([r for r in rows if r.get("kind") == kind], kind)
@@ -345,9 +400,11 @@ def _records(
         session = next(s for r, s in pairs if r["id"] == best["id"])
         day = fmt.parse_local_date(session.get("local_date"))
         who = fmt.author_of(names, session.get("credited_to") or session.get("logged_by"))
+        title = titles.get(exercise_id, "—")
+        gear_label = EQUIPMENT_LABELS.get(gear, "")
         lines.append(
             {
-                "Άσκηση": titles.get(exercise_id, "—"),
+                "Άσκηση": f"{title} · {gear_label}" if gear_label else title,
                 "Καλύτερο": fmt.format_set(best, kind),
                 "Πότε": fmt.format_day(day, today) if day else "—",
                 "Ποιος": who or "—",

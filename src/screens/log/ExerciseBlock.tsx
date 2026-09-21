@@ -2,6 +2,7 @@ import type { CSSProperties } from 'react'
 import { useTranslation } from 'react-i18next'
 
 import { useLastPerformance } from '@/data/hooks'
+import { blockEquipment } from '@/domain/analytics'
 import { formatLastPerformance, type Locale } from '@/domain/format'
 import type { Block, Exercise, SetKind, Uuid, WorkoutSet } from '@/domain/types'
 import { Button, Card, CategoryPill, Icon } from '@/ui'
@@ -16,6 +17,10 @@ import { SetRow, type SetField } from '@/screens/log/SetRow'
  * date and the coach who wrote it, always all three. A bare "80×8" is worse than showing
  * nothing, because the coach reads it and loads a bar with it without being able to ask anyone
  * whether it was a warm-up, a top set or someone else's athlete.
+ *
+ * The implement rides on the same line, and the question is asked WITH this block's own: the
+ * last time the athlete did this movement with dumbbells is not the number to load a barbell
+ * with, and "40×8 · Αλτήρες" says so where "40×8" would not.
  */
 
 export interface ExerciseBlockProps {
@@ -61,6 +66,20 @@ const lastLine: CSSProperties = {
   minHeight: 20,
 }
 
+const implementTag: CSSProperties = {
+  flex: '0 0 auto',
+  fontSize: 'var(--th-text-sm)',
+  fontWeight: 500,
+  color: 'var(--th-muted)',
+}
+
+const blockNote: CSSProperties = {
+  margin: 0,
+  fontSize: 'var(--th-text-sm)',
+  color: 'var(--th-muted)',
+  whiteSpace: 'pre-wrap',
+}
+
 const setList: CSSProperties = { display: 'flex', flexDirection: 'column', gap: 12 }
 
 const actions: CSSProperties = { display: 'flex', gap: 8 }
@@ -87,9 +106,10 @@ export function ExerciseBlock({
   const { t } = useTranslation()
   // Excluding this session is what stops "last time" from showing the set the coach just
   // logged two rows below, which reads as progress that has not happened.
-  const last = useLastPerformance(athleteId, exercise?.id, sessionId)
+  const last = useLastPerformance(athleteId, exercise?.id, sessionId, block.equipment)
   const name = exerciseName(exercise, locale)
   const hasSets = block.sets.length > 0
+  const implement = blockEquipment(block, exercise)
 
   return (
     <Card>
@@ -100,6 +120,10 @@ export function ExerciseBlock({
           <span>{name || t('log.exercise')}</span>
           <Icon name="chevron" size={16} strokeWidth={2} />
         </button>
+
+        {/* Shown only when this block departs from the exercise's own implement: that is the
+            one case where the name alone would let 40 kg of dumbbells read as barbell work. */}
+        {block.equipment ? <span style={implementTag}>{t(`equipmentTypes.${block.equipment}`)}</span> : null}
 
         {/* Removal is offered only for an EMPTY block. There is no `restoreBlock` in the
             repository, so removing a block with sets would be the one unrecoverable action on
@@ -124,12 +148,18 @@ export function ExerciseBlock({
             <span style={{ fontWeight: 700, color: 'var(--th-faint)' }}>{t('log.lastTime')}</span>
             <span className="num" style={{ color: 'var(--th-ink)', fontWeight: 600 }}>
               {formatLastPerformance(last.data, locale)}
+              {implement ? ` · ${t(`equipmentTypes.${implement}`)}` : ''}
             </span>
           </>
         ) : (
           <span>{t('log.firstTime')}</span>
         )}
       </p>
+
+      {/* Written by whoever logged the workout, about this workout — the pilot client lets a
+          coach write it; here it is read, because a covering coach must not miss "πονάει ο
+          ώμος, πήγαμε ελαφρύ" just because they hold a different phone. */}
+      {block.note ? <p style={blockNote}>{block.note}</p> : null}
 
       {hasSets ? (
         <div style={setList}>

@@ -388,6 +388,38 @@ describe('adding a movement without leaving the session', () => {
     expect(created.category).toBe('upper')
   })
 
+  it('never chooses an exercise the repository refused', async () => {
+    // A name the gym already holds on an archived row: the picker cannot show that row, the
+    // server's unique index still counts it, and choosing the minted id would point the block
+    // at an exercise that will never exist.
+    const ARCHIVED = '22222222-2222-4222-8222-222222222222'
+    await repo.createExercise(GYM, {
+      id: ARCHIVED,
+      nameEl: 'Ζόρμπας Press',
+      nameEn: null,
+      category: 'upper',
+      equipment: 'other',
+    })
+    await repo.archiveExercise(GYM, ARCHIVED)
+
+    renderPicker()
+    await settle()
+    typeInto(searchBox(), 'Ζόρμπας Press')
+    await settle()
+    click(
+      Array.from(sheet().querySelectorAll<HTMLElement>('button')).find(
+        (button) => textOf(button) === i18n.t('picker.create'),
+      ),
+    )
+    await settle()
+
+    expect(chosen).toEqual([])
+    expect(textOf(sheet())).toContain(i18n.t('library.createFailed'))
+    // Nothing was minted behind the refusal either.
+    const named = (await repo.listExercises(GYM)).filter((row) => row.nameEl === 'Ζόρμπας Press')
+    expect(named.map((row) => row.id)).toEqual([ARCHIVED])
+  })
+
   it('files an exercise that is already in the catalogue and sitting in no group', async () => {
     const OWN = '11111111-1111-4111-8111-111111111111'
     // The realistic state: three movements added in a hurry, none of them classified.

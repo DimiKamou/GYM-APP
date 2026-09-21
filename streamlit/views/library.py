@@ -33,6 +33,9 @@ _KIND_LABELS = exercises.KIND_LABELS
 _KIND_CHOICES = exercises.KIND_CHOICES
 
 _UNGROUPED = "Χωρίς μυϊκή ομάδα"
+# The bucket's key for exercises linked to no group; a name, not an id, so it
+# can never collide with a muscle_groups row.
+_UNGROUPED_ID = "unfiled"
 
 
 # ---------------------------------------------------------------------------
@@ -93,8 +96,44 @@ def _clear() -> None:
 # Writes
 # ---------------------------------------------------------------------------
 
-def _set_archived(exercise_id: str, archived: bool) -> None:
-    db.client().table("exercises").update({"is_archived": archived}).eq("id", exercise_id).execute()
+def _set_archived(exercise_id: str, gym_id: str, archived: bool) -> int:
+    """Returns how many rows the UPDATE reached — zero is a refusal or a stale row."""
+    rows = (
+        db.client()
+        .table("exercises")
+        .update({"is_archived": archived})
+        .eq("gym_id", gym_id)
+        .eq("id", exercise_id)
+        .execute()
+        .data
+        or []
+    )
+    return len(rows)
+
+
+def _archive(exercise_id: str, gym_id: str, name: str, archived: bool) -> None:
+    """«Απόσυρση» / «Επαναφορά», with the same honesty as every other write here.
+
+    It used to be the one write on this screen with no try and no row count: a
+    phone losing signal painted a traceback over the catalogue, and a row a
+    colleague had deleted inside the cache window "αποσύρθηκε" without
+    changing.
+    """
+    try:
+        touched = _set_archived(exercise_id, gym_id, archived)
+    except Exception as exc:
+        ui.notice(_NOTICE, "error", f"Η αλλαγή δεν έγινε: {exc}")
+        st.rerun()
+    _clear()
+    if not touched:
+        ui.notice(_NOTICE, "error", "Η αλλαγή δεν έγινε. Δοκίμασε ξανά.")
+        st.rerun()
+    ui.notice(
+        _NOTICE,
+        "ok",
+        f"Η «{name}» αποσύρθηκε από τον κατάλογο." if archived else f"Η «{name}» επανήλθε.",
+    )
+    st.rerun()
 
 
 # ---------------------------------------------------------------------------
@@ -108,8 +147,8 @@ def _index_by_group(
     rows: list[dict[str, Any]],
     groups: list[dict[str, Any]],
     links: list[dict[str, Any]],
-) -> dict[str, list[dict[str, Any]]]:
-    """Group heading -> exercises, in muscle_groups.position order.
+) -> list[tuple[str, str, list[dict[str, Any]]]]:
+    """(group id, heading, exercises), in muscle_groups.position order.
 
     Both roles are indexed, not only primary: filed under primary alone,
     Τραπεζοειδείς and Προσαγωγοί come out empty, because almost nothing in the
@@ -120,21 +159,28 @@ def _index_by_group(
         by_exercise.setdefault(link["exercise_id"], []).append(link["muscle_group_id"])
 
     names = {g["id"]: g["name_el"] for g in groups}
-    buckets: dict[str, list[dict[str, Any]]] = {g["name_el"]: [] for g in groups}
-    buckets[_UNGROUPED] = []
+    buckets: dict[str, list[dict[str, Any]]] = {g["id"]: [] for g in groups}
+    buckets[_UNGROUPED_ID] = []
 
     for exercise in rows:
         group_ids = by_exercise.get(exercise["id"]) or []
         placed = False
         for group_id in group_ids:
-            heading = names.get(group_id)
-            if heading:
-                buckets[heading].append(exercise)
+            if group_id in buckets:
+                buckets[group_id].append(exercise)
                 placed = True
         if not placed:
-            buckets[_UNGROUPED].append(exercise)
+            buckets[_UNGROUPED_ID].append(exercise)
 
-    return {heading: rows for heading, rows in buckets.items() if rows}
+    # Keyed by the group's id, which is unique, and only labelled by its name:
+    # muscle_groups is unique on (gym_id, slug), so a gym's own «Στηθος» beside
+    # the shared «Στήθος» is two groups that FOLD to one string — and two
+    # headings that fold alike gave one exercise the same widget key twice.
+    return [
+        (group_id, names.get(group_id, _UNGROUPED), members)
+        for group_id, members in buckets.items()
+        if members
+    ]
 
 
 _EDITING = "library_editing"
@@ -158,19 +204,40 @@ def _update_exercise(exercise_id: str, gym_id: str, values: dict[str, Any]) -> i
 def _refile(exercise_id: str, gym_id: str, group_id: str | None) -> None:
     """Move the exercise to another primary muscle group.
 
-    The old mappings are soft-deleted rather than rewritten: exercise_muscles
-    has no natural key this screen can rely on, and a stale primary left behind
-    puts the exercise under two headings in the picker at once.
+    The target is written FIRST, and reusing the pair that may already exist:
+    exercise_muscles_pkey is (exercise_id, muscle_group_id) with no partial
+    index on deleted_at, so the pair is already there whenever the group was
+    this exercise's secondary, or its primary once before. The first version
+    soft-deleted the old primary and then INSERTed the new one, and each call
+    is its own PostgREST transaction — so the insert collided on the key after
+    the delete had committed, and the exercise was left with no primary group
+    at all, under «Χωρίς μυϊκή ομάδα» in the picker.
+
+    Then the other primaries are retired, and a stale one left behind would put
+    the exercise under two headings at once.
     """
+    if not group_id:
+        return
     client = db.client()
-    client.table("exercise_muscles").update(
-        {"deleted_at": datetime.now(timezone.utc).isoformat()}
-    ).eq("exercise_id", exercise_id).eq("role", "primary").execute()
-    if group_id:
+    reused = (
+        client.table("exercise_muscles")
+        .update({"role": "primary", "deleted_at": None})
+        .eq("exercise_id", exercise_id)
+        .eq("muscle_group_id", group_id)
+        .execute()
+        .data
+        or []
+    )
+    if not reused:
         client.table("exercise_muscles").insert(
             {"exercise_id": exercise_id, "muscle_group_id": group_id,
              "role": "primary", "gym_id": gym_id}
         ).execute()
+    client.table("exercise_muscles").update(
+        {"deleted_at": datetime.now(timezone.utc).isoformat()}
+    ).eq("exercise_id", exercise_id).eq("role", "primary").neq(
+        "muscle_group_id", group_id
+    ).is_("deleted_at", "null").execute()
 
 
 def _delete_exercise(exercise_id: str, gym_id: str) -> int:
@@ -217,8 +284,11 @@ def _key(scope: str, prefix: str, exercise_id: str) -> str:
     drawn for a gym's OWN rows, and the gym had none. The migration that gave
     them all an owner turned a latent collision into a screen that would not
     load.
+
+    `scope` is the group's ID. It was the folded heading, and fold() is lossy
+    by design.
     """
-    return f"{prefix}-{fmt.fold(scope).replace(' ', '_')}-{exercise_id}"
+    return f"{prefix}-{scope}-{exercise_id}"
 
 
 def _edit_form(
@@ -292,15 +362,25 @@ def _edit_form(
                 "default_set_kind": _KIND_CHOICES[kind_label],
             },
         )
-        if group_id:
-            _refile(exercise_id, gym_id, group_id)
     except Exception as exc:
-        st.error("Οι αλλαγές δεν αποθηκεύτηκαν.")
-        st.caption(str(exc))
+        message = str(exc)
+        if "exercises_gym_el_uniq" in message or "duplicate key" in message:
+            st.error(f"Υπάρχει ήδη άσκηση με το όνομα «{name_el.strip()}».")
+        else:
+            st.error("Οι αλλαγές δεν αποθηκεύτηκαν.")
+            st.caption(message)
         return
     if not touched:
-        # An UPDATE no policy let through matches zero rows and reports success.
+        # An UPDATE no policy let through matches zero rows and reports success
+        # — and the group must not move for an exercise whose row did not.
         st.error("Οι αλλαγές δεν αποθηκεύτηκαν. Δοκίμασε ξανά.")
+        return
+    try:
+        _refile(exercise_id, gym_id, group_id)
+    except Exception as exc:
+        st.error("Η άσκηση ενημερώθηκε, αλλά η μυϊκή ομάδα δεν άλλαξε.")
+        st.caption(str(exc))
+        _clear()
         return
 
     _clear()
@@ -352,10 +432,7 @@ def _exercise_row(
 
     if archived:
         if right.button("Επαναφορά", key=_key(scope, "un", exercise_id)):
-            _set_archived(exercise_id, False)
-            _clear()
-            ui.notice(_NOTICE, "ok", f"Η «{name}» επανήλθε.")
-            st.rerun()
+            _archive(exercise_id, gym_id, name, False)
         return
 
     if right.button("✏️", key=_key(scope, "ed", exercise_id), help="Άλλαξε όνομα, εξοπλισμό ή ομάδα"):
@@ -366,10 +443,7 @@ def _exercise_row(
     if hide_col.button("Απόσυρση", key=_key(scope, "ar", exercise_id)):
         # Archiving, not deleting. Historical blocks keep pointing at the row
         # and must keep rendering its name.
-        _set_archived(exercise_id, True)
-        _clear()
-        ui.notice(_NOTICE, "ok", f"Η «{name}» αποσύρθηκε από τον κατάλογο.")
-        st.rerun()
+        _archive(exercise_id, gym_id, name, True)
     if drop_col.button("Διαγραφή", key=_key(scope, "rm", exercise_id)):
         try:
             removed = _delete_exercise(exercise_id, gym_id)
@@ -508,10 +582,10 @@ def render() -> None:
     if not visible:
         st.info("Καμία άσκηση δεν ταιριάζει.")
     else:
-        for heading, rows in _index_by_group(visible, groups, links).items():
+        for group_id, heading, rows in _index_by_group(visible, groups, links):
             with st.expander(f"{heading} · {len(rows)}", expanded=bool(search)):
                 for exercise in rows:
-                    _exercise_row(exercise, True, gym_id, groups, heading)
+                    _exercise_row(exercise, True, gym_id, groups, group_id)
 
     st.divider()
     _new_exercise_form(gym_id, groups)

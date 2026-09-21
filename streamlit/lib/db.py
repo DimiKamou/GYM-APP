@@ -51,6 +51,8 @@ _MEMBERSHIP_COLUMNS = "id, gym_id, user_id, display_name, email, role, status"
 # reaches for the service_role key trusts the cache at all — see
 # fresh_membership().
 _ME_TTL_S = 30.0
+# How long a failed membership refresh is left alone before it is tried again.
+_ME_RETRY_S = 8.0
 
 
 def config(name: str, default: str | None = None) -> str | None:
@@ -276,6 +278,10 @@ def me() -> dict[str, Any]:
         if cached is not None:
             # A blip on a refresh must not throw a working session back to the
             # "no gym yet" screen: the previous answer is stale, not wrong.
+            # Re-stamped so the next few calls in this rerun — the calendar
+            # makes three — serve the stale row instead of each waiting out a
+            # dead connection; the retry comes a few seconds later, not now.
+            st.session_state[ME_READ_AT_KEY] = time.monotonic() - _ME_TTL_S + _ME_RETRY_S
             return dict(cached)
         st.session_state[LOAD_ERROR_KEY] = error
         return {}

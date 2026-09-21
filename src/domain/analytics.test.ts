@@ -101,8 +101,14 @@ function session(id: Uuid, localDate: string, startedAt: string, overrides: Part
   }
 }
 
-function block(id: Uuid, sessionId: Uuid, exerciseId: Uuid, position = 0): Block {
-  return { ...audit, id, gymId: GYM, sessionId, exerciseId, position }
+function block(
+  id: Uuid,
+  sessionId: Uuid,
+  exerciseId: Uuid,
+  position = 0,
+  equipment: Block['equipment'] = null,
+): Block {
+  return { ...audit, id, gymId: GYM, sessionId, exerciseId, position, note: null, equipment }
 }
 
 function wset(id: Uuid, blockId: Uuid, kind: SetKind, fields: Partial<WorkoutSet> = {}): WorkoutSet {
@@ -555,6 +561,67 @@ describe('lastPerformance', () => {
       sets: [wset('t1', 'b1', 'weight_reps', { loadKg: 80, reps: 8 })],
     }
     expect(lastPerformance(d, ATHLETE, 'ex-bench', 'cur')?.authorName).toBeNull()
+  })
+
+  // 40 kg of dumbbells is not 80 kg of barbell. The exercise is one catalogue row (the gym's
+  // unique-name index makes it so) and the block says which implement; the "last time" line
+  // must only ever compare like with like, or the coach loads the wrong bar.
+  describe('keyed on the implement the block was done with', () => {
+    // bench is a barbell exercise; last week it was done with dumbbells, the week before
+    // with the bar (a block with no implement of its own = the exercise's default).
+    const history = build(
+      [
+        session('bar', '2026-08-05', '2026-08-05T08:00:00Z'),
+        session('dumbbells', '2026-08-12', '2026-08-12T08:00:00Z'),
+        session('cur', '2026-08-19', '2026-08-19T08:00:00Z'),
+      ],
+      [block('b1', 'bar', 'ex-bench'), block('b2', 'dumbbells', 'ex-bench', 0, 'dumbbell')],
+      [
+        wset('t1', 'b1', 'weight_reps', { loadKg: 80, reps: 8 }),
+        wset('t2', 'b2', 'weight_reps', { loadKg: 40, reps: 8 }),
+      ],
+    )
+
+    it('skips a session done with a different implement, however recent', () => {
+      // Asking as a barbell block (null = the exercise's own) reaches past the dumbbell week.
+      expect(lastPerformance(history, ATHLETE, 'ex-bench', 'cur', null)).toMatchObject({
+        loadKg: 80,
+        date: '2026-08-05',
+      })
+      expect(lastPerformance(history, ATHLETE, 'ex-bench', 'cur')?.loadKg).toBe(80)
+    })
+
+    it('answers a dumbbell block from the dumbbell history alone', () => {
+      expect(lastPerformance(history, ATHLETE, 'ex-bench', 'cur', 'dumbbell')).toMatchObject({
+        loadKg: 40,
+        date: '2026-08-12',
+      })
+    })
+
+    it('treats an explicit implement equal to the exercise default as the default', () => {
+      // A block that says "barbell" on a barbell exercise is the same question as one that
+      // says nothing, so the two must not split the history between them.
+      expect(lastPerformance(history, ATHLETE, 'ex-bench', 'cur', 'barbell')?.loadKg).toBe(80)
+    })
+
+    it('is null when the athlete never used that implement on the exercise', () => {
+      expect(lastPerformance(history, ATHLETE, 'ex-bench', 'cur', 'kettlebell')).toBeNull()
+    })
+
+    it('still matches on the block override alone when the catalogue cannot resolve the exercise', () => {
+      // An exercise missing from `exercises` (a merged-away row, a stale cache) must degrade to
+      // "same movement, same override", not to "no history".
+      const orphaned = data({
+        exercises: [],
+        sessions: [
+          session('prev', '2026-08-12', '2026-08-12T08:00:00Z'),
+          session('cur', '2026-08-19', '2026-08-19T08:00:00Z'),
+        ],
+        blocks: [block('b1', 'prev', 'ex-gone')],
+        sets: [wset('t1', 'b1', 'weight_reps', { loadKg: 60, reps: 10 })],
+      })
+      expect(lastPerformance(orphaned, ATHLETE, 'ex-gone', 'cur')?.loadKg).toBe(60)
+    })
   })
 })
 

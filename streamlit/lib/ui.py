@@ -43,30 +43,44 @@ def flush_notice(key: str) -> None:
         st.error(message)
 
 
-def undoable(key: str, message: str, payload: dict[str, Any]) -> None:
+def undoable(key: str, message: str, payload: dict[str, Any], scope: str = "") -> None:
     """Queue "X διαγράφηκε" plus what it would take to bring X back.
 
     `payload` is plain data — a table name and some ids — and never a closure.
     Streamlit throws the script away on every rerun, so a function captured here
     would be a function from a dead run; the data survives, and the screen
     rebuilds the undo from it.
+
+    `scope` names what the offer is about — the athlete whose sheet it was made
+    on. An offer drawn on a different scope is dropped unread, because «Αναίρεση»
+    for athlete A's set has no business at the top of athlete B's workout.
     """
-    st.session_state[key + _UNDO] = (message, dict(payload))
+    st.session_state[key + _UNDO] = (message, dict(payload), scope)
     st.session_state.pop(key, None)
 
 
-def flush_undo(key: str, restore: Callable[[dict[str, Any]], None]) -> None:
+def flush_undo(
+    key: str, restore: Callable[[dict[str, Any]], None], scope: str = ""
+) -> None:
     """Draw the pending delete with the button that takes it back.
 
     Unlike a notice this is NOT consumed by being drawn: the click that presses
     «Αναίρεση» is itself a rerun, and an offer that erased itself the moment it
-    appeared could never be accepted. It goes away when it is used, or when the
-    next action replaces it.
+    appeared could never be accepted. It goes away when it is used, when the
+    next action replaces it, or when the screen it is drawn on is about
+    something else.
     """
     entry = st.session_state.get(key + _UNDO)
     if not entry:
         return
-    message, payload = entry
+    try:
+        message, payload, made_for = entry
+    except (TypeError, ValueError):
+        st.session_state.pop(key + _UNDO, None)
+        return
+    if (made_for or "") != (scope or ""):
+        st.session_state.pop(key + _UNDO, None)
+        return
     body, button = st.columns([3, 1])
     body.info(message)
     if button.button("Αναίρεση", key=f"{key}_undo_button"):

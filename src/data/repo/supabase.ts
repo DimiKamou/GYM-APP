@@ -26,7 +26,7 @@
 import type { PostgrestError } from '@supabase/supabase-js'
 
 import { lastPerformance as lastPerformanceOf } from '@/domain/analytics'
-import { matches, normalizeText } from '@/domain/text'
+import { matches, normalizeText, sameName } from '@/domain/text'
 import { createOutbox, createSupabaseTransport, type Outbox, type OutboxEntity } from '@/data/outbox'
 // Type-only, so nothing at runtime points from the repository back up at the hooks layer.
 // The capability cannot live on `Repo`: every method there takes a gym id that the person
@@ -39,6 +39,7 @@ import type {
   Athlete,
   Block,
   Briefing,
+  Equipment,
   Exercise,
   ExerciseMuscle,
   Gym,
@@ -82,7 +83,10 @@ const EXERCISE_COLS = `id, gym_id, name_el, name_en, category, equipment, defaul
 const MUSCLE_GROUP_COLS = `id, gym_id, slug, name_el, name_en, region, position, ${AUDIT}`
 const EXERCISE_MUSCLE_COLS = `exercise_id, muscle_group_id, gym_id, role, ${AUDIT}`
 const SESSION_COLS = `id, gym_id, athlete_id, logged_by, credited_to, appointment_id, title, notes, status, started_at, finished_at, local_date, ${AUDIT}`
-const BLOCK_COLS = `id, gym_id, session_id, exercise_id, position, ${AUDIT}`
+// `note` and `equipment` are asked for by name: PostgREST returns exactly the columns named
+// here, and a column left off this list arrives as `undefined` with nothing complaining —
+// which is how the όργανο was missing from every screen for a week in the other client.
+const BLOCK_COLS = `id, gym_id, session_id, exercise_id, position, note, equipment, ${AUDIT}`
 const SET_COLS = `id, gym_id, block_id, position, kind, target_kg, target_reps, load_kg, reps, seconds, meters, rpe, note, done_at, ${AUDIT}`
 const NOTE_COLS = 'id, gym_id, athlete_id, session_id, body, pinned, author, dismissed_at, dismissed_by, created_at'
 const APPOINTMENT_COLS = `id, gym_id, athlete_id, membership_id, date, time, duration_min, type, notes, status, session_id, ${AUDIT}`
@@ -232,6 +236,8 @@ function toBlock(row: Row): Block {
     sessionId: str(row.session_id),
     exerciseId: str(row.exercise_id),
     position: num(row.position) ?? 0,
+    note: strOrNull(row.note),
+    equipment: (row.equipment as Equipment | null) ?? null,
     ...audit(row),
   }
 }
@@ -343,31 +349,6 @@ export function outboxFor(gymId: Uuid): Outbox {
   created.start()
   return created
 }
-
-/**
- * The two taxonomy tables, as the outbox names them.
- *
- * Asserted rather than declared: `OUTBOX_ENTITIES` in `@/data/outbox` is the client mirror of
- * `apply_op()`'s table allowlist, and neither that constant nor `apply_op()` is this change's
- * to edit. Both are still missing the two names, so on a real Supabase project these ops are
- * rejected with `unknown entity` and dead-letter.
- *
- * That is the RIGHT failure while the server side is outstanding — a dead letter is visible in
- * the sync status and a human can replay it, whereas dropping the write would let a coach
- * classify an exercise and watch it silently unclassify itself. It is not the finished state.
- * Two things close it, and until both land the local repository is the only one that files an
- * exercise into a muscle group for real:
- *
- *  1. `OUTBOX_ENTITIES` gains 'muscle_groups' and 'exercise_muscles', which deletes the two
- *     casts below and nothing else.
- *  2. `apply_op()` gains a branch for them. `muscle_groups` fits its generic column-upsert
- *     path; `exercise_muscles` does NOT — it has no `id`, its key is
- *     `(exercise_id, muscle_group_id)`, and `setExerciseMuscles` sends a whole link set as one
- *     replace-all op, so it needs a branch that reads `payload -> 'muscles'`, upserts each
- *     pair and soft-deletes the pairs that are no longer named.
- */
-const MUSCLE_GROUPS = 'muscle_groups' as OutboxEntity
-const EXERCISE_MUSCLES = 'exercise_muscles' as OutboxEntity
 
 /** Every mutation takes this path. The op is durable before the caller is told anything. */
 async function enqueue(
@@ -773,7 +754,7 @@ export function createSupabaseRepo(): Repo & InviteRedeemer {
         .slice(0, limit)
     },
 
-    async getLastPerformance(gymId, athleteId, exerciseId, excludeSessionId): Promise<LastPerformance | null> {
+    async getLastPerformance(gymId, athleteId, exerciseId, excludeSessionId, equipment): Promise<LastPerformance | null> {
       const [sessions, members, exercises] = await Promise.all([
         liveSessions(gymId, athleteId, RECENT_SESSION_WINDOW),
         team(gymId),
@@ -783,13 +764,15 @@ export function createSupabaseRepo(): Repo & InviteRedeemer {
         (b) => b.exerciseId === exerciseId,
       )
       const sets = await setsFor(gymId, blocks.map((b) => b.id))
-      // The ordering, the exclusion of the current session and the "nearest earlier session"
-      // rule all live in one tested pure function, so both repositories cannot disagree.
+      // The ordering, the exclusion of the current session, the "nearest earlier session"
+      // rule and the same-implement rule all live in one tested pure function, so both
+      // repositories cannot disagree.
       return lastPerformanceOf(
         { sessions, blocks, sets, exercises, memberships: members },
         athleteId,
         exerciseId,
         excludeSessionId ?? null,
+        equipment ?? null,
       )
     },
 
@@ -846,17 +829,24 @@ export function createSupabaseRepo(): Repo & InviteRedeemer {
 
     deleteSession: (gymId, sessionId) => enqueueDelete(gymId, 'sessions', sessionId),
 
-    addBlock(gymId, sessionId, blockId, exerciseId, position) {
-      return enqueue(gymId, 'blocks', blockId, {
-        id: blockId,
-        session_id: sessionId,
-        exercise_id: exerciseId,
-        position,
-      })
+    addBlock(gymId, sessionId, blockId, exerciseId, position, extras) {
+      return enqueue(
+        gymId,
+        'blocks',
+        blockId,
+        defined({
+          id: blockId,
+          session_id: sessionId,
+          exercise_id: exerciseId,
+          position,
+          equipment: extras?.equipment,
+          note: extras?.note,
+        }),
+      )
     },
 
-    setBlockExercise: (gymId, blockId, exerciseId) =>
-      enqueue(gymId, 'blocks', blockId, { exercise_id: exerciseId }),
+    setBlockExercise: (gymId, blockId, exerciseId, equipment) =>
+      enqueue(gymId, 'blocks', blockId, defined({ exercise_id: exerciseId, equipment })),
 
     deleteBlock: (gymId, blockId) => enqueueDelete(gymId, 'blocks', blockId),
 
@@ -925,10 +915,22 @@ export function createSupabaseRepo(): Repo & InviteRedeemer {
     archiveAthlete: (gymId, athleteId) => enqueueDelete(gymId, 'athletes', athleteId),
 
     async createExercise(gymId, input: NewExerciseInput) {
+      const nameEl = input.nameEl.trim()
+      const nameEn = input.nameEn ?? null
+      // Checked here, against the catalogue the client already holds, because a queued write
+      // cannot fail in front of the coach: `exercises_gym_el_uniq` (and its `_en_` twin) is
+      // one name per gym among LIVE rows — archived and merged ones included, which the
+      // picker no longer shows. Reporting 'queued' for a name the server will refuse means
+      // the exercise dead-letters on sync, and every block and set logged under its id goes
+      // with it. The catalogue read includes both scopes; only the gym's own rows can collide.
+      const taken = (await catalogue(gymId)).some(
+        (e) => e.gymId === gymId && (sameName(e.nameEl, nameEl) || sameName(e.nameEn, nameEn)),
+      )
+      if (taken) return 'failed'
       const created = await enqueue(gymId, 'exercises', input.id, {
         id: input.id,
-        name_el: input.nameEl.trim(),
-        name_en: input.nameEn ?? null,
+        name_el: nameEl,
+        name_en: nameEn,
         category: input.category,
         equipment: input.equipment,
         default_set_kind: input.defaultSetKind ?? 'weight_reps',
@@ -952,7 +954,7 @@ export function createSupabaseRepo(): Repo & InviteRedeemer {
      * rather than the two of them merging into a set neither of them chose.
      */
     setExerciseMuscles(gymId, exerciseId, links: readonly ExerciseMuscleInput[]) {
-      return enqueue(gymId, EXERCISE_MUSCLES, exerciseId, {
+      return enqueue(gymId, 'exercise_muscles', exerciseId, {
         exercise_id: exerciseId,
         muscles: links.map((link) => ({
           muscle_group_id: link.muscleGroupId,
@@ -966,18 +968,24 @@ export function createSupabaseRepo(): Repo & InviteRedeemer {
 
     createMuscleGroup(gymId, input: NewMuscleGroupInput) {
       const nameEl = input.nameEl.trim()
-      return enqueue(gymId, MUSCLE_GROUPS, input.id, {
-        id: input.id,
-        // The canonical form `normalizeText()` produces, because the slug is matched against
-        // what a coach types, exactly like an exercise alias.
-        slug: normalizeText(input.slug ?? nameEl),
-        name_el: nameEl,
-        name_en: input.nameEn ?? null,
-        region: input.region,
-        // Null lets the server append it after the gym's existing groups. Guessing a position
-        // from a cache that may be three days stale would collide with a colleague's group.
-        position: input.position ?? null,
-      })
+      return enqueue(
+        gymId,
+        'muscle_groups',
+        input.id,
+        defined({
+          id: input.id,
+          // The canonical form `normalizeText()` produces, because the slug is matched against
+          // what a coach types, exactly like an exercise alias.
+          slug: normalizeText(input.slug ?? nameEl),
+          name_el: nameEl,
+          name_en: input.nameEn ?? null,
+          region: input.region,
+          // Left out unless the caller chose one, so `apply_op()` appends the group after
+          // every one this gym can see. Guessing a position from a cache that may be three
+          // days stale would collide with a colleague's group.
+          position: input.position,
+        }),
+      )
     },
 
     // Archived, never tombstoned: historical blocks reference this row, and `exercises` is

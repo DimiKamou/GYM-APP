@@ -242,6 +242,30 @@ describe('getLastPerformance', () => {
     expect(last).toMatchObject({ kind: 'duration', seconds: 1200, loadKg: null })
   })
 
+  it('answers only from history done with the same implement as the asking block', async () => {
+    // The seed's bench history is all barbell (no block carries its own implement). A
+    // dumbbell block of the same movement must not be handed the barbell number.
+    const repo = repoWithSeed()
+    const sessionId = '01920000-0000-7000-8000-000000000031'
+    const dumbbells = '01920000-0000-7000-8000-000000000032'
+    expect(await repo.createSession(GYM, { id: sessionId, athleteId: nikos })).toBe('saved')
+    expect(
+      await repo.addBlock(GYM, sessionId, dumbbells, BENCH, 0, { equipment: 'dumbbell' }),
+    ).toBe('saved')
+    expect(
+      await repo.addSet(GYM, { id: '01920000-0000-7000-8000-000000000033', blockId: dumbbells, kind: 'weight_reps', position: 0, loadKg: 32, reps: 10 }),
+    ).toBe('saved')
+
+    const tree = await repo.getSessionTree(GYM, sessionId)
+    expect(tree?.blocks[0].equipment).toBe('dumbbell')
+
+    // A barbell block (no implement of its own) still sees the seeded barbell history...
+    expect((await repo.getLastPerformance(GYM, nikos, BENCH, undefined, null))?.loadKg).not.toBe(32)
+    // ...and a dumbbell block sees only the dumbbell set, or nothing at all.
+    expect((await repo.getLastPerformance(GYM, nikos, BENCH, undefined, 'dumbbell'))?.loadKg).toBe(32)
+    expect(await repo.getLastPerformance(GYM, nikos, BENCH, sessionId, 'dumbbell')).toBeNull()
+  })
+
   it('is null for an exercise this athlete has never done', async () => {
     const repo = repoWithSeed()
     expect(await repo.getLastPerformance(GYM, katerina, BENCH)).toBeNull()
@@ -365,6 +389,8 @@ describe('the muscle-group taxonomy', () => {
         blocks: progress.blocks.map((b) => ({
           ...b,
           gymId: GYM,
+          note: null,
+          equipment: null,
           createdAt: '',
           updatedAt: '',
           createdBy: null,
@@ -533,6 +559,51 @@ describe('filing an exercise into a muscle group', () => {
         region: 'upper',
       }),
     ).toBe('failed')
+  })
+
+  it('refuses a name the gym already holds on an archived row, as the unique index would', async () => {
+    // `exercises_gym_el_uniq` is one name per gym among LIVE rows, and archiving is not
+    // deletion: the row is still there, still counted. Reporting success here and letting
+    // the server refuse it later dead-letters the exercise and every set logged under it.
+    const repo = repoWithSeed()
+    await repo.createExercise(GYM, {
+      id: MACHINE_PRESS,
+      nameEl: 'Πιέσεις Στήθους σε Μηχάνημα',
+      nameEn: 'Machine Chest Press',
+      category: 'upper',
+      equipment: 'machine',
+    })
+    expect(await repo.archiveExercise(GYM, MACHINE_PRESS)).toBe('saved')
+
+    // Only the case differs — accents stay, because `lower()` keeps them — and the final
+    // sigma lowercases the way JS writes it, not the way Postgres does.
+    expect(
+      await repo.createExercise(GYM, {
+        id: '01920000-0000-7000-8000-00000000000d',
+        nameEl: 'ΠΙΈΣΕΙΣ ΣΤΉΘΟΥΣ ΣΕ ΜΗΧΆΝΗΜΑ',
+        category: 'upper',
+        equipment: 'machine',
+      }),
+    ).toBe('failed')
+    // The English name has its own index and collides on its own.
+    expect(
+      await repo.createExercise(GYM, {
+        id: '01920000-0000-7000-8000-00000000000e',
+        nameEl: 'Πιέσεις σε Μηχάνημα Στήθους',
+        nameEn: 'machine chest press',
+        category: 'upper',
+        equipment: 'machine',
+      }),
+    ).toBe('failed')
+    // The shared catalogue is a different namespace: a gym may add its own «Πιέσεις Στήθους».
+    expect(
+      await repo.createExercise(GYM, {
+        id: '01920000-0000-7000-8000-00000000000f',
+        nameEl: 'Πιέσεις Στήθους',
+        category: 'upper',
+        equipment: 'dumbbell',
+      }),
+    ).toBe('saved')
   })
 
   it('refuses a link to a group this gym cannot see, rather than half-applying it', async () => {

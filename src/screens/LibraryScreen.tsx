@@ -85,6 +85,7 @@ const EQUIPMENT: readonly Equipment[] = [
   'bodyweight',
   'cardio',
   'kettlebell',
+  'smith',
   'other',
 ]
 

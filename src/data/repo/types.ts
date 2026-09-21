@@ -20,6 +20,7 @@ import type {
   AppointmentType,
   Athlete,
   Briefing,
+  Equipment,
   Exercise,
   ExerciseCategory,
   ExerciseMuscle,
@@ -67,6 +68,13 @@ export interface NewSessionInput {
   title?: string | null
   /** Omitted means now. Supplied when a coach logs yesterday's session from the desk. */
   startedAt?: string
+}
+
+/** What a block carries beyond its exercise: the όργανο of this execution, and a line about it. */
+export interface BlockExtras {
+  /** Omitted or `null` = the exercise's own equipment, which is what every old block means. */
+  equipment?: Equipment | null
+  note?: string | null
 }
 
 export interface NewSetInput {
@@ -170,12 +178,17 @@ export interface Repo {
    * an athlete is brand new — the first session with a client is when a coach is most distracted.
    */
   listRecentExercises(gymId: Uuid, athleteId: Uuid, limit?: number): Promise<RecentExercise[]>
-  /** Never rendered without its date and author. */
+  /**
+   * Never rendered without its date and author. `equipment` is the asking block's own
+   * implement (`null` = the exercise's default): only history done with the same effective
+   * implement answers, because 40 kg of dumbbells is not 80 kg of barbell.
+   */
   getLastPerformance(
     gymId: Uuid,
     athleteId: Uuid,
     exerciseId: Uuid,
     excludeSessionId?: Uuid,
+    equipment?: Equipment | null,
   ): Promise<LastPerformance | null>
 
   listAppointments(gymId: Uuid, from: LocalDate, to: LocalDate): Promise<Appointment[]>
@@ -186,8 +199,9 @@ export interface Repo {
   finishSession(gymId: Uuid, sessionId: Uuid): Promise<WriteState>
   deleteSession(gymId: Uuid, sessionId: Uuid): Promise<WriteState>
 
-  addBlock(gymId: Uuid, sessionId: Uuid, blockId: Uuid, exerciseId: Uuid, position: number): Promise<WriteState>
-  setBlockExercise(gymId: Uuid, blockId: Uuid, exerciseId: Uuid): Promise<WriteState>
+  addBlock(gymId: Uuid, sessionId: Uuid, blockId: Uuid, exerciseId: Uuid, position: number, extras?: BlockExtras): Promise<WriteState>
+  /** Retargets the block. `equipment` omitted leaves the block's own implement as it was. */
+  setBlockExercise(gymId: Uuid, blockId: Uuid, exerciseId: Uuid, equipment?: Equipment | null): Promise<WriteState>
   deleteBlock(gymId: Uuid, blockId: Uuid): Promise<WriteState>
 
   addSet(gymId: Uuid, input: NewSetInput): Promise<WriteState>

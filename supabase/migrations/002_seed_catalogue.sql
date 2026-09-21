@@ -9,7 +9,8 @@
 -- The ids are literal and stable, not generated: fixtures, tests and the
 -- offline seed cache all reference them, and a catalogue whose ids move on
 -- every re-run would orphan every block that points at it. Re-running this
--- file is therefore safe and idempotent.
+-- file is therefore safe: it refreshes the rows that are still shared and
+-- leaves alone any that 006 has handed to the gym, whose edits are theirs.
 --
 -- default_set_kind is the column the prototype did not have, and its absence
 -- was not cosmetic: with every exercise stored as {kg, reps}, twenty minutes
@@ -59,7 +60,11 @@ on conflict (id) do update set
   equipment        = excluded.equipment,
   default_set_kind = excluded.default_set_kind,
   default_rest_s   = excluded.default_rest_s,
-  deleted_at       = null;
+  deleted_at       = null
+-- The conflict is on id, which 006 does not change when it hands the row to
+-- the gym. Without this, a re-run after 006 would write the catalogue's name,
+-- όργανο and un-deletion back over whatever the gym has done to its own row.
+where public.exercises.gym_id is null;
 
 
 -- What a Greek coach actually types into the exercise picker, normalised the

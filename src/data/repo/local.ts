@@ -19,7 +19,7 @@
 
 import { lastPerformance as lastPerformanceOf } from '@/domain/analytics'
 import { formatSet } from '@/domain/format'
-import { matches, normalizeText } from '@/domain/text'
+import { matches, normalizeText, sameName } from '@/domain/text'
 import { newId } from '@/data/ids'
 import { createIdbStorage, type OutboxStorage } from '@/data/outbox'
 import { buildSeed, localDateIn, SEED_IDS, type SeedData } from '@/data/repo/seed'
@@ -486,7 +486,7 @@ export function createLocalRepo(options: LocalRepoOptions = {}): Repo & InviteRe
         return mine.length > 0 ? mine : mostLoggedInGym(db, limit, byId)
       }),
 
-    getLastPerformance: (gymId, athleteId, exerciseId, excludeSessionId) =>
+    getLastPerformance: (gymId, athleteId, exerciseId, excludeSessionId, equipment) =>
       read((db): LastPerformance | null => {
         if (!gymOf(db, gymId)) return null
         return lastPerformanceOf(
@@ -502,6 +502,7 @@ export function createLocalRepo(options: LocalRepoOptions = {}): Repo & InviteRe
           athleteId,
           exerciseId,
           excludeSessionId ?? null,
+          equipment ?? null,
         )
       }),
 
@@ -572,7 +573,7 @@ export function createLocalRepo(options: LocalRepoOptions = {}): Repo & InviteRe
         touch(session, at)
       }),
 
-    addBlock: (gymId, sessionId, blockId, exerciseId, position) =>
+    addBlock: (gymId, sessionId, blockId, exerciseId, position, extras) =>
       write(gymId, (db, at) => {
         if (!live(db.sessions).some((s) => s.id === sessionId)) return false
         db.blocks.push({
@@ -581,6 +582,8 @@ export function createLocalRepo(options: LocalRepoOptions = {}): Repo & InviteRe
           sessionId,
           exerciseId,
           position,
+          note: extras?.note ?? null,
+          equipment: extras?.equipment ?? null,
           createdAt: at,
           updatedAt: at,
           deletedAt: null,
@@ -588,11 +591,12 @@ export function createLocalRepo(options: LocalRepoOptions = {}): Repo & InviteRe
         })
       }),
 
-    setBlockExercise: (gymId, blockId, exerciseId) =>
+    setBlockExercise: (gymId, blockId, exerciseId, equipment) =>
       write(gymId, (db, at) => {
         const block = live(db.blocks).find((b) => b.id === blockId)
         if (!block) return false
         block.exerciseId = exerciseId
+        if (equipment !== undefined) block.equipment = equipment
         touch(block, at)
       }),
 
@@ -698,6 +702,16 @@ export function createLocalRepo(options: LocalRepoOptions = {}): Repo & InviteRe
       write(gymId, (db, at) => {
         const nameEl = input.nameEl.trim()
         if (nameEl === '') return false
+        // The server's `exercises_gym_el_uniq` / `_en_uniq`: one name per gym among LIVE
+        // rows, archived and merged ones included. Refused here for the same reason the
+        // Supabase repository refuses it before queueing — an exercise that only fails once
+        // it syncs takes every set logged under it down with it.
+        const taken = live(db.exercises).some(
+          (e) =>
+            e.gymId === gymId &&
+            (sameName(e.nameEl, nameEl) || sameName(e.nameEn, input.nameEn)),
+        )
+        if (taken) return false
         db.exercises.push({
           id: input.id,
           // Non-null: this is the gym's own addition, not an edit to the shared catalogue.

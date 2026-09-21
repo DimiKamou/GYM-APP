@@ -24,8 +24,8 @@ import {
 import { useGymId } from '@/auth/useAuth'
 import { keys } from '@/data/keys'
 import { useRepo } from '@/data/repo/useRepo'
-import type { NewSessionInput, NewSetInput, ProgressData, WriteState } from '@/data/repo/types'
-import type { LastPerformance, Session, SessionTree, Uuid, WorkoutSet } from '@/domain/types'
+import type { BlockExtras, NewSessionInput, NewSetInput, ProgressData, WriteState } from '@/data/repo/types'
+import type { Equipment, LastPerformance, Session, SessionTree, Uuid, WorkoutSet } from '@/domain/types'
 
 const NONE = 'none'
 
@@ -98,18 +98,22 @@ export function useProgressData(athleteId: Uuid | undefined): UseQueryResult<Pro
  *
  * The key is per athlete AND exercise, as the factory defines it; `excludeSessionId` is not
  * part of it because exactly one session is open at a time, and adding it would mint a second
- * cache entry for the same question every time the coach reopened the log.
+ * cache entry for the same question every time the coach reopened the log. The block's own
+ * implement IS part of it: a barbell block and a dumbbell block of the same movement in one
+ * session are two different questions with two different answers.
  */
 export function useLastPerformance(
   athleteId: Uuid | undefined,
   exerciseId: Uuid | undefined,
   excludeSessionId?: Uuid,
+  equipment: Equipment | null = null,
 ): UseQueryResult<LastPerformance | null> {
   const gymId = useGymId()
   const repo = useRepo()
   return useQuery({
-    queryKey: keys.lastPerformance(gymId, athleteId ?? NONE, exerciseId ?? NONE),
-    queryFn: () => repo.getLastPerformance(gymId, athleteId as Uuid, exerciseId as Uuid, excludeSessionId),
+    queryKey: keys.lastPerformance(gymId, athleteId ?? NONE, exerciseId ?? NONE, equipment),
+    queryFn: () =>
+      repo.getLastPerformance(gymId, athleteId as Uuid, exerciseId as Uuid, excludeSessionId, equipment),
     enabled: athleteId !== undefined && exerciseId !== undefined,
   })
 }
@@ -194,7 +198,7 @@ export function useDeleteSession(): UseMutationResult<WriteState, Error, Session
 // Blocks
 // ---------------------------------------------------------------------------
 
-export interface AddBlockVars {
+export interface AddBlockVars extends BlockExtras {
   sessionId: Uuid
   blockId: Uuid
   exerciseId: Uuid
@@ -207,7 +211,10 @@ export function useAddBlock(): UseMutationResult<WriteState, Error, AddBlockVars
   const client = useQueryClient()
   return useMutation({
     mutationFn: (vars: AddBlockVars) =>
-      repo.addBlock(gymId, vars.sessionId, vars.blockId, vars.exerciseId, vars.position),
+      repo.addBlock(gymId, vars.sessionId, vars.blockId, vars.exerciseId, vars.position, {
+        equipment: vars.equipment,
+        note: vars.note,
+      }),
     onSettled(_state, _error, vars) {
       void client.invalidateQueries({ queryKey: keys.sessionTree(gymId, vars.sessionId) })
     },
@@ -222,14 +229,14 @@ export interface BlockRef {
 export function useSetBlockExercise(): UseMutationResult<
   WriteState,
   Error,
-  BlockRef & { exerciseId: Uuid }
+  BlockRef & { exerciseId: Uuid; equipment?: Equipment | null }
 > {
   const gymId = useGymId()
   const repo = useRepo()
   const client = useQueryClient()
   return useMutation({
-    mutationFn: (vars: BlockRef & { exerciseId: Uuid }) =>
-      repo.setBlockExercise(gymId, vars.blockId, vars.exerciseId),
+    mutationFn: (vars: BlockRef & { exerciseId: Uuid; equipment?: Equipment | null }) =>
+      repo.setBlockExercise(gymId, vars.blockId, vars.exerciseId, vars.equipment),
     onSettled(_state, _error, vars) {
       void client.invalidateQueries({ queryKey: keys.sessionTree(gymId, vars.sessionId) })
     },

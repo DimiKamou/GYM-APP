@@ -99,8 +99,14 @@ That last query is the one worth keeping. A table without RLS in a Supabase
 project is world-readable to anyone holding the anon key, which is compiled
 into the JavaScript bundle and therefore public by construction.
 
-`002` and `003` are idempotent — re-running either refreshes its seed in place.
-`001` is not, and is not meant to be; it runs once.
+`002` and `003` can be re-run, but they are not a reset: each refreshes only the
+rows that are still shared (`gym_id is null`) and leaves alone anything the gym
+has adopted through `006`, so a re-run never writes the catalogue's names,
+όργανα or un-deletions back over the gym's own edits.
+`006` must run after the gym exists: it hands the shared catalogue to the one
+gym on the project, and on a project with no gym it stops with an error rather
+than recording a no-op — create the gym from the app first, then run it.
+`001` is not re-runnable, and is not meant to be; it runs once.
 
 ### After the migrations
 

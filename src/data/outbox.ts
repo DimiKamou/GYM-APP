@@ -27,6 +27,9 @@ export const OUTBOX_ENTITIES = [
   'athletes',
   'exercises',
   'exercise_aliases',
+  'muscle_groups',
+  // No `id` of its own: the op's id is the exercise, and the payload is its whole link set.
+  'exercise_muscles',
   'sessions',
   'blocks',
   'sets',

@@ -40,9 +40,30 @@ def reset_round_trips() -> None:
     ROUND_TRIPS.clear()
 
 
+# Writes to make fail, in order: the head of the list is compared with each
+# execute()'s "mode:table" and, when it matches, popped and raised as a
+# transport error. A screen's second round trip dying is the case every
+# two-step write has to survive, and there is no other way to make it happen.
+FAIL_ONCE: list[str] = []
+
+
 class _Response:
     def __init__(self, data: list[dict[str, Any]]) -> None:
         self.data = data
+
+
+def _sort_key(value: Any) -> tuple[int, Any]:
+    """Numbers as numbers, everything else as text — never numbers as text.
+
+    `str()` put position 10 before position 2 and "sets-10" before "sets-2",
+    which no Postgres column does; ISO dates and uuids compare correctly as the
+    strings they are.
+    """
+    if isinstance(value, bool):
+        return (1, str(value))
+    if isinstance(value, (int, float)):
+        return (0, float(value))
+    return (1, str(value))
 
 
 class _Query:
@@ -61,6 +82,7 @@ class _Query:
         self._columns: list[str] | None = None
         self._mode = "select"
         self._written: list[dict[str, Any]] = []
+        self._orders: list[tuple[str, bool]] = []
 
     # --- verbs ---------------------------------------------------------
     def select(self, columns: str = "*", **_: Any) -> "_Query":
@@ -74,9 +96,12 @@ class _Query:
     # exercises_gym_el_uniq forbids. The tests passed and the live app could
     # only ever show one option. An index the fake ignores is an index the
     # tests cannot defend.
-    _UNIQUE = {"exercises": ("gym_id", "name_el")}
+    _UNIQUE = {
+        "exercises": ("gym_id", "name_el"),
+        "athletes": ("gym_id", "full_name"),
+    }
 
-    def _check_unique(self, row: dict[str, Any]) -> None:
+    def _check_unique(self, row: dict[str, Any], ignore_id: Any = None) -> None:
         columns = self._UNIQUE.get(self._table)
         if not columns:
             return
@@ -88,6 +113,8 @@ class _Query:
             )
         wanted = key(row)
         for existing in self._store.get(self._table, []):
+            if ignore_id is not None and existing.get("id") == ignore_id:
+                continue
             if existing.get("deleted_at") is None and key(existing) == wanted:
                 raise ValueError(
                     f"duplicate key value violates unique constraint "
@@ -144,12 +171,40 @@ class _Query:
     def not_(self, *_: Any, **__: Any) -> "_Query":
         return self
 
+    def gt(self, column: str, value: Any) -> "_Query":
+        return self._compare(column, value, lambda a, b: a > b)
+
+    def gte(self, column: str, value: Any) -> "_Query":
+        return self._compare(column, value, lambda a, b: a >= b)
+
+    def lt(self, column: str, value: Any) -> "_Query":
+        return self._compare(column, value, lambda a, b: a < b)
+
+    def lte(self, column: str, value: Any) -> "_Query":
+        return self._compare(column, value, lambda a, b: a <= b)
+
+    def _compare(self, column: str, value: Any, keep: Any) -> "_Query":
+        wanted = _sort_key(value)
+        self._rows = [
+            r for r in self._rows
+            if r.get(column) is not None and keep(_sort_key(r.get(column)), wanted)
+        ]
+        return self
+
     def order(self, column: str, desc: bool = False, **_: Any) -> "_Query":
-        self._rows = sorted(
-            self._rows,
-            key=lambda r: (r.get(column) is None, str(r.get(column))),
-            reverse=desc,
-        )
+        # Chained .order() calls are ONE multi-key sort, as PostgREST reads
+        # them. The first version re-sorted the whole list on every call, so
+        # the LAST key won outright and `.order("position").order("id")` — the
+        # (position, id) rule CLAUDE.md insists on — was silently id-only
+        # here: a regression to position alone passed every test.
+        self._orders.append((column, bool(desc)))
+        for key_column, key_desc in reversed(self._orders):
+            # Stable sorts applied from the least significant key up give the
+            # composite order without building a mixed-direction tuple key.
+            self._rows.sort(
+                key=lambda r, c=key_column: (r.get(c) is None, _sort_key(r.get(c))),
+                reverse=key_desc,
+            )
         return self
 
     def limit(self, count: int) -> "_Query":
@@ -159,11 +214,25 @@ class _Query:
     # --- execution -----------------------------------------------------
     def execute(self) -> _Response:
         ROUND_TRIPS.append(f"{self._mode}:{self._table}")
+        if FAIL_ONCE and FAIL_ONCE[0] == f"{self._mode}:{self._table}":
+            FAIL_ONCE.pop(0)
+            raise _NetworkDown("connection reset by peer")
         if self._mode == "insert":
             return _Response([self._project(r) for r in self._written])
         if self._mode == "update":
+            # The index is checked BEFORE anything is mutated, so a refused
+            # rename leaves every row as it was — the way one statement does.
+            for row in self._rows:
+                self._check_unique(dict(row, **self._patch), ignore_id=row.get("id"))
             for row in self._rows:
                 row.update(self._patch)
+                if self._stamp is not None:
+                    # The BEFORE UPDATE half of the triggers: a workout moved
+                    # to another day gets its local_date recomputed here as
+                    # sessions_set_local_date() does, or the fake holds a row
+                    # Postgres could not — started_at on one day, local_date
+                    # on another.
+                    self._stamp(self._table, row, "update")
             # Only the rows the filters actually reached, which is how a client
             # learns that a policy refused it: the update reports success and
             # returns nothing.
@@ -177,10 +246,13 @@ class _Query:
 
 
 # Set to "network" to make refresh_session raise the way a phone waking from
-# lock does — a transport error with no HTTP status — or to "rejected" for a
-# token the server actually refused. The two must not be handled alike: one is
-# a blip, the other is a spent token.
+# lock does — a transport error with no HTTP status — to "gateway" for a 503
+# from a restarting Supabase, or to "rejected" for a token the server actually
+# refused. They must not be handled alike: two are blips, one is a spent token.
 REFRESH_FAILURE: str | None = None
+# Every refresh token handed to the server, and every sign-out's options.
+REFRESH_CALLS: list[str] = []
+SIGN_OUT_CALLS: list[Any] = []
 
 
 class _NetworkDown(Exception):
@@ -193,13 +265,24 @@ class _Rejected(Exception):
         self.status = 400
 
 
+class _Gateway(Exception):
+    """What supabase_auth raises for a 502/503/504: AuthRetryableError with a status."""
+
+    def __init__(self, status: int = 503) -> None:
+        super().__init__("upstream unavailable")
+        self.status = status
+
+
 class _Auth:
     def __init__(self, user_id: str) -> None:
         self._user_id = user_id
 
     def refresh_session(self, token: str) -> Any:
+        REFRESH_CALLS.append(token)
         if REFRESH_FAILURE == "network":
             raise _NetworkDown("connection reset")
+        if REFRESH_FAILURE == "gateway":
+            raise _Gateway()
         if REFRESH_FAILURE == "rejected":
             raise _Rejected()
 
@@ -220,7 +303,8 @@ class _Auth:
 
         return type("R", (), {"user": _U()})()
 
-    def sign_out(self, *_: Any, **__: Any) -> None:
+    def sign_out(self, options: Any = None, **__: Any) -> None:
+        SIGN_OUT_CALLS.append(options)
         return None
 
     def update_user(self, *_: Any, **__: Any) -> None:

@@ -1,5 +1,24 @@
 import { describe, expect, it } from 'vitest'
-import { initials, matches, normalizeText, stripDiacritics } from '@/domain/text'
+import { initials, matches, normalizeText, sameName, stripDiacritics } from '@/domain/text'
+
+describe('sameName', () => {
+  it('agrees with a Postgres unique index on lower(name)', () => {
+    // Postgres lowercases a final Σ to σ; JS to ς. Both spellings must land on one answer.
+    expect(sameName('ΠΙΕΣΕΙΣ ΣΤΗΘΟΥΣ', 'Πιεσεις Στηθους')).toBe(true)
+    expect(sameName('Bench Press', 'bench press ')).toBe(true)
+  })
+
+  it('keeps accents apart, because the index does', () => {
+    // Refusing what the server would accept is a different bug, not a stricter check.
+    expect(sameName('Πιέσεις', 'Πιεσεις')).toBe(false)
+  })
+
+  it('never matches a missing name', () => {
+    expect(sameName(null, null)).toBe(false)
+    expect(sameName('', '')).toBe(false)
+    expect(sameName('Σανίδα', undefined)).toBe(false)
+  })
+})
 
 describe('stripDiacritics', () => {
   it('drops Greek accents and keeps case', () => {
