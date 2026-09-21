@@ -49,13 +49,30 @@ def timezone_of(gym_id: str) -> str:
 
 
 def zone(gym_id: str) -> Any:
-    """The gym's tz object, or None when the platform has no tz database."""
+    """The gym's tz object, or None when the platform has no tz database.
+
+    Two failures, kept apart. A `gyms` row that cannot be read right now — the
+    free tier paused, a timeout, a cache entry expiring at the wrong moment — is
+    Athens, the documented default, not UTC. One `except` around both used to
+    turn every such blip into UTC, and between midnight and 03:00 Athens time
+    that is yesterday: the calendar opened on the wrong week and a set logged at
+    00:30 was filed under the day before.
+    """
+    try:
+        name = timezone_of(gym_id)
+    except Exception:
+        name = fmt.DEFAULT_TZ
     try:
         from zoneinfo import ZoneInfo
-
-        return ZoneInfo(timezone_of(gym_id))
     except Exception:
         return None
+    try:
+        return ZoneInfo(name)
+    except Exception:
+        try:
+            return ZoneInfo(fmt.DEFAULT_TZ)
+        except Exception:
+            return None
 
 
 def today(gym_id: str) -> date:
@@ -83,6 +100,28 @@ def member_names(gym_id: str) -> dict[str, str]:
         .table("memberships")
         .select("id, display_name")
         .eq("gym_id", gym_id)
+        .execute()
+        .data
+        or []
+    )
+    return {row["id"]: (row.get("display_name") or fmt.UNKNOWN_AUTHOR) for row in rows}
+
+
+@st.cache_data(ttl=300, show_spinner=False)
+def active_member_names(gym_id: str) -> dict[str, str]:
+    """membership id -> display name, for the people who work here NOW.
+
+    For choosing, not for attributing. `member_names` keeps removed members
+    because they wrote history; offered as an athlete's coach, a trainer who
+    left last year is a roster filter that points at nobody.
+    """
+    rows = (
+        db.client()
+        .table("memberships")
+        .select("id, display_name")
+        .eq("gym_id", gym_id)
+        .eq("status", "active")
+        .is_("deleted_at", "null")
         .execute()
         .data
         or []

@@ -20,7 +20,7 @@ from typing import Any
 import extra_streamlit_components as stx
 import streamlit as st
 
-from lib import db, version
+from lib import db, nav, version
 
 
 # The synthetic mail domain never receives a message; it only has to be stable
@@ -186,6 +186,7 @@ def gate() -> bool:
         _render_not_configured(missing)
         return False
 
+    _begin_run()
     _flush_cookie()
 
     if not _ensure_session():
@@ -202,7 +203,12 @@ def gate() -> bool:
 def sign_out() -> None:
     """End the session here and on the server. The caller reruns."""
     try:
-        db.client().auth.sign_out()
+        # THIS device only. The library's default is scope=global, which
+        # revokes every refresh token the account has — so the trainer who
+        # pressed Αποσύνδεση on the desk tablet at the end of a shift, as
+        # Ρυθμίσεις tells them to, found their own phone signed out at its next
+        # refresh, with the workout state gone.
+        db.client().auth.sign_out({"scope": "local"})
     except Exception:
         # An unreachable server must not trap a trainer in a session they asked
         # to end; the local half of the sign-out happens either way.
@@ -331,7 +337,7 @@ def _use_refresh_token(token: str | None) -> bool:
         # network blip on wake logged the coach out and threw away the workout
         # they were in the middle of. That is the whole of "it asks me to log in
         # again when I lock my phone, and I lose the exercises".
-        if getattr(exc, "status", None) is None:
+        if _transient(exc):
             # Nothing is dropped: not the session, not the cookie, not the open
             # workout. The access token in hand is still good — _needs_refresh
             # fires _REFRESH_MARGIN_S BEFORE expiry, so there is a whole margin
@@ -350,6 +356,25 @@ def _use_refresh_token(token: str | None) -> bool:
         return False
     _flush_cookie()
     return True
+
+
+def _transient(exc: Exception) -> bool:
+    """Did the server actually answer about THIS token, or did something else happen?
+
+    Only a 4xx other than 429 is a verdict. No status is a transport failure; 0
+    is what supabase_auth gives a RuntimeError it wrapped; 429 is the whole gym
+    behind one NAT address hitting the token rate limit; a 5xx is the gateway,
+    Supabase restarting, or the first minute after a paused free-tier project is
+    restored. The first version tested `status is None` alone, so every one of
+    those signed the coach out, deleted the cookie and dropped the open workout
+    — for a token the server had never even looked at.
+    """
+    status = getattr(exc, "status", None)
+    if status is None or isinstance(status, bool) or not isinstance(status, int):
+        return True
+    if status == 0 or status == 429 or status >= 500:
+        return True
+    return exc.__class__.__name__ == "AuthRetryableError"
 
 
 def _remember(session: Any) -> bool:
@@ -396,9 +421,9 @@ def _sign_out_state(drop_cookie: bool = True) -> None:
     for key in (_EXPIRES_KEY, _EMAIL_KEY, _PROBE_KEY, _BLOCKED_KEY):
         st.session_state.pop(key, None)
     # Navigation state belongs to a person: the next trainer on this tablet must
-    # not inherit the previous one's open athlete or half-written session.
-    for key in ("athlete", "session_id"):
-        st.session_state.pop(key, None)
+    # not inherit the previous one's open athlete, half-written session, stop
+    # screen or pending «Αναίρεση».
+    nav.leave_workouts()
     if drop_cookie:
         st.session_state[_PENDING_COOKIE_KEY] = ("delete", None)
         # Set with the delete, not after it: from here until the browser
@@ -419,8 +444,28 @@ def _sign_out_state(drop_cookie: bool = True) -> None:
 # Cookie
 # ---------------------------------------------------------------------------
 
+def _begin_run() -> None:
+    """Forget the previous run's cookie manager. Called once, first thing in gate().
+
+    The manager reads the browser's cookies ONCE, in its constructor, as the
+    value of the getAll component it renders there — `self.cookies = ...` in
+    extra_streamlit_components/CookieManager/__init__.py. Kept in session_state
+    across runs, the object was constructed on the first run, when the iframe
+    had not answered yet, and its `.cookies` stayed that empty dict for the life
+    of the session: no later run ever rendered the getAll element again, so the
+    browser's answer had nowhere to land. Cookie restore could not succeed —
+    every cold start went through the whole probe budget and landed on the
+    sign-in form with a valid session sitting in the browser.
+
+    One manager per RUN, under one stable key, is one getAll element per run
+    with an unchanged widget id, so the iframe is not remounted and the value
+    the browser posted is what the next construction returns.
+    """
+    st.session_state.pop(_MANAGER_KEY, None)
+
+
 def _cookie_manager() -> Any | None:
-    """The one manager for this session. Two on a page fight over the same key."""
+    """The one manager for this run. Two on a page fight over the same key."""
     manager = st.session_state.get(_MANAGER_KEY)
     if manager is not None:
         return manager
@@ -701,11 +746,14 @@ def _auth_error(exc: Exception) -> str:
     status = getattr(exc, "status", None)
     if status == 429:
         return _RATE_LIMITED
-    if status is not None:
-        # An HTTP status means the server answered and refused. Unknown user,
-        # wrong password, unconfirmed address — all one sentence.
-        return _BAD_CREDENTIALS
-    return _NO_CONNECTION
+    if _transient(exc):
+        # No answer, or an answer about the server rather than the password: a
+        # 502 while Supabase restarts must not send anyone to change a
+        # password that is right.
+        return _NO_CONNECTION
+    # A 4xx means the server answered and refused. Unknown user, wrong
+    # password, unconfirmed address — all one sentence.
+    return _BAD_CREDENTIALS
 
 
 def _bootstrap_error(exc: Exception) -> tuple[str, bool]:
@@ -727,6 +775,6 @@ def _password_error(exc: Exception) -> str:
         return "Ο νέος κωδικός πρέπει να διαφέρει από τον παλιό."
     if "weak" in text or "at least" in text or "short" in text:
         return "Ο κωδικός είναι πολύ αδύναμος. Διάλεξε μεγαλύτερο."
-    if getattr(exc, "status", None) is None:
+    if _transient(exc):
         return _NO_CONNECTION
     return "Ο κωδικός δεν άλλαξε. Δοκίμασε ξανά."

@@ -14,12 +14,12 @@ the slot, so the slot can say what became of it.
 
 from __future__ import annotations
 
-from datetime import date, time, timedelta
+from datetime import date, datetime, time, timedelta, timezone
 from typing import Any
 
 import streamlit as st
 
-from lib import db, fmt, gym, ui
+from lib import db, fmt, gym, nav, ui
 
 _NOTICE = "calendar_notice"
 _WEEK_KEY = "calendar_week_start"
@@ -128,21 +128,50 @@ def _start_session(appointment: dict[str, Any], athlete: dict[str, Any]) -> None
     """
     client = db.client()
     gym_id = db.gym_id()
-    session = (
-        client.table("sessions")
-        .insert({"gym_id": gym_id, "athlete_id": appointment["athlete_id"]})
-        .execute()
-        .data[0]
-    )
+    try:
+        rows = (
+            client.table("sessions")
+            .insert({"gym_id": gym_id, "athlete_id": appointment["athlete_id"]})
+            .execute()
+            .data
+            or []
+        )
+    except Exception as exc:
+        ui.notice(_NOTICE, "error", f"Η προπόνηση δεν ξεκίνησε: {exc}")
+        st.rerun()
+    if not rows:
+        ui.notice(_NOTICE, "error", "Η προπόνηση δεν ξεκίνησε. Δοκίμασε ξανά.")
+        st.rerun()
+    session = rows[0]
+
     # The slot now knows what became of it. Marked done in the same breath,
     # because a trainer who has started the workout will not come back here.
-    client.table("appointments").update(
-        {"session_id": session["id"], "status": "done"}
-    ).eq("id", appointment["id"]).execute()
-
+    # gym_id in the filter and the returned rows checked, as every other write
+    # in the app does: a colleague who started this slot from another phone
+    # inside the 30 s cache, or a policy refusal, matches nothing and reports
+    # success — and the coach would be sent to a workout the slot never linked.
+    try:
+        linked = (
+            client.table("appointments")
+            .update({"session_id": session["id"], "status": "done"})
+            .eq("gym_id", gym_id)
+            .eq("id", appointment["id"])
+            .is_("session_id", "null")
+            .execute()
+            .data
+            or []
+        )
+    except Exception as exc:
+        linked = []
+        failure = f"Το ραντεβού δεν συνδέθηκε με την προπόνηση: {exc}"
+    else:
+        failure = "Το ραντεβού είχε ήδη ξεκινήσει από αλλού. Δες την προπόνησή του από τον αθλητή."
     _clear()
-    st.session_state["athlete"] = athlete
-    st.session_state["session_id"] = session["id"]
+    if not linked:
+        ui.notice(_NOTICE, "error", failure)
+        st.rerun()
+
+    nav.open_workout(session["id"], athlete)
     pages = st.session_state.get("pages") or {}
     if "log" in pages:
         st.switch_page(pages["log"])
@@ -152,7 +181,37 @@ def _start_session(appointment: dict[str, Any], athlete: dict[str, Any]) -> None
 # Rendering
 # ---------------------------------------------------------------------------
 
+def _cancel(gym_id: str, appointment: dict[str, Any], clock: str) -> None:
+    """Soft delete: nothing in this schema is ever removed, and a cancelled slot
+    is part of the week's history. Returns only by rerunning."""
+    try:
+        rows = (
+            db.client()
+            .table("appointments")
+            .update({"deleted_at": datetime.now(timezone.utc).isoformat()})
+            .eq("gym_id", gym_id)
+            .eq("id", appointment["id"])
+            .is_("deleted_at", "null")
+            .execute()
+            .data
+            or []
+        )
+    except Exception as exc:
+        ui.notice(_NOTICE, "error", f"Το ραντεβού δεν ακυρώθηκε: {exc}")
+        st.rerun()
+    _clear()
+    if not rows:
+        # Already cancelled from another phone inside the cache window, or
+        # refused by a policy: either way nothing changed, and saying it did
+        # is the one message worse than an error.
+        ui.notice(_NOTICE, "error", "Το ραντεβού δεν ακυρώθηκε. Δοκίμασε ξανά.")
+        st.rerun()
+    ui.notice(_NOTICE, "ok", f"Το ραντεβού των {clock} ακυρώθηκε.")
+    st.rerun()
+
+
 def _slot_card(
+    gym_id: str,
     appointment: dict[str, Any],
     athletes: dict[str, dict[str, Any]],
     names: dict[str, str],
@@ -181,22 +240,17 @@ def _slot_card(
         if done and appointment.get("session_id"):
             st.caption("Η προπόνηση καταγράφηκε.")
             return
-        if athlete is None:
-            st.caption("Ο αθλητής δεν βρέθηκε.")
-            return
 
         left, right = st.columns(2)
-        if left.button("Ξεκίνα προπόνηση", key=f"go-{appointment['id']}", type="primary"):
+        if athlete is None:
+            # An athlete removed from Αθλητές leaves their slots behind. The
+            # workout cannot start, but the slot must still be cancellable, or
+            # it is a dead card in every week view until somebody writes SQL.
+            left.caption("Ο αθλητής δεν βρέθηκε.")
+        elif left.button("Ξεκίνα προπόνηση", key=f"go-{appointment['id']}", type="primary"):
             _start_session(appointment, athlete)
         if right.button("Ακύρωση", key=f"del-{appointment['id']}"):
-            # Soft delete: nothing in this schema is ever removed, and a
-            # cancelled slot is part of the week's history.
-            db.client().table("appointments").update({"deleted_at": "now()"}).eq(
-                "id", appointment["id"]
-            ).execute()
-            _clear()
-            ui.notice(_NOTICE, "ok", f"Το ραντεβού των {clock} ακυρώθηκε.")
-            st.rerun()
+            _cancel(gym_id, appointment, clock)
 
 
 def _new_appointment_form(gym_id: str, athletes: list[dict[str, Any]], default_day: date) -> None:
@@ -310,7 +364,7 @@ def render() -> None:
             st.caption("Κενή μέρα.")
             continue
         for slot in rows:
-            _slot_card(slot, by_athlete, names)
+            _slot_card(gym_id, slot, by_athlete, names)
 
     st.divider()
     _new_appointment_form(gym_id, athletes, today if today >= first else first)

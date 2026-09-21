@@ -125,25 +125,28 @@ _SEED: dict[str, list[dict[str, Any]]] = {
 STORE: dict[str, list[dict[str, Any]]] = {}
 
 
-def stamp(table: str, row: dict[str, Any]) -> None:
-    """The BEFORE INSERT triggers, in the two places a screen can tell.
+def stamp(table: str, row: dict[str, Any], event: str = "insert") -> None:
+    """The BEFORE INSERT / BEFORE UPDATE triggers, in the places a screen can tell.
 
-    Not an attempt to be Postgres. These two are here because the app is written
-    around them — it deliberately sends neither `logged_by` nor `local_date`,
-    since a client that sent either would be stating an opinion where the server
-    holds the fact — so a fake that does not stamp them makes every new workout
-    render as "άγνωστο μέλος · —".
+    Not an attempt to be Postgres. These are here because the app is written
+    around them — it deliberately sends neither `logged_by` nor `local_date`
+    nor a note's `author`, since a client that sent any of them would be stating
+    an opinion where the server holds the fact — so a fake that does not stamp
+    them makes every new workout render as "άγνωστο μέλος · —", and every note
+    the same.
     """
     if table == "sessions":
-        row.setdefault("status", "active")
-        row.setdefault("started_at", datetime.now(timezone.utc).isoformat())
-        row.setdefault("title", None)
-        row.setdefault("notes", None)
-        row.setdefault("credited_to", None)
-        # sessions_stamp_author(): app.my_membership(), which in these tests is
-        # always the owner.
-        row["logged_by"] = OWNER
-        # sessions_set_local_date(): the gym's day, not the server's.
+        if event == "insert":
+            row.setdefault("status", "active")
+            row.setdefault("started_at", datetime.now(timezone.utc).isoformat())
+            row.setdefault("title", None)
+            row.setdefault("notes", None)
+            row.setdefault("credited_to", None)
+            # sessions_stamp_author(): app.my_membership(), which in these tests
+            # is always the owner.
+            row["logged_by"] = OWNER
+        # sessions_set_local_date(): the gym's day, not the server's — and it
+        # fires on UPDATE OF started_at too, so a moved workout is re-dated.
         started = datetime.fromisoformat(str(row["started_at"]).replace("Z", "+00:00"))
         try:
             from zoneinfo import ZoneInfo
@@ -152,8 +155,17 @@ def stamp(table: str, row: dict[str, Any]) -> None:
         except Exception:
             pass
         row["local_date"] = started.date().isoformat()
+    if event != "insert":
+        return
     if table in ("sets", "blocks", "notes", "athletes"):
         row.setdefault("created_by", OWNER)
+    if table == "notes":
+        # notes.author defaults to app.my_membership() in the schema, and the
+        # screen deliberately leaves it out of the insert.
+        row.setdefault("author", OWNER)
+    # `created_at default now()` on every table; without it a fresh note has no
+    # day and the sheet reads "— άγνωστο μέλος · —" for a fake reason.
+    row.setdefault("created_at", datetime.now(timezone.utc).isoformat())
 
 
 def _assert_seed_is_possible() -> None:
@@ -179,6 +191,9 @@ def reset() -> None:
     STORE.update(deepcopy(_SEED))
     _assert_seed_is_possible()
     fake_supabase.reset_round_trips()
+    fake_supabase.FAIL_ONCE.clear()
+    fake_supabase.REFRESH_CALLS.clear()
+    fake_supabase.SIGN_OUT_CALLS.clear()
     # Streamlit's caches outlive an AppTest run — they belong to the process,
     # not the script — so a seeded store with stale cache entries over it is a
     # different world from a fresh one. This bit the suite the moment the ttls

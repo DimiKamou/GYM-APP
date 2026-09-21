@@ -27,7 +27,7 @@ from typing import Any
 
 import streamlit as st
 
-from lib import db, fmt, gym, ui
+from lib import db, exercises, fmt, gym, nav, ui
 
 # Same count as the PWA's briefing card. Three lines is what a coach reads
 # standing up; the fourth is already scrolling.
@@ -116,7 +116,7 @@ def _top_lines(gym_id: str, session_id: str) -> list[str]:
 
     blocks = (
         client.table("blocks")
-        .select("id, exercise_id, position")
+        .select("id, exercise_id, position, equipment")
         .eq("gym_id", gym_id)
         .eq("session_id", session_id)
         .is_("deleted_at", "null")
@@ -133,7 +133,7 @@ def _top_lines(gym_id: str, session_id: str) -> list[str]:
 
     sets = (
         client.table("sets")
-        .select("id, block_id, position, kind, load_kg, reps, seconds, meters")
+        .select("id, block_id, position, kind, load_kg, reps, seconds, meters, done_at")
         .eq("gym_id", gym_id)
         .in_("block_id", [block["id"] for block in blocks])
         .is_("deleted_at", "null")
@@ -143,21 +143,25 @@ def _top_lines(gym_id: str, session_id: str) -> list[str]:
         .data
         or []
     )
+    # done_at null is a prescribed set, or one the coach was interrupted typing
+    # — never a performed one. The Πρόοδος screen already leaves them out; a
+    # briefing that counted them would name a top set nobody lifted.
+    sets = [row for row in sets if row.get("done_at")]
     if not sets:
         return []
 
     exercise_ids = sorted({block["exercise_id"] for block in blocks if block.get("exercise_id")})
-    exercises: list[dict[str, Any]] = []
+    rows_of_catalogue: list[dict[str, Any]] = []
     if exercise_ids:
-        exercises = (
+        rows_of_catalogue = (
             client.table("exercises")
-            .select("id, name_el, name_en, merged_into_id")
+            .select("id, name_el, name_en, merged_into_id, equipment")
             .in_("id", exercise_ids)
             .execute()
             .data
             or []
         )
-    by_id = {row["id"]: row for row in exercises}
+    by_id = {row["id"]: row for row in rows_of_catalogue}
 
     # A block written before a duplicate was folded in still points at the dead
     # row (001_init.sql: "reads follow the arrow"), so without this second read
@@ -167,14 +171,14 @@ def _top_lines(gym_id: str, session_id: str) -> list[str]:
     merged = sorted(
         {
             row["merged_into_id"]
-            for row in exercises
+            for row in rows_of_catalogue
             if row.get("merged_into_id") and row["merged_into_id"] not in by_id
         }
     )
     if merged:
         for row in (
             client.table("exercises")
-            .select("id, name_el, name_en, merged_into_id")
+            .select("id, name_el, name_en, merged_into_id, equipment")
             .in_("id", merged)
             .execute()
             .data
@@ -204,7 +208,15 @@ def _top_lines(gym_id: str, session_id: str) -> list[str]:
             continue
         # Greek first, English as the fallback, from the same helper the log screen
         # uses — the two screens naming the same exercise differently is the seam.
-        lines.append(f"{fmt.exercise_name(exercise)} · {fmt.format_set(top, kind)}")
+        # With the όργανο, the block's own before the exercise's default: since
+        # 008 one name spans several implements, and «Πιέσεις Στήθους · 80×8»
+        # read at the barbell for an athlete who pressed two 40s is the misread
+        # the column exists to prevent.
+        gear = exercises.EQUIPMENT_LABELS.get(
+            str(block.get("equipment") or exercise.get("equipment") or ""), ""
+        )
+        name = f"{fmt.exercise_name(exercise)} · {gear}" if gear else fmt.exercise_name(exercise)
+        lines.append(f"{name} · {fmt.format_set(top, kind)}")
         if len(lines) == _TOP_LINES:
             break
     return lines
@@ -232,8 +244,7 @@ def _start_session(athlete: dict[str, Any]) -> None:
     belonged to whoever was on the screen before, and inheriting it would append
     this athlete's sets to another athlete's session.
     """
-    st.session_state["athlete"] = athlete
-    st.session_state.pop("session_id", None)
+    nav.open_workout(None, athlete)
     page = (st.session_state.get("pages") or {}).get("log")
     if page is None:
         ui.notice(_NOTICE, "error", "Η σελίδα καταγραφής δεν είναι διαθέσιμη.")
@@ -276,7 +287,7 @@ def _reopen_session(gym_id: str, session: dict[str, Any]) -> None:
 
     _last_session.clear()
     _top_lines.clear()
-    st.session_state["session_id"] = session_id
+    nav.open_workout(session_id)
     page = (st.session_state.get("pages") or {}).get("log")
     if page is None:
         ui.notice(_NOTICE, "error", "Η σελίδα καταγραφής δεν είναι διαθέσιμη.")
@@ -569,10 +580,18 @@ def _edit_athlete(gym_id: str, athlete: dict[str, Any], names: dict[str, str]) -
                 max_chars=120,
                 placeholder="π.χ. Πλάτη / ώμοι",
             )
-            options: list[str | None] = [None] + sorted(
-                names, key=lambda member_id: fmt.fold(names.get(member_id, ""))
-            )
+            # Who works here now, not everyone who ever did: `names` keeps
+            # removed members because they wrote history, but an athlete
+            # assigned to a trainer who left last year is a roster filter that
+            # points at nobody. The current coach stays in the list whatever
+            # their status, so the form can show what is stored.
+            active = _active_coaches(gym_id, names)
             coach = str(athlete.get("coach_membership_id") or "")
+            if coach and coach not in active and coach in names:
+                active[coach] = names[coach]
+            options: list[str | None] = [None] + sorted(
+                active, key=lambda member_id: fmt.fold(active.get(member_id, ""))
+            )
             picked = st.selectbox(
                 "Προπονητής",
                 options=options,
@@ -636,6 +655,14 @@ def _edit_athlete(gym_id: str, athlete: dict[str, Any], names: dict[str, str]) -
         _remove_athlete(gym_id, athlete)
 
 
+def _active_coaches(gym_id: str, names: dict[str, str]) -> dict[str, str]:
+    """The members an athlete can be assigned to. The whole roster if unreadable."""
+    try:
+        return dict(gym.active_member_names(gym_id))
+    except Exception:
+        return dict(names)
+
+
 def _remove_athlete(gym_id: str, athlete: dict[str, Any]) -> None:
     """Two taps and a sentence, owner only.
 
@@ -690,8 +717,7 @@ def _remove_athlete(gym_id: str, athlete: dict[str, Any]) -> None:
             st.session_state.pop(_CONFIRM_DELETE, None)
             # The sheet is about to describe a row that no longer exists, and
             # an open workout belongs to the athlete just removed.
-            for key in ("athlete", "session_id"):
-                st.session_state.pop(key, None)
+            nav.leave_workouts()
             ui.notice(_NOTICE, "ok", f"Ο/Η {name} αφαιρέθηκε.")
             st.rerun()
 
