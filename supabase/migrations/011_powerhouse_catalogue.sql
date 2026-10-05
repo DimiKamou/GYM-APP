@@ -92,11 +92,89 @@ insert into powerhouse_list
   (ord, name, options, kind, category, rest_s, primary_slug, secondary_slugs, reuse_id)
 values
 -- @@CATALOGUE@@
-  (1, 'Bench Press', '{barbell,dumbbell,smith}', 'weight_reps', 'upper', 150, 'στηθοσ', '{τρικεφαλοι,ωμοι}', 'ca7a1000-0000-4000-8000-000000000001'),
-  (2, 'Cable Lateral Raise', '{cable}', 'weight_reps', 'upper', 60, 'ωμοι', '{}', null),
-  (3, 'Squat', '{barbell,dumbbell,smith,kettlebell,bodyweight,bosu,trap_bar}', 'weight_reps', 'lower', 180, 'τετρακεφαλοι', '{γλουτοι}', 'ca7a1000-0000-4000-8000-000000000003'),
-  (4, 'Pull-Up', '{bodyweight}', 'bodyweight', 'upper', 120, 'πλατη', '{δικεφαλοι}', null),
-  (5, 'Lateral Raise', '{dumbbell}', 'weight_reps', 'upper', 60, 'ωμοι', '{}', null)
+  -- Chest
+  (1, 'Bench Press', '{barbell,dumbbell,smith}', 'weight_reps', 'upper', 180, 'στηθοσ', '{τρικεφαλοι,ωμοι}', 'ca7a1000-0000-4000-8000-000000000001'),
+  (2, 'Incline Bench Press', '{barbell,dumbbell,smith}', 'weight_reps', 'upper', 150, 'στηθοσ', '{ωμοι,τρικεφαλοι}', 'ca7a1000-0000-4000-8000-000000000009'),
+  (3, 'Dumbbell Fly', '{dumbbell}', 'weight_reps', 'upper', 75, 'στηθοσ', '{ωμοι}', null),
+  (4, 'Incline Dumbbell Fly', '{dumbbell}', 'weight_reps', 'upper', 75, 'στηθοσ', '{ωμοι}', null),
+  (5, 'High Cable Fly', '{cable}', 'weight_reps', 'upper', 60, 'στηθοσ', '{ωμοι}', null),
+  (6, 'Low Cable Fly', '{cable}', 'weight_reps', 'upper', 60, 'στηθοσ', '{ωμοι}', null),
+  (7, 'Mid Cable Fly', '{cable}', 'weight_reps', 'upper', 60, 'στηθοσ', '{ωμοι}', null),
+  (8, 'Seated Cable Chest Press', '{cable}', 'weight_reps', 'upper', 90, 'στηθοσ', '{τρικεφαλοι,ωμοι}', null),
+  (9, 'Standing Cable Chest Press', '{cable}', 'weight_reps', 'upper', 90, 'στηθοσ', '{τρικεφαλοι,ωμοι}', null),
+  (10, 'Push-Up', '{bodyweight}', 'bodyweight', 'upper', 90, 'στηθοσ', '{τρικεφαλοι,ωμοι}', null),
+  (11, 'Incline Push-Up', '{bodyweight}', 'bodyweight', 'upper', 90, 'στηθοσ', '{τρικεφαλοι,ωμοι}', null),
+  (12, 'Decline Push-Up', '{bodyweight}', 'bodyweight', 'upper', 90, 'στηθοσ', '{ωμοι,τρικεφαλοι}', null),
+  (13, 'Chest Dip', '{bodyweight}', 'bodyweight', 'upper', 120, 'στηθοσ', '{τρικεφαλοι,ωμοι}', null),
+  -- Back
+  (14, 'Low Row', '{dumbbell,barbell,kettlebell}', 'weight_reps', 'upper', 90, 'πλατη', '{δικεφαλοι,ραχιαιοι}', null),
+  (15, 'High Row', '{dumbbell,barbell,kettlebell}', 'weight_reps', 'upper', 90, 'πλατη', '{ωμοι,τραπεζοειδεισ}', null),
+  (16, 'Reverse Fly', '{dumbbell}', 'weight_reps', 'upper', 60, 'πλατη', '{ωμοι,τραπεζοειδεισ}', null),
+  (17, 'T-Bar Row', '{barbell,machine}', 'weight_reps', 'upper', 120, 'πλατη', '{τραπεζοειδεισ,δικεφαλοι}', null),
+  (18, 'One-Arm Row', '{dumbbell}', 'weight_reps', 'upper', 90, 'πλατη', '{δικεφαλοι}', null),
+  (19, 'Lat Pulldown', '{cable}', 'weight_reps', 'upper', 90, 'πλατη', '{δικεφαλοι}', 'ca7a1000-0000-4000-8000-000000000002'),
+  (20, 'Close-Grip Lat Pulldown', '{cable}', 'weight_reps', 'upper', 90, 'πλατη', '{δικεφαλοι}', null),
+  (21, 'Cable Low Row', '{cable}', 'weight_reps', 'upper', 90, 'πλατη', '{δικεφαλοι,τραπεζοειδεισ}', 'ca7a1000-0000-4000-8000-000000000010'),
+  (22, 'Cable High Row', '{cable}', 'weight_reps', 'upper', 90, 'πλατη', '{τραπεζοειδεισ,ωμοι}', null),
+  (23, 'Seated Double Cable Lat Pulldown', '{cable}', 'weight_reps', 'upper', 90, 'πλατη', '{δικεφαλοι}', null),
+  (24, 'Cable Reverse Fly', '{cable}', 'weight_reps', 'upper', 60, 'πλατη', '{ωμοι,τραπεζοειδεισ}', null),
+  (25, 'One-Arm Cable Row', '{cable}', 'weight_reps', 'upper', 90, 'πλατη', '{δικεφαλοι}', null),
+  (26, 'One-Arm Lat Pulldown', '{cable}', 'weight_reps', 'upper', 90, 'πλατη', '{δικεφαλοι}', null),
+  (27, 'Pull-Up', '{bodyweight}', 'bodyweight', 'upper', 120, 'πλατη', '{δικεφαλοι,τραπεζοειδεισ}', 'ca7a1000-0000-4000-8000-000000000011'),
+  (28, 'Chin-Up', '{bodyweight}', 'bodyweight', 'upper', 120, 'πλατη', '{δικεφαλοι}', null),
+  (29, 'Equalizer Pull-Up', '{equalizer}', 'bodyweight', 'upper', 90, 'πλατη', '{δικεφαλοι,τραπεζοειδεισ}', null),
+  (30, 'Equalizer Chin-Up', '{equalizer}', 'bodyweight', 'upper', 90, 'πλατη', '{δικεφαλοι}', null),
+  -- Legs
+  (31, 'Squat', '{barbell,dumbbell,smith,kettlebell,bodyweight,bosu,trap_bar}', 'weight_reps', 'lower', 180, 'τετρακεφαλοι', '{γλουτοι,προσαγωγοι}', 'ca7a1000-0000-4000-8000-000000000003'),
+  (32, 'Isometric Squat', '{bodyweight}', 'duration', 'lower', 60, 'τετρακεφαλοι', '{γλουτοι}', null),
+  (33, 'Sumo Squat', '{barbell,dumbbell,smith,kettlebell,bodyweight,trap_bar}', 'weight_reps', 'lower', 150, 'τετρακεφαλοι', '{προσαγωγοι,γλουτοι}', null),
+  (34, 'Deadlift', '{barbell,dumbbell,smith,kettlebell,bodyweight,trap_bar}', 'weight_reps', 'lower', 180, 'γλουτοι', '{οπισθιοι,ραχιαιοι}', 'ca7a1000-0000-4000-8000-000000000016'),
+  (35, 'Romanian Deadlift', '{barbell,dumbbell,smith,kettlebell,bodyweight,trap_bar}', 'weight_reps', 'lower', 150, 'οπισθιοι', '{γλουτοι,ραχιαιοι}', 'ca7a1000-0000-4000-8000-000000000004'),
+  (36, 'One-Leg Deadlift', '{barbell,dumbbell,kettlebell}', 'weight_reps', 'lower', 90, 'οπισθιοι', '{γλουτοι,σταθεροποιηση}', null),
+  (37, 'Rear Lunge', '{barbell,dumbbell,kettlebell,smith}', 'weight_reps', 'lower', 90, 'τετρακεφαλοι', '{γλουτοι}', null),
+  (38, 'Front Lunge', '{barbell,dumbbell,kettlebell,smith}', 'weight_reps', 'lower', 90, 'τετρακεφαλοι', '{γλουτοι}', null),
+  (39, 'Hip Thrust', '{barbell,sandbag,dumbbell}', 'weight_reps', 'lower', 120, 'γλουτοι', '{οπισθιοι}', null),
+  (40, 'One-Leg Hip Thrust', '{dumbbell}', 'weight_reps', 'lower', 90, 'γλουτοι', '{οπισθιοι}', null),
+  (41, 'Side Lunge', '{barbell,dumbbell,kettlebell}', 'weight_reps', 'lower', 90, 'τετρακεφαλοι', '{προσαγωγοι,γλουτοι}', null),
+  (42, 'Bulgarian Split Squat', '{kettlebell,dumbbell}', 'weight_reps', 'lower', 90, 'τετρακεφαλοι', '{γλουτοι}', null),
+  (43, 'Cable Hip Abduction', '{cable}', 'weight_reps', 'lower', 60, 'γλουτοι', '{}', null),
+  (44, 'Cable Glute Kickback', '{cable}', 'weight_reps', 'lower', 60, 'γλουτοι', '{οπισθιοι}', null),
+  (45, 'Step-Up', '{box,barbell,dumbbell,kettlebell}', 'weight_reps', 'lower', 90, 'τετρακεφαλοι', '{γλουτοι}', null),
+  (46, 'Static Lunge', '{bodyweight,barbell,dumbbell,kettlebell,smith}', 'weight_reps', 'lower', 90, 'τετρακεφαλοι', '{γλουτοι}', null),
+  (47, 'Foot-Elevated Lunge', '{bodyweight,barbell,dumbbell,kettlebell,smith}', 'weight_reps', 'lower', 90, 'τετρακεφαλοι', '{γλουτοι}', null),
+  -- Shoulders
+  (48, 'Shoulder Press', '{barbell,dumbbell,kettlebell,smith}', 'weight_reps', 'upper', 120, 'ωμοι', '{τρικεφαλοι,τραπεζοειδεισ}', 'ca7a1000-0000-4000-8000-000000000007'),
+  (49, 'Lateral Raise', '{dumbbell}', 'weight_reps', 'upper', 60, 'ωμοι', '{τραπεζοειδεισ}', 'ca7a1000-0000-4000-8000-000000000014'),
+  (50, 'Cable Lateral Raise', '{cable}', 'weight_reps', 'upper', 60, 'ωμοι', '{τραπεζοειδεισ}', null),
+  (51, 'Front Raise', '{dumbbell,barbell}', 'weight_reps', 'upper', 60, 'ωμοι', '{}', null),
+  (52, 'Cable Front Raise', '{cable}', 'weight_reps', 'upper', 60, 'ωμοι', '{}', null),
+  (53, 'Upright Row', '{dumbbell,barbell,kettlebell,smith}', 'weight_reps', 'upper', 90, 'ωμοι', '{τραπεζοειδεισ}', null),
+  (54, 'Cable Upright Row', '{cable}', 'weight_reps', 'upper', 90, 'ωμοι', '{τραπεζοειδεισ}', null),
+  (55, 'Face Pull', '{cable}', 'weight_reps', 'upper', 60, 'ωμοι', '{τραπεζοειδεισ,πλατη}', null),
+  -- Biceps
+  (56, 'Bicep Curl', '{barbell,dumbbell,kettlebell,smith,ez_bar}', 'weight_reps', 'upper', 75, 'δικεφαλοι', '{}', 'ca7a1000-0000-4000-8000-000000000012'),
+  (57, 'Cable Bicep Curl', '{cable}', 'weight_reps', 'upper', 60, 'δικεφαλοι', '{}', null),
+  (58, 'Hammer Curl', '{dumbbell}', 'weight_reps', 'upper', 60, 'δικεφαλοι', '{}', null),
+  (59, 'Cable Hammer Curl', '{cable}', 'weight_reps', 'upper', 60, 'δικεφαλοι', '{}', null),
+  (60, 'Incline Bench Curl', '{dumbbell}', 'weight_reps', 'upper', 60, 'δικεφαλοι', '{}', null),
+  (61, 'Cable Incline Bench Curl', '{cable}', 'weight_reps', 'upper', 60, 'δικεφαλοι', '{}', null),
+  (62, 'Zottman Curl', '{dumbbell}', 'weight_reps', 'upper', 60, 'δικεφαλοι', '{}', null),
+  (63, 'Spider Curl', '{dumbbell,ez_bar,barbell}', 'weight_reps', 'upper', 60, 'δικεφαλοι', '{}', null),
+  -- Triceps
+  (64, 'One-Arm Dumbbell Extension', '{dumbbell}', 'weight_reps', 'upper', 60, 'τρικεφαλοι', '{}', null),
+  (65, 'Two-Arm Dumbbell Extension', '{dumbbell}', 'weight_reps', 'upper', 75, 'τρικεφαλοι', '{}', null),
+  (66, 'French Press', '{ez_bar}', 'weight_reps', 'upper', 75, 'τρικεφαλοι', '{}', null),
+  (67, 'Cable Triceps Kickback', '{cable}', 'weight_reps', 'upper', 60, 'τρικεφαλοι', '{}', null),
+  (68, 'One-Arm Triceps Kickback', '{dumbbell}', 'weight_reps', 'upper', 60, 'τρικεφαλοι', '{}', null),
+  (69, 'Two-Arm Triceps Kickback', '{dumbbell}', 'weight_reps', 'upper', 60, 'τρικεφαλοι', '{}', null),
+  (70, 'Close-Grip Bench Press', '{barbell,smith}', 'weight_reps', 'upper', 120, 'τρικεφαλοι', '{στηθοσ,ωμοι}', null),
+  (71, 'Close-Grip Push-Up', '{bodyweight}', 'bodyweight', 'upper', 90, 'τρικεφαλοι', '{στηθοσ,ωμοι}', null),
+  (72, 'Triceps Dip', '{box,equalizer}', 'bodyweight', 'upper', 90, 'τρικεφαλοι', '{στηθοσ,ωμοι}', null),
+  (73, 'Rope Triceps Pushdown', '{cable}', 'weight_reps', 'upper', 60, 'τρικεφαλοι', '{}', null),
+  (74, 'Cable Triceps Extension', '{cable}', 'weight_reps', 'upper', 60, 'τρικεφαλοι', '{}', null),
+  (75, 'One-Arm Cable Triceps Extension', '{cable}', 'weight_reps', 'upper', 60, 'τρικεφαλοι', '{}', null),
+  (76, 'Cable Overhead Triceps Extension', '{cable}', 'weight_reps', 'upper', 60, 'τρικεφαλοι', '{}', null),
+  (77, 'Cable Bent-Over Triceps Extension', '{cable}', 'weight_reps', 'upper', 60, 'τρικεφαλοι', '{}', null)
 -- @@END@@
 ;
 
@@ -116,6 +194,7 @@ declare
   removed   integer;
   reused    integer;
   created   integer;
+  moved     integer;
   r         record;
   found_id  uuid;
   bad       text;
@@ -291,6 +370,24 @@ begin
     deleted_at        = null;
   get diagnostics created = row_count;
 
+  -- 6. A cable set logged under an old exercise now has an exercise of its
+  -- own. Since 008 a coach could pick «Πλάγιες Άρσεις» and then Τροχαλία, and
+  -- the list now calls that Cable Lateral Raise: same movement, same tool,
+  -- same measure — so those blocks move, and the new exercise starts with
+  -- their history instead of without it. Only pairs that are exactly that.
+  update public.blocks b
+     set exercise_id = t.target_id
+    from (values
+            ('ca7a1000-0000-4000-8000-000000000014'::uuid, 'cable'::public.equipment, 'Cable Lateral Raise'),
+            ('ca7a1000-0000-4000-8000-000000000012'::uuid, 'cable'::public.equipment, 'Cable Bicep Curl')
+         ) as m(old_id, tool, new_name)
+    join powerhouse_list l on lower(l.name) = lower(m.new_name)
+    join powerhouse_targets t on t.ord = l.ord
+   where b.exercise_id = m.old_id
+     and b.equipment = m.tool
+     and b.gym_id = the_gym;
+  get diagnostics moved = row_count;
+
   -- Muscle groups: exactly the ones the list names, nothing left over from
   -- the old filing of a reused row. The pair is the primary key and is not
   -- partial on deleted_at, so a pair that existed before is revived, never
@@ -323,8 +420,9 @@ begin
 
   raise notice
     'Ο νέος κατάλογος: % ασκήσεις (% συνέχισαν παλιές με το ιστορικό τους, % καινούργιες). '
-    'Αφαιρέθηκαν % παλιές, % διπλές ενώθηκαν. % παλιά blocks κράτησαν το όργανό τους.',
-    reused + created, reused, created, removed, folded, frozen;
+    'Αφαιρέθηκαν % παλιές, % διπλές ενώθηκαν. % παλιά blocks κράτησαν το όργανό τους, '
+    '% πέρασαν στην άσκηση τροχαλίας τους.',
+    reused + created, reused, created, removed, folded, frozen, moved;
 end;
 $$;
 

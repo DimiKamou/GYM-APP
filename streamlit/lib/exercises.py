@@ -103,8 +103,10 @@ def tool_labels(gym_id: str) -> dict[str, str]:
 # Tools whose load is the athlete's own body. Choosing one of these for an
 # exercise that is usually loaded — a squat, a step-up — switches the set form
 # to repetitions with optional added kilos, because "0 × 12" is not how anyone
-# writes down twelve bodyweight squats.
-BODYWEIGHT_TOOLS: frozenset[str] = frozenset({"bodyweight", "box", "equalizer"})
+# writes down twelve bodyweight squats. The Bosu is here too: a Bosu squat is
+# done unloaded or holding light dumbbells, and reps plus added kilos records
+# both. Every tool KIND_FOR_EQUIPMENT measures as bodyweight is in this set.
+BODYWEIGHT_TOOLS: frozenset[str] = frozenset({"bodyweight", "box", "equalizer", "bosu"})
 
 CATEGORY_LABELS: dict[str, str] = {
     "upper": "Άνω κορμός",

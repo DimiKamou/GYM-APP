@@ -1697,6 +1697,10 @@ def test_the_options_helpers_read_what_postgrest_sends() -> None:
           exercises.implement_of({"equipment": "barbell", "equipment_options": ["barbell", "dumbbell"]}, "dumbbell") == "dumbbell")
     check("no tools chosen is every tool, with the neutral column",
           exercises.stored_tools([]) == ("other", list(exercises.EQUIPMENT_LABELS)))
+    check("the two tables agree on which tools are the body",
+          exercises.BODYWEIGHT_TOOLS
+          == {tool for tool, kind in exercises.KIND_FOR_EQUIPMENT.items() if kind == "bodyweight"},
+          str(exercises.BODYWEIGHT_TOOLS))
     check("bodyweight tools switch a loaded exercise to reps",
           exercises.kind_for_block("weight_reps", "equalizer") == "bodyweight"
           and exercises.kind_for_block("weight_reps", "barbell") == "weight_reps"

@@ -28,7 +28,11 @@ values ('55550011-0000-0000-0000-000000000001', 'aaaaaaaa-0000-0000-0000-0000000
         current_date - 7, 'finished');
 
 insert into public.blocks (id, gym_id, session_id, exercise_id, position, equipment)
-values ('66660011-0000-0000-0000-000000000001', 'aaaaaaaa-0000-0000-0000-000000000001',
+values ('66660011-0000-0000-0000-000000000004', 'aaaaaaaa-0000-0000-0000-000000000001',
+        '55550011-0000-0000-0000-000000000001', 'ca7a1000-0000-4000-8000-000000000014', 3, 'cable'),
+       ('66660011-0000-0000-0000-000000000005', 'aaaaaaaa-0000-0000-0000-000000000001',
+        '55550011-0000-0000-0000-000000000001', 'ca7a1000-0000-4000-8000-000000000014', 4, null),
+       ('66660011-0000-0000-0000-000000000001', 'aaaaaaaa-0000-0000-0000-000000000001',
         '55550011-0000-0000-0000-000000000001', 'ca7a1000-0000-4000-8000-000000000003', 0, null),
        ('66660011-0000-0000-0000-000000000002', 'aaaaaaaa-0000-0000-0000-000000000001',
         '55550011-0000-0000-0000-000000000001', 'ca7a1000-0000-4000-8000-000000000005', 1, null),
@@ -145,10 +149,23 @@ select case when count(*) = :other_gym_before
   from public.exercises where gym_id = 'bbbbbbbb-0000-0000-0000-000000000002' and deleted_at is null;
 
 -- History keeps the tool it was done with, whatever the exercise now says.
-select case when string_agg(coalesce(equipment::text, 'NULL'), ',' order by position) = 'barbell,bodyweight,dumbbell'
+select case when string_agg(coalesce(equipment::text, 'NULL'), ',' order by position) = 'barbell,bodyweight,dumbbell,cable,dumbbell'
             then 'τα παλιά blocks κράτησαν το όργανό τους: σωστό'
             else 'ΛΑΘΟΣ: τα παλιά blocks έγιναν ' || string_agg(coalesce(equipment::text, 'NULL'), ',' order by position) end
   from public.blocks where session_id = '55550011-0000-0000-0000-000000000001';
+
+-- Old lateral raises logged on the cable are Cable Lateral Raise now; the ones
+-- on dumbbells stay with Lateral Raise, which is the old row itself.
+select case when e.name_en = 'Cable Lateral Raise'
+            then 'οι παλιές πλάγιες με τροχαλία πέρασαν στο Cable Lateral Raise: σωστό'
+            else 'ΛΑΘΟΣ: οι παλιές πλάγιες με τροχαλία έμειναν στο «' || coalesce(e.name_en, e.name_el) || '»' end
+  from public.blocks b join public.exercises e on e.id = b.exercise_id
+ where b.id = '66660011-0000-0000-0000-000000000004';
+select case when b.exercise_id = 'ca7a1000-0000-4000-8000-000000000014' and e.name_en = 'Lateral Raise'
+            then 'οι παλιές πλάγιες με αλτήρες έμειναν στο Lateral Raise: σωστό'
+            else 'ΛΑΘΟΣ: οι παλιές πλάγιες με αλτήρες βρέθηκαν στο «' || coalesce(e.name_en, e.name_el) || '»' end
+  from public.blocks b join public.exercises e on e.id = b.exercise_id
+ where b.id = '66660011-0000-0000-0000-000000000005';
 
 select case when count(*) = 0
             then 'κανένα block του γυμναστηρίου δεν έμεινε χωρίς όργανο: σωστό'
