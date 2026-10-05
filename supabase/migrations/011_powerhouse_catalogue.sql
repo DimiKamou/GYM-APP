@@ -423,9 +423,18 @@ begin
          ) as m(old_id, tool, new_name)
     join powerhouse_list l on lower(l.name) = lower(m.new_name)
     join powerhouse_targets t on t.ord = l.ord
-   where b.exercise_id = m.old_id
-     and b.equipment = m.tool
-     and b.gym_id = the_gym;
+   where b.equipment = m.tool
+     and b.gym_id = the_gym
+     -- The old row itself, or the row that continues it: when 006 had
+     -- folded the old exercise into the gym's own, the blocks live there.
+     and b.exercise_id in (
+       select m.old_id
+       union
+       select t2.target_id
+         from powerhouse_targets t2
+         join powerhouse_list l2 on l2.ord = t2.ord
+        where l2.reuse_id = m.old_id and t2.reused
+     );
   get diagnostics moved = row_count;
 
   -- Muscle groups: exactly the ones the list names, nothing left over from

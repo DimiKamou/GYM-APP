@@ -1766,9 +1766,12 @@ def test_the_app_keeps_working_until_the_sql_is_run() -> None:
     check("the workout's new-exercise form does not offer tools it cannot keep",
           not [m for m in at.multiselect if m.label == "Γίνεται και με"], str([m.label for m in at.multiselect]))
 
-    open_athlete()
-    open_screen(PROGRESS_DRIVER)
-    check("and the athlete sheet and progress open", True)
+    at = open_athlete()
+    check("the athlete sheet reads its last workout", "δεν φορτώθηκ" not in texts(at)
+          and "Πιέσεις Στήθους · Μπάρα · 80×8" in texts(at), texts(at)[:500])
+    at = open_screen(PROGRESS_DRIVER)
+    check("and Πρόοδος reads its history", "δεν φορτώθηκ" not in texts(at)
+          and len(at.dataframe) >= 1, texts(at)[:300])
 
     # The SQL runs; within the probe's minute the new behaviour is on.
     fake_supabase.MISSING_COLUMNS.clear()
@@ -1779,18 +1782,52 @@ def test_the_app_keeps_working_until_the_sql_is_run() -> None:
 def test_a_stale_screen_cannot_write_over_011() -> None:
     """For up to a minute after the paste a screen can show a row read before it.
 
-    Saving that row must not write the pre-011 name and tool over what 011 did:
-    the decision is the row's — was it read with the column — not the probe's.
+    Saving that row must not write the pre-011 name and tool over what 011 did.
+    The screen is drawn before the paste; 011 then rewrites the row; the save
+    from the old screen must reach nothing and say so.
     """
     from lib import exercises
 
     state.reset()
-    # The probe already says yes; the edit form is drawn from a row read before.
+    row = state.rows("exercises", id=state.CHOICE)[0]
+    row.update({"name_el": "Επικλινείς Πιέσεις", "name_en": "Incline Dumbbell Press",
+                "equipment": "dumbbell", "updated_at": "2026-09-01T07:00:00+00:00"})
+    row.pop("equipment_options", None)
+    fake_supabase.MISSING_COLUMNS["exercises"] = {"equipment_options"}
+    at = open_library()
+
+    # The owner pastes 011. The probe notices within its minute; the screen's
+    # own copy of the catalogue is still the one from before.
+    row.update({"name_el": None, "name_en": "Incline Bench Press", "equipment": "barbell",
+                "equipment_options": ["barbell", "dumbbell", "smith"],
+                "updated_at": "2026-10-05T07:00:00+00:00"})
+    fake_supabase.MISSING_COLUMNS.clear()
     exercises.has_tool_lists.clear()
-    exercises.has_tool_lists(state.GYM)
-    stale = {k: v for k, v in state.rows("exercises", id=state.CHOICE)[0].items() if k != "equipment_options"}
-    check("a row without the column is not a 011 row", not exercises.row_has_tools(stale))
-    check("a row with it is", exercises.row_has_tools(state.rows("exercises", id=state.CHOICE)[0]))
+
+    press(at, f"ed-{state.CHEST}-{state.CHOICE}")
+    press(at, f"library_edit-{state.CHEST}-{state.CHOICE}")
+    after = state.rows("exercises", id=state.CHOICE)[0]
+    check("011's name survived the stale save", after["name_en"] == "Incline Bench Press"
+          and after["name_el"] is None, str(after))
+    check("and so did its tools", after["equipment_options"] == ["barbell", "dumbbell", "smith"],
+          str(after.get("equipment_options")))
+    check("the coach is told to reopen it", "άλλαξε στο μεταξύ" in texts(at), texts(at)[:400])
+
+
+def test_a_dropped_probe_is_not_remembered_as_no_column() -> None:
+    """One lost request must not switch every exercise to the old mode for a minute."""
+    from lib import exercises
+
+    state.reset()
+    exercises.has_tool_lists.clear()
+    fake_supabase.FAIL_ONCE[:] = ["select:exercises"]
+    try:
+        exercises.has_tool_lists(state.GYM)
+        raised = False
+    except Exception:
+        raised = True
+    check("a network failure is an error, not an answer", raised)
+    check("and the next look sees the column", exercises.has_tool_lists(state.GYM) is True)
 
 
 def test_repeat_never_bypasses_the_exercises_own_tools() -> None:

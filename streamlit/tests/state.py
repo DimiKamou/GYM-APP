@@ -187,6 +187,9 @@ def stamp(table: str, row: dict[str, Any], event: str = "insert") -> None:
         except Exception:
             pass
         row["local_date"] = started.date().isoformat()
+    # touch_updated_at(): every write moves the stamp, which is what a
+    # conditional UPDATE ("only if nobody wrote it since I read it") relies on.
+    row["updated_at"] = datetime.now(timezone.utc).isoformat()
     if event != "insert":
         return
     if table in ("sets", "blocks", "notes", "athletes"):

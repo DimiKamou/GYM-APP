@@ -53,7 +53,7 @@ def _exercises(gym_id: str) -> list[dict[str, Any]]:
             exercises.columns(
                 gym_id,
                 "id, gym_id, name_el, name_en, category, equipment,"
-                " default_set_kind, is_archived, merged_into_id",
+                " default_set_kind, is_archived, merged_into_id, updated_at",
             )
         )
         .is_("deleted_at", "null")
@@ -191,18 +191,28 @@ def _index_by_group(
 _EDITING = "library_editing"
 
 
-def _update_exercise(exercise_id: str, gym_id: str, values: dict[str, Any]) -> int:
-    """Rewrite a gym's own exercise. Returns the rows the UPDATE actually reached."""
-    rows = (
+def _update_exercise(
+    exercise_id: str, gym_id: str, values: dict[str, Any], read_at: Any = None
+) -> int:
+    """Rewrite a gym's own exercise. Returns the rows the UPDATE actually reached.
+
+    `read_at` is the row's updated_at as the form read it, and the UPDATE only
+    reaches the row if nobody has written it since — touch_updated_at() moves
+    the stamp on every write. Without it, a form drawn from a copy read just
+    before 011 was pasted wrote that copy's Greek name and single tool back
+    over the list 011 had just put in; and two coaches editing one exercise
+    silently kept whichever saved last.
+    """
+    query = (
         db.client()
         .table("exercises")
         .update(values)
         .eq("gym_id", gym_id)
         .eq("id", exercise_id)
-        .execute()
-        .data
-        or []
     )
+    if read_at:
+        query = query.eq("updated_at", read_at)
+    rows = query.execute().data or []
     return len(rows)
 
 
@@ -372,7 +382,7 @@ def _edit_form(
         # and start the exercise over with no history.
         values["name_el" if exercise.get("name_el") else "name_en"] = new_name.strip()
     try:
-        touched = _update_exercise(exercise_id, gym_id, values)
+        touched = _update_exercise(exercise_id, gym_id, values, exercise.get("updated_at"))
     except Exception as exc:
         message = str(exc)
         if "_uniq" in message or "duplicate key" in message:
@@ -383,8 +393,14 @@ def _edit_form(
         return
     if not touched:
         # An UPDATE no policy let through matches zero rows and reports success
-        # — and the group must not move for an exercise whose row did not.
-        st.error("Οι αλλαγές δεν αποθηκεύτηκαν. Δοκίμασε ξανά.")
+        # — and the group must not move for an exercise whose row did not. The
+        # other way to reach no row is a row someone wrote after this form read
+        # it; the cache is dropped so the next look shows what is there now.
+        _clear()
+        st.error(
+            "Οι αλλαγές δεν αποθηκεύτηκαν: η άσκηση άλλαξε στο μεταξύ. "
+            "Κλείσε τη φόρμα, άνοιξέ τη ξανά και ξαναδοκίμασε."
+        )
         return
     try:
         _refile(exercise_id, gym_id, group_id)

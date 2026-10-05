@@ -57,6 +57,42 @@ values ('77770011-0000-0000-0000-000000000001', 'aaaaaaaa-0000-0000-0000-0000000
        ('77770011-0000-0000-0000-000000000003', 'aaaaaaaa-0000-0000-0000-000000000001',
         '66660011-0000-0000-0000-000000000003', 0, 'weight_reps', 30, 10, null, now());
 
+-- Pre-011 trainers typed their names into name_el, English or not: «Face Pull»
+-- is on the list and must continue; «bench press» duplicates the old Bench
+-- Press, which the list continues by id, and must fold into it.
+insert into public.exercises (id, gym_id, name_el, name_en, category, equipment, default_set_kind)
+values ('dddd0011-0000-0000-0000-000000000005', 'aaaaaaaa-0000-0000-0000-000000000001',
+        'Face Pull', null, 'upper', 'cable', 'weight_reps'),
+       ('dddd0011-0000-0000-0000-000000000006', 'aaaaaaaa-0000-0000-0000-000000000001',
+        'bench press', null, 'upper', 'barbell', 'weight_reps');
+
+-- The old incline press was the dumbbell one; the list's Incline Bench Press
+-- falls back to the barbell. A block that never said must keep dumbbells —
+-- which only holds if the freeze runs BEFORE the row is rewritten.
+insert into public.sessions (id, gym_id, athlete_id, logged_by, local_date, status)
+values ('55550011-0000-0000-0000-000000000002', 'aaaaaaaa-0000-0000-0000-000000000001',
+        'dddddddd-0000-0000-0000-000000000001', 'cccccccc-0000-0000-0000-000000000001',
+        current_date - 14, 'finished');
+insert into public.blocks (id, gym_id, session_id, exercise_id, position, equipment)
+values ('66660011-0000-0000-0000-000000000009', 'aaaaaaaa-0000-0000-0000-000000000001',
+        '55550011-0000-0000-0000-000000000002', 'ca7a1000-0000-4000-8000-000000000009', 0, null);
+
+-- The owner had archived the old Back Squat; the list's Squat continues it and
+-- must be back in the picker.
+update public.exercises set is_archived = true where id = 'ca7a1000-0000-4000-8000-000000000003';
+
+-- The old Bench Press as a coach left it: filed under Πλάτη by mistake, and its
+-- triceps filing removed. 011 files it exactly as the list says — the stale
+-- filing retired, the removed pair revived (the pair is the primary key).
+insert into public.exercise_muscles (exercise_id, muscle_group_id, role, gym_id)
+select 'ca7a1000-0000-4000-8000-000000000001', g.id, 'secondary', 'aaaaaaaa-0000-0000-0000-000000000001'
+  from public.muscle_groups g where g.gym_id is null and g.slug = 'πλατη'
+on conflict (exercise_id, muscle_group_id) do update set deleted_at = null;
+update public.exercise_muscles em set deleted_at = now()
+  from public.muscle_groups g
+ where em.muscle_group_id = g.id and g.slug = 'τρικεφαλοι'
+   and em.exercise_id = 'ca7a1000-0000-4000-8000-000000000001';
+
 select count(*) as other_gym_before
   from public.exercises where gym_id = 'bbbbbbbb-0000-0000-0000-000000000002' and deleted_at is null \gset
 
@@ -83,11 +119,28 @@ select case when count(*) = 0
  where gym_id = 'aaaaaaaa-0000-0000-0000-000000000001' and deleted_at is null
    and equipment <> equipment_options[1];
 
-select case when count(*) >= 40
-            then 'ο νέος κατάλογος έχει ' || count(*) || ' ασκήσεις: σωστό'
-            else 'ΛΑΘΟΣ: ο νέος κατάλογος έχει μόνο ' || count(*) || ' ασκήσεις' end
+-- The list as the file holds it, so the count and the names below follow the
+-- migration rather than a number copied into this test.
+create temporary table list_names as
+select m[1] as name
+  from regexp_matches(pg_read_file(:'migrations' || '/011_powerhouse_catalogue.sql'),
+                      E'\\n  \\(\\d+, ''([^'']+)''', 'g') as m;
+
+select case when count(*) = (select count(*) from list_names) and count(*) > 70
+            then 'ο νέος κατάλογος έχει ακριβώς τις ' || count(*) || ' ασκήσεις της λίστας: σωστό'
+            else 'ΛΑΘΟΣ: ζωντανές ασκήσεις ' || count(*) || ', η λίστα έχει ' || (select count(*) from list_names) end
   from public.exercises
  where gym_id = 'aaaaaaaa-0000-0000-0000-000000000001' and deleted_at is null;
+
+select case when count(*) = 0
+            then 'κάθε άσκηση της λίστας είναι ζωντανή και ορατή: σωστό'
+            else 'ΛΑΘΟΣ: λείπουν ή είναι κρυμμένες: ' || string_agg(l.name, ', ') end
+  from list_names l
+ where not exists (
+   select 1 from public.exercises e
+    where e.gym_id = 'aaaaaaaa-0000-0000-0000-000000000001' and e.deleted_at is null
+      and not e.is_archived and e.merged_into_id is null and e.name_en = l.name
+ );
 
 -- The two kinds of exercise the owner asked for.
 select case when equipment_options = '{barbell,dumbbell,smith}'::public.equipment[]
@@ -120,6 +173,23 @@ select case when name_en = 'Shoulder Press' and deleted_at is null
             else 'ΛΑΘΟΣ: το 011 δεν ακολούθησε το βέλος της συγχώνευσης — η γραμμή έγινε «'
                  || coalesce(name_en, name_el) || '»' end
   from public.exercises where id = 'dddd0011-0000-0000-0000-000000000004';
+
+select case when name_en = 'Face Pull' and name_el is null and deleted_at is null
+             and equipment_options = '{cable}'::public.equipment[]
+            then 'το δικό τους «Face Pull», γραμμένο στο name_el, συνεχίζει με το ιστορικό του: σωστό'
+            else 'ΛΑΘΟΣ: το δικό τους «Face Pull» έγινε ' || coalesce(name_en, name_el)
+                 || case when deleted_at is not null then ', διαγραμμένο' else '' end end
+  from public.exercises where id = 'dddd0011-0000-0000-0000-000000000005';
+
+select case when merged_into_id = 'ca7a1000-0000-4000-8000-000000000001' and deleted_at is not null
+            then 'το δικό τους «bench press» ενώθηκε στο Bench Press: σωστό'
+            else 'ΛΑΘΟΣ: το «bench press» έμεινε ' || coalesce('merged_into=' || merged_into_id::text, 'χωριστό') end
+  from public.exercises where id = 'dddd0011-0000-0000-0000-000000000006';
+
+select case when not is_archived and merged_into_id is null and deleted_at is null
+            then 'το αρχειοθετημένο παλιό Back Squat ξαναφαίνεται ως Squat: σωστό'
+            else 'ΛΑΘΟΣ: το Squat έμεινε κρυμμένο' end
+  from public.exercises where id = 'ca7a1000-0000-4000-8000-000000000003';
 
 select case when merged_into_id = 'ca7a1000-0000-4000-8000-000000000003' and deleted_at is not null
             then 'το δικό τους «squat» ενώθηκε στο Squat, με το ιστορικό του: σωστό'
@@ -170,6 +240,11 @@ select case when string_agg(coalesce(equipment::text, 'NULL'), ',' order by posi
             else 'ΛΑΘΟΣ: τα παλιά blocks έγιναν ' || string_agg(coalesce(equipment::text, 'NULL'), ',' order by position) end
   from public.blocks where session_id = '55550011-0000-0000-0000-000000000001';
 
+select case when equipment = 'dumbbell'
+            then 'η παλιά επικλινής με αλτήρες έμεινε με αλτήρες, όχι με τη μπάρα του νέου: σωστό'
+            else 'ΛΑΘΟΣ: η παλιά επικλινής έγινε ' || coalesce(equipment::text, 'χωρίς όργανο') end
+  from public.blocks where id = '66660011-0000-0000-0000-000000000009';
+
 -- Old lateral raises logged on the cable are Cable Lateral Raise now; the ones
 -- on dumbbells stay with Lateral Raise, which is the old row itself.
 select case when e.name_en = 'Cable Lateral Raise'
@@ -203,13 +278,14 @@ select case when count(*) = 0
     having count(em.muscle_group_id) <> 1
   ) x;
 
-select case when string_agg(g.slug, ',' order by g.slug) = 'στηθοσ'
-            then 'το Bench Press είναι κύρια στο Στήθος: σωστό'
-            else 'ΛΑΘΟΣ: το Bench Press είναι κύρια στα ' || coalesce(string_agg(g.slug, ','), 'κανένα') end
+select case when string_agg(g.slug || ':' || em.role, ',' order by g.slug)
+                  = 'στηθοσ:primary,τρικεφαλοι:secondary,ωμοι:secondary'
+            then 'το Bench Press είναι φιλαρισμένο ακριβώς όπως λέει η λίστα: σωστό'
+            else 'ΛΑΘΟΣ: το Bench Press είναι στα ' || coalesce(string_agg(g.slug || ':' || em.role, ','), 'κανένα') end
   from public.exercise_muscles em
   join public.muscle_groups g on g.id = em.muscle_group_id
  where em.exercise_id = 'ca7a1000-0000-4000-8000-000000000001'
-   and em.role = 'primary' and em.deleted_at is null;
+   and em.deleted_at is null;
 
 -- The backup still reads a removed exercise's name and the frozen tool.
 do $$
