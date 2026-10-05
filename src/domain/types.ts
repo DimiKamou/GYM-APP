@@ -163,8 +163,7 @@ export interface Exercise extends Auditable {
    *  - `null` — legacy, any implement; `equipment` is the usual one.
    *  - one element — the tool is fixed by the exercise ("Cable Lateral Raise" is a cable).
    *  - two or more — the coach chooses among exactly these at log time ("Bench Press" with a
-   *    bar, dumbbells or the Smith), so `equipment` alone says nothing about a given block,
-   *    and a block's implement is shown through `knownEquipment`, never by hand.
+   *    bar, dumbbells or the Smith), so `equipment` alone says nothing about a given block.
    * When non-null it is non-empty and contains `equipment`; the schema checks both.
    */
   equipmentOptions: Equipment[] | null
@@ -229,7 +228,7 @@ export interface Block extends Auditable {
    * The implement of this execution. `null` means whatever the exercise says, which is every
    * block written before the column existed — except on an exercise with several
    * `equipmentOptions`, where it means the pick was not recorded. Resolve it with
-   * `blockEquipment` to compare and `knownEquipment` to display, never by hand.
+   * `blockEquipment`, never by hand: it is also the implement the matched history was done with.
    */
   equipment: Equipment | null
 }

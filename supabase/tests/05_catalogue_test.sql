@@ -22,6 +22,16 @@ values ('dddd0011-0000-0000-0000-000000000001', 'aaaaaaaa-0000-0000-0000-0000000
        ('dddd0011-0000-0000-0000-000000000002', 'aaaaaaaa-0000-0000-0000-000000000001',
         'Πιέσεις με λάστιχο', null, 'upper', 'other', 'weight_reps');
 
+-- The case 006's fold leaves behind: the gym had typed its own shoulder press
+-- before adopting the catalogue, and 006 folded the catalogue's Overhead Press
+-- (the row the list's Shoulder Press continues) into it and deleted it.
+insert into public.exercises (id, gym_id, name_el, name_en, category, equipment, default_set_kind)
+values ('dddd0011-0000-0000-0000-000000000004', 'aaaaaaaa-0000-0000-0000-000000000001',
+        'Ώθηση Ώμων μας', null, 'upper', 'barbell', 'weight_reps');
+update public.exercises
+   set merged_into_id = 'dddd0011-0000-0000-0000-000000000004', deleted_at = now()
+ where id = 'ca7a1000-0000-4000-8000-000000000007';
+
 insert into public.sessions (id, gym_id, athlete_id, logged_by, local_date, status)
 values ('55550011-0000-0000-0000-000000000001', 'aaaaaaaa-0000-0000-0000-000000000001',
         'dddddddd-0000-0000-0000-000000000001', 'cccccccc-0000-0000-0000-000000000001',
@@ -104,6 +114,12 @@ select case when name_en = 'Squat' and deleted_at is null
             then 'το παλιό Back Squat συνεχίζει ως Squat: σωστό'
             else 'ΛΑΘΟΣ: το παλιό Back Squat έγινε «' || coalesce(name_en, name_el) || '»' end
   from public.exercises where id = 'ca7a1000-0000-4000-8000-000000000003';
+
+select case when name_en = 'Shoulder Press' and deleted_at is null
+            then 'η δική τους «Ώθηση Ώμων», όπου το 006 είχε ενώσει την παλιά, συνεχίζει ως Shoulder Press: σωστό'
+            else 'ΛΑΘΟΣ: το 011 δεν ακολούθησε το βέλος της συγχώνευσης — η γραμμή έγινε «'
+                 || coalesce(name_en, name_el) || '»' end
+  from public.exercises where id = 'dddd0011-0000-0000-0000-000000000004';
 
 select case when merged_into_id = 'ca7a1000-0000-4000-8000-000000000003' and deleted_at is not null
             then 'το δικό τους «squat» ενώθηκε στο Squat, με το ιστορικό του: σωστό'

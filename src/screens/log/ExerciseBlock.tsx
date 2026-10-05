@@ -2,7 +2,7 @@ import type { CSSProperties } from 'react'
 import { useTranslation } from 'react-i18next'
 
 import { useLastPerformance } from '@/data/hooks'
-import { knownEquipment } from '@/domain/analytics'
+import { blockEquipment } from '@/domain/analytics'
 import { formatLastPerformance, type Locale } from '@/domain/format'
 import type { Block, Exercise, SetKind, Uuid, WorkoutSet } from '@/domain/types'
 import { Button, Card, CategoryPill, Icon } from '@/ui'
@@ -109,9 +109,11 @@ export function ExerciseBlock({
   const last = useLastPerformance(athleteId, exercise?.id, sessionId, block.equipment)
   const name = exerciseName(exercise, locale)
   const hasSets = block.sets.length > 0
-  // Not `blockEquipment`: on a movement the coach does with a choice of implements, a block
-  // that never recorded the pick has no implement to print, only a fallback.
-  const implement = knownEquipment(block, exercise)
+  // The implement of the NUMBERS on the "last time" line, which is the one they were matched
+  // on. The PWA records no pick, so on a movement with a choice of implements this block's
+  // history lookup runs on the fallback — and a barbell 80×8 printed with no implement beside
+  // it is exactly the bare number a coach loads the wrong bar from.
+  const implement = blockEquipment(block, exercise)
 
   return (
     <Card>

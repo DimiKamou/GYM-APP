@@ -34,17 +34,37 @@
 --      duplicate: folded into the reused/new row (merged_into_id), so its
 --      history follows the arrow, and then removed.
 --   4. Everything else the gym had is removed — soft-deleted, as everything in
---      this schema is. Old workouts still name them: every reader of a past
---      block looks the exercise up by id, deleted or not.
+--      this schema is. Old workouts still name them in the Streamlit app and in
+--      the backup export, which look an exercise up by id, deleted or not. The
+--      dormant PWA in src/ does not yet: its catalogue read drops deleted rows,
+--      so it must read past blocks by id before it is deployed again.
 --   5. The new list is written, English names only (`name_en`; `name_el` is
 --      NULL), each filed under its muscle groups.
 --
 -- Runs only on a project with exactly one gym, like 006, and only after 006
--- (a shared catalogue would still show beside the gym's own). Run 010 first:
--- this file uses its tools, and the SQL editor runs a paste as one
--- transaction. A second run does nothing: once any exercise of the gym has a
--- tool list, the list is the gym's to edit, and re-running this would undo
--- the owner's edits and remove exercises the trainers added since.
+-- (a shared catalogue would still show beside the gym's own). Run 010 first,
+-- as its own paste: this file uses its tools, and a new enum value cannot be
+-- used in the transaction that adds it. A second run does nothing: once any
+-- exercise of the gym has a tool list, the list is the gym's to edit, and
+-- re-running this would undo the owner's edits and remove exercises the
+-- trainers added since.
+--
+-- One explicit transaction, whatever runs it. The SQL editor already runs a
+-- paste as one; plain `psql -f` does not, and without this a failed list
+-- insert would let the swap below run on an EMPTY list — removing the whole
+-- catalogue — and leave the new column behind, so that every later run of
+-- this file believed it had already happened.
+
+begin;
+
+do $$
+begin
+  if not ('bosu' = any (enum_range(null::public.equipment)::text[])) then
+    raise exception
+      'Το 011 δεν έτρεξε: λείπουν τα νέα όργανα. Τρέξε πρώτα το 010 μόνο του, και μετά ξανά το 011.';
+  end if;
+end;
+$$;
 
 alter table public.exercises
   add column if not exists equipment_options public.equipment[];
@@ -205,10 +225,12 @@ begin
       'Το 011 δεν έτρεξε: δεν υπάρχει γυμναστήριο ακόμη. Φτιάξε το γυμναστήριο στην εφαρμογή και τρέξε ξανά το 011.';
   end if;
   if gyms > 1 then
-    raise notice
-      'Το 011 δεν έτρεξε: βρέθηκαν % γυμναστήρια. Ο κατάλογος ενός γυμναστηρίου δεν αντικαθιστά τον κοινό.',
+    -- An exception, not a notice: a notice would let the transaction commit
+    -- the new column with nothing replaced, and from then on every run of
+    -- this file would think it had already happened.
+    raise exception
+      'Το 011 δεν έτρεξε: βρέθηκαν % γυμναστήρια. Ο κατάλογος γράφτηκε για ένα γυμναστήριο, το PowerHouseGym.',
       gyms;
-    return;
   end if;
   select id into the_gym from public.gyms where deleted_at is null;
 
@@ -223,6 +245,11 @@ begin
   if exists (select 1 from public.exercises where gym_id is null and deleted_at is null) then
     raise exception
       'Το 011 δεν έτρεξε: υπάρχει ακόμη κοινός κατάλογος. Τρέξε πρώτα το 006 και μετά ξανά το 011.';
+  end if;
+
+  if (select count(*) from powerhouse_list) < 70 then
+    raise exception 'Το 011 δεν έτρεξε: η λίστα ασκήσεων φορτώθηκε μισή (% γραμμές).',
+      (select count(*) from powerhouse_list);
   end if;
 
   -- A typo in a slug would file an exercise under nothing, with no error
@@ -250,21 +277,34 @@ begin
   -- 2. Which existing row, if any, each exercise of the new list continues.
   for r in select * from powerhouse_list order by ord loop
     found_id := null;
+    -- Both lookups follow the merge arrow to the live row it points at. 006
+    -- folds a catalogue row the gym had typed for itself INTO the gym's own
+    -- row and deletes it, so the old Bench Press may be a dead pointer whose
+    -- history lives on «Πιέσεις Στήθους» — and that row, not a new empty
+    -- Bench Press, is what continues.
     if r.reuse_id is not null then
-      select e.id into found_id
+      select coalesce(m.id, e.id) into found_id
         from public.exercises e
+        left join public.exercises m
+          on m.id = e.merged_into_id and m.gym_id = the_gym and m.deleted_at is null
        where e.id = r.reuse_id
          and e.gym_id = the_gym
-         and e.deleted_at is null
-         and not exists (select 1 from powerhouse_targets t where t.target_id = e.id);
+         and (e.deleted_at is null or m.id is not null)
+         and not exists (
+           select 1 from powerhouse_targets t where t.target_id = coalesce(m.id, e.id)
+         );
     end if;
     if found_id is null then
-      select e.id into found_id
+      select coalesce(m.id, e.id) into found_id
         from public.exercises e
+        left join public.exercises m
+          on m.id = e.merged_into_id and m.gym_id = the_gym and m.deleted_at is null
        where e.gym_id = the_gym
          and e.deleted_at is null
          and (lower(btrim(e.name_en)) = lower(r.name) or lower(btrim(e.name_el)) = lower(r.name))
-         and not exists (select 1 from powerhouse_targets t where t.target_id = e.id)
+         and not exists (
+           select 1 from powerhouse_targets t where t.target_id = coalesce(m.id, e.id)
+         )
        -- A canonical row before a merged duplicate, then the oldest: the one
        -- most history already points at.
        order by (e.merged_into_id is null) desc, e.created_at, e.id
@@ -428,3 +468,5 @@ $$;
 
 drop table if exists pg_temp.powerhouse_targets;
 drop table if exists pg_temp.powerhouse_list;
+
+commit;

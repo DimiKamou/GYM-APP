@@ -8,7 +8,6 @@ import {
   epley,
   exerciseImplements,
   exerciseTrend,
-  knownEquipment,
   lastPerformance,
   muscleGroupShare,
   muscleGroupVolume,
@@ -646,32 +645,22 @@ describe('the implement a screen may state', () => {
     equipmentOptions: null,
   }
 
-  it('states nothing for an unrecorded pick on a movement with a choice of implements', () => {
-    expect(knownEquipment({ equipment: null }, choice)).toBeNull()
-    // Comparisons still need a value, so the history lookup keeps resolving to the fallback.
+
+
+
+  it('names the implement history was matched on, so a number never prints bare', () => {
+    // The PWA records no pick: the lookup runs on the fallback, and the line says which.
     expect(blockEquipment({ equipment: null }, choice)).toBe('barbell')
-  })
-
-  it('states the recorded pick, whatever the exercise allows', () => {
-    expect(knownEquipment({ equipment: 'dumbbell' }, choice)).toBe('dumbbell')
-    expect(knownEquipment({ equipment: 'smith' }, legacy)).toBe('smith')
-  })
-
-  it('states the exercise implement where it is fixed or the row predates the choice', () => {
-    expect(knownEquipment({ equipment: null }, fixed)).toBe('cable')
-    expect(knownEquipment({ equipment: null }, legacy)).toBe('barbell')
+    expect(blockEquipment({ equipment: 'dumbbell' }, choice)).toBe('dumbbell')
+    expect(blockEquipment({ equipment: null }, fixed)).toBe('cable')
   })
 
   it('treats a row persisted before the column existed as legacy, not as a choice', () => {
     // The local demo's stored catalogue carries no `equipmentOptions` key at all.
     const stored = { equipment: 'barbell' } as Pick<Exercise, 'equipment' | 'equipmentOptions'>
-    expect(knownEquipment({ equipment: null }, stored)).toBe('barbell')
     expect(exerciseImplements(stored)).toEqual(['barbell'])
   })
 
-  it('states nothing when neither the block nor the catalogue knows', () => {
-    expect(knownEquipment({ equipment: null }, undefined)).toBeNull()
-  })
 
   it('describes an exercise by every implement it is done with, or by its one', () => {
     expect(exerciseImplements(choice)).toEqual(['barbell', 'dumbbell', 'smith'])

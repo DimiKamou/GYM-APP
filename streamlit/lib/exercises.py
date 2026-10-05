@@ -76,7 +76,7 @@ def has_tool_lists(gym_id: str) -> bool:
     return True
 
 
-def _ready(gym_id: str) -> bool:
+def tools_ready(gym_id: str) -> bool:
     """has_tool_lists, for code that draws widgets and cannot stop on an error.
 
     A probe that could not reach the server says nothing about the schema; the
@@ -88,6 +88,18 @@ def _ready(gym_id: str) -> bool:
         return True
 
 
+def row_has_tools(exercise: dict[str, Any] | None) -> bool:
+    """Was this row read from a database that has run 011?
+
+    Decided from the row, not the probe, for every WRITE that starts from a row
+    on screen. The two are cached apart: for up to a minute after the paste the
+    probe can say yes while the screen still shows a row read before it — and
+    saving that row would write the pre-011 name and tool over what 011 just
+    did. A row carries the key exactly when it was selected with the column.
+    """
+    return bool(exercise) and "equipment_options" in exercise
+
+
 def columns(gym_id: str, base: str) -> str:
     """`base`, plus the tool list once the database has one."""
     return f"{base}, equipment_options" if has_tool_lists(gym_id) else base
@@ -95,7 +107,7 @@ def columns(gym_id: str, base: str) -> str:
 
 def tool_labels(gym_id: str) -> dict[str, str]:
     """The tools a form may offer on this database right now."""
-    if _ready(gym_id):
+    if tools_ready(gym_id):
         return dict(EQUIPMENT_LABELS)
     return {value: EQUIPMENT_LABELS[value] for value in _TOOLS_BEFORE_010}
 
@@ -270,22 +282,24 @@ def create(
     """
     client = db.client()
     exercise_id = str(uuid4())
+    ready = tools_ready(gym_id)
     row: dict[str, Any] = {
         "id": exercise_id,
         # Never null: null is the shared catalogue, which the policies make
         # read-only to every client. The insert would be refused.
         "gym_id": gym_id,
-        # name_en, whatever language it is typed in. Since 011 the gym's whole
-        # catalogue is named in that one column, and a name is unique only
-        # within its column: a «Bench Press» typed into name_el would sit
-        # beside the catalogue's own, two identical lines in the picker that
-        # exercises_gym_en_uniq could never see.
-        "name_en": name.strip(),
         "category": category,
         "equipment": equipment,
         "default_set_kind": kind,
     }
-    if equipment_options and _ready(gym_id):
+    # The column the gym's catalogue is named in. Since 011 that is name_en,
+    # whatever language it is typed in: a name is unique only within its own
+    # column, and a «Bench Press» typed into name_el would sit beside the
+    # catalogue's own, two identical lines exercises_gym_en_uniq never sees.
+    # Before 011 every name is in name_el, and a new one must collide with them
+    # there — or «Πιέσεις Στήθους» could be created a second time.
+    row["name_en" if ready else "name_el"] = name.strip()
+    if equipment_options and ready:
         # exercises_equipment_options_check: the column's own tool is one of
         # the options, or the insert is refused.
         options = list(dict.fromkeys(equipment_options))

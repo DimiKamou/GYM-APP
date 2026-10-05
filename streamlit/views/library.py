@@ -351,18 +351,26 @@ def _edit_form(
     if not kind_label:
         st.error("Διάλεξε τι μετράει.")
         return
+    after_011 = exercises.row_has_tools(exercise)
+    if not after_011 and not tools:
+        st.error("Διάλεξε εξοπλισμό — με τι γίνεται η άσκηση.")
+        return
 
     equipment, options = exercises.stored_tools(tools)
     values: dict[str, Any] = {
-        # One column for the gym's names (see exercises.create): the Greek one
-        # is cleared so the row cannot answer to two names.
-        "name_en": new_name.strip(),
-        "name_el": None,
         "equipment": equipment,
         "default_set_kind": _KIND_CHOICES[kind_label],
     }
-    if exercises.has_tool_lists(gym_id):
-        values["equipment_options"] = options
+    if after_011:
+        # One column for the gym's names (see exercises.create): the Greek one
+        # is cleared so the row cannot answer to two names.
+        values.update({"name_en": new_name.strip(), "name_el": None, "equipment_options": options})
+    else:
+        # Before 011 the name goes back to the column it came from, and the
+        # other is left alone. 011 recognises the old rows by their English
+        # name; writing the Greek one over it would make 011 remove the row
+        # and start the exercise over with no history.
+        values["name_el" if exercise.get("name_el") else "name_en"] = new_name.strip()
     try:
         touched = _update_exercise(exercise_id, gym_id, values)
     except Exception as exc:
@@ -406,14 +414,34 @@ def _tools_input(gym_id: str, exercise: dict[str, Any] | None) -> list[str]:
     "what can this be done with" — and the number of answers is what decides
     the rest: one and it is selected the moment the exercise is, several and
     the coach chooses when logging.
+
+    Until the database has run 011 there is nowhere to keep more than one, so
+    the field is the one it always was — a single required όργανο. A field that
+    accepted three tools and kept one, behind a success message, would be a
+    form that lies.
     """
+    legacy = (
+        not exercises.row_has_tools(exercise)
+        if exercise is not None
+        else not exercises.tools_ready(gym_id)
+    )
+    labels = list(exercises.tool_labels(gym_id).values())
+    if legacy:
+        current = _EQUIPMENT_LABELS.get(str((exercise or {}).get("equipment") or ""), "")
+        picked = st.selectbox(
+            "Εξοπλισμός",
+            options=labels,
+            index=labels.index(current) if current in labels else None,
+            placeholder="Διάλεξε όργανο",
+        )
+        return [_EQUIPMENT_CHOICES[picked]] if picked else []
+
     allowed = exercises.options_of(exercise)
     if allowed is None and exercise:
         allowed = [str(exercise.get("equipment") or "")]
     if allowed and len(allowed) == len(_EQUIPMENT_LABELS):
         # "Any tool" is stored as every tool; shown as none, the way it is entered.
         allowed = []
-    labels = list(exercises.tool_labels(gym_id).values())
     chosen = st.multiselect(
         "Όργανα",
         options=labels,
@@ -537,6 +565,9 @@ def _new_exercise_form(gym_id: str, groups: list[dict[str, Any]]) -> None:
             return
         if not name.strip():
             st.error("Γράψε το όνομα της άσκησης.")
+            return
+        if not tools and not exercises.tools_ready(gym_id):
+            st.error("Διάλεξε εξοπλισμό — με τι γίνεται η άσκηση.")
             return
         if not primary:
             st.error("Διάλεξε κύρια μυϊκή ομάδα, αλλιώς η άσκηση δεν θα βρίσκεται στην προπόνηση.")

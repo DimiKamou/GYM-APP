@@ -172,26 +172,6 @@ export function exerciseImplements(
   return options && options.length >= 2 ? options : [exercise.equipment]
 }
 
-/**
- * The implement a screen may state for a block: `blockEquipment` minus its one guess.
- *
- * On an exercise with two or more `equipmentOptions` the coach picks the implement each time,
- * so a block that did not record the pick was done with something unknown, and the exercise's
- * `equipment` is only a fallback. Printed beside "80×8" it would tell the next coach to load a
- * barbell for what may have been dumbbells. Comparisons between blocks stay on
- * `blockEquipment`, where an unrecorded pick has to equal something.
- */
-export function knownEquipment(
-  block: Pick<Block, 'equipment'>,
-  exercise: Pick<Exercise, 'equipment' | 'equipmentOptions'> | undefined,
-): Equipment | null {
-  if (block.equipment) return block.equipment
-  // Optional chaining, not a null check: an exercise the local demo persisted before the
-  // column existed has no such key at all.
-  if ((exercise?.equipmentOptions?.length ?? 0) >= 2) return null
-  return blockEquipment(block, exercise)
-}
-
 // ---------------------------------------------------------------------------
 // Indexing
 // ---------------------------------------------------------------------------

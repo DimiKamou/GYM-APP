@@ -1733,12 +1733,38 @@ def test_the_app_keeps_working_until_the_sql_is_run() -> None:
           for b in state.rows("blocks", session_id=state.SESSION)))
 
     at = open_library()
+    check("the library's tool field is the old single one",
+          not [m for m in at.multiselect if m.label == "Όργανα"]
+          and [s for s in at.selectbox if s.label == "Εξοπλισμός"], str([w.label for w in at.selectbox]))
     [t for t in at.text_input if t.label == "Όνομα"][0].set_value("Landmine Press")
     [s for s in at.selectbox if s.label == "Κύρια μυϊκή ομάδα"][0].set_value(state.CHEST)
     press(at, "library_new")
-    row = state.rows("exercises", name_en="Landmine Press")
-    check("the library still creates exercises, without the new column",
-          len(row) == 1 and "equipment_options" not in row[0], str(row))
+    check("and still requires a tool", "Διάλεξε εξοπλισμό" in texts(at), texts(at)[:300])
+    [s for s in at.selectbox if s.label == "Εξοπλισμός"][0].set_value("Μπάρα")
+    press(at, "library_new")
+    row = state.rows("exercises", name_el="Landmine Press")
+    check("the library still creates exercises, in the column the old names are in",
+          len(row) == 1 and "equipment_options" not in row[0] and row[0]["equipment"] == "barbell", str(row))
+
+    # Saving an old row must not move its Greek name over its English one:
+    # 011 recognises the old catalogue by the English name. The pilot gym owns
+    # its old rows since 006, so this one is made the gym's.
+    state.rows("exercises", id="e-pullup")[0]["gym_id"] = state.GYM
+    import streamlit as st
+
+    st.cache_data.clear()
+    fake_supabase.MISSING_COLUMNS["exercises"] = {"equipment_options"}
+    at = open_library()
+    press(at, f"ed-{state.BACK}-e-pullup")
+    press(at, f"library_edit-{state.BACK}-e-pullup")
+    pullup = state.rows("exercises", id="e-pullup")[0]
+    check("an old row saved before 011 keeps both its names",
+          pullup["name_el"] == "Έλξεις" and pullup["name_en"] == "Pull-up", str(pullup))
+
+    at = open_log()
+    at.selectbox(key="log_group").set_value(0).run()
+    check("the workout's new-exercise form does not offer tools it cannot keep",
+          not [m for m in at.multiselect if m.label == "Γίνεται και με"], str([m.label for m in at.multiselect]))
 
     open_athlete()
     open_screen(PROGRESS_DRIVER)
@@ -1748,6 +1774,84 @@ def test_the_app_keeps_working_until_the_sql_is_run() -> None:
     fake_supabase.MISSING_COLUMNS.clear()
     exercises.has_tool_lists.clear()
     check("the column is seen once it exists", exercises.has_tool_lists(state.GYM) is True)
+
+
+def test_a_stale_screen_cannot_write_over_011() -> None:
+    """For up to a minute after the paste a screen can show a row read before it.
+
+    Saving that row must not write the pre-011 name and tool over what 011 did:
+    the decision is the row's — was it read with the column — not the probe's.
+    """
+    from lib import exercises
+
+    state.reset()
+    # The probe already says yes; the edit form is drawn from a row read before.
+    exercises.has_tool_lists.clear()
+    exercises.has_tool_lists(state.GYM)
+    stale = {k: v for k, v in state.rows("exercises", id=state.CHOICE)[0].items() if k != "equipment_options"}
+    check("a row without the column is not a 011 row", not exercises.row_has_tools(stale))
+    check("a row with it is", exercises.row_has_tools(state.rows("exercises", id=state.CHOICE)[0]))
+
+
+def test_repeat_never_bypasses_the_exercises_own_tools() -> None:
+    """A lateral raise logged on the cable before 011 is not a dumbbell Lateral Raise."""
+    state.reset()
+    state.STORE["blocks"].append({
+        "id": "b-hist-cable", "gym_id": state.GYM, "session_id": state.LAST_SESSION,
+        "exercise_id": state.CHOICE, "position": 1, "note": None, "equipment": "cable",
+        "deleted_at": None,
+    })
+    at = open_log()
+    labels = [b.label for b in at.button if b.label.startswith("+ ")]
+    check("a tool the exercise does not offer is not repeated",
+          not any("Incline Bench Press" in label for label in labels), str(labels))
+
+    # A fixed exercise repeated from a block that never said its tool gets it.
+    state.reset()
+    state.STORE["blocks"].append({
+        "id": "b-hist-fixed", "gym_id": state.GYM, "session_id": state.LAST_SESSION,
+        "exercise_id": state.FIXED, "position": 1, "note": None, "equipment": None,
+        "deleted_at": None,
+    })
+    at = open_log()
+    press(at, f"log_again_{state.FIXED}")
+    added = state.rows("blocks", session_id=state.SESSION, exercise_id=state.FIXED)
+    check("a fixed exercise is repeated with its tool written down",
+          added and added[0].get("equipment") == "cable", str(added))
+
+
+def test_changing_an_exercises_tools_resets_the_third_list() -> None:
+    """Fixed → choice must not leave the old tool preselected."""
+    state.reset()
+    at = _pick(open_log(), "Cable Lateral Raise")
+    check("fixed: the cable is selected", way_list(at).value == "cable")
+    state.rows("exercises", id=state.FIXED)[0]["equipment_options"] = ["cable", "dumbbell"]
+    import streamlit as st
+
+    st.cache_data.clear()
+    at.run()
+    raise_on_exception(at)
+    ways = way_list(at)
+    check("after the owner adds dumbbells, the coach chooses afresh",
+          ways.value is None and list(ways.options) == ["Τροχαλία", "Αλτήρες"],
+          f"{ways.value} {list(ways.options)}")
+
+
+def test_a_new_exercise_is_measured_by_all_its_tools() -> None:
+    """Bodyweight today and a barbell next week is measured in kilos."""
+    state.reset()
+    at = open_log()
+    at.selectbox(key="log_group").set_value(0).run()
+    [t for t in at.text_input if t.label == "Όνομα άσκησης"][0].set_value("Walking Lunge")
+    at.selectbox(key=f"log_new_gear_{state.CHEST}").set_value("Σωματικό βάρος")
+    at.multiselect(key=f"log_new_more_{state.CHEST}").set_value(["Μπάρα", "Αλτήρες"])
+    press(at, f"log_new_exercise_{state.CHEST}")
+    row = state.rows("exercises", name_en="Walking Lunge")
+    check("the exercise is kilos × reps", row and row[0]["default_set_kind"] == "weight_reps", str(row))
+    block = state.rows("blocks", session_id=state.SESSION, exercise_id=row[0]["id"])[0] if row else {}
+    keys = {w.key for w in at.number_input}
+    check("today's bodyweight block still gets the reps form", f"log_bwreps_{block.get('id')}" in keys,
+          str(sorted(k for k in keys if k)))
 
 
 # ---------------------------------------------------------------------------
