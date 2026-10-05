@@ -2,6 +2,7 @@ import { readdirSync, readFileSync, statSync } from 'node:fs'
 import { join, resolve } from 'node:path'
 import { describe, expect, it } from 'vitest'
 
+import type { Equipment } from '@/domain/types'
 import { el } from './el'
 import { en } from './en'
 
@@ -70,5 +71,40 @@ describe('the two locales stay in step', () => {
     // The prototype had this backwards. Greek trainers are the users; English is the courtesy.
     expect(paths(el).length).toBeGreaterThan(0)
     expect(paths(el).length).toBe(paths(en).length)
+  })
+})
+
+/**
+ * `t(\`equipmentTypes.${value}\`)` is total only while the labels track the Postgres enum. A
+ * value the schema gains without a label renders its raw dotted key on the log screen, beside
+ * the very number it was meant to qualify.
+ */
+describe('every implement the schema can hold has a label', () => {
+  // `satisfies` makes this list exactly the union: a new `Equipment` value, or a stale one,
+  // fails `tsc -b` here rather than passing a test that never heard of it.
+  const EVERY_EQUIPMENT = Object.keys({
+    barbell: 0,
+    dumbbell: 0,
+    machine: 0,
+    cable: 0,
+    bodyweight: 0,
+    cardio: 0,
+    kettlebell: 0,
+    smith: 0,
+    ez_bar: 0,
+    trap_bar: 0,
+    sandbag: 0,
+    bosu: 0,
+    box: 0,
+    equalizer: 0,
+    other: 0,
+  } satisfies Record<Equipment, 0>).sort()
+
+  it.each([
+    ['el', el.equipmentTypes],
+    ['en', en.equipmentTypes],
+  ])('%s labels exactly the Equipment values, none blank', (_locale, labels) => {
+    expect(Object.keys(labels).sort()).toEqual(EVERY_EQUIPMENT)
+    for (const label of Object.values(labels)) expect(label.trim()).not.toBe('')
   })
 })

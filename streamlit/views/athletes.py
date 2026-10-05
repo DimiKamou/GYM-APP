@@ -155,7 +155,7 @@ def _top_lines(gym_id: str, session_id: str) -> list[str]:
     if exercise_ids:
         rows_of_catalogue = (
             client.table("exercises")
-            .select("id, name_el, name_en, merged_into_id, equipment")
+            .select(exercises.columns(gym_id, "id, name_el, name_en, merged_into_id, equipment"))
             .in_("id", exercise_ids)
             .execute()
             .data
@@ -178,7 +178,7 @@ def _top_lines(gym_id: str, session_id: str) -> list[str]:
     if merged:
         for row in (
             client.table("exercises")
-            .select("id, name_el, name_en, merged_into_id, equipment")
+            .select(exercises.columns(gym_id, "id, name_el, name_en, merged_into_id, equipment"))
             .in_("id", merged)
             .execute()
             .data
@@ -212,9 +212,7 @@ def _top_lines(gym_id: str, session_id: str) -> list[str]:
         # 008 one name spans several implements, and «Πιέσεις Στήθους · 80×8»
         # read at the barbell for an athlete who pressed two 40s is the misread
         # the column exists to prevent.
-        gear = exercises.EQUIPMENT_LABELS.get(
-            str(block.get("equipment") or exercise.get("equipment") or ""), ""
-        )
+        gear = exercises.equipment_of(exercise, str(block.get("equipment") or ""))
         name = f"{fmt.exercise_name(exercise)} · {gear}" if gear else fmt.exercise_name(exercise)
         lines.append(f"{name} · {fmt.format_set(top, kind)}")
         if len(lines) == _TOP_LINES:

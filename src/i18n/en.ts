@@ -503,6 +503,12 @@ export const en: Translation = {
     cardio: 'Cardio',
     kettlebell: 'Kettlebell',
     smith: 'Smith',
+    ez_bar: 'EZ bar',
+    trap_bar: 'Trap bar',
+    sandbag: 'Sandbag',
+    bosu: 'Bosu',
+    box: 'Box',
+    equalizer: 'Equalizer',
     other: 'Other',
   },
 

@@ -49,9 +49,14 @@ def _exercises(gym_id: str) -> list[dict[str, Any]]:
     return (
         db.client()
         .table("exercises")
-        .select("id, gym_id, name_el, name_en, category, equipment, default_set_kind, is_archived, merged_into_id")
+        .select(
+            exercises.columns(
+                gym_id,
+                "id, gym_id, name_el, name_en, category, equipment,"
+                " default_set_kind, is_archived, merged_into_id, updated_at",
+            )
+        )
         .is_("deleted_at", "null")
-        .order("name_el")
         .execute()
         .data
         or []
@@ -186,18 +191,28 @@ def _index_by_group(
 _EDITING = "library_editing"
 
 
-def _update_exercise(exercise_id: str, gym_id: str, values: dict[str, Any]) -> int:
-    """Rewrite a gym's own exercise. Returns the rows the UPDATE actually reached."""
-    rows = (
+def _update_exercise(
+    exercise_id: str, gym_id: str, values: dict[str, Any], read_at: Any = None
+) -> int:
+    """Rewrite a gym's own exercise. Returns the rows the UPDATE actually reached.
+
+    `read_at` is the row's updated_at as the form read it, and the UPDATE only
+    reaches the row if nobody has written it since — touch_updated_at() moves
+    the stamp on every write. Without it, a form drawn from a copy read just
+    before 011 was pasted wrote that copy's Greek name and single tool back
+    over the list 011 had just put in; and two coaches editing one exercise
+    silently kept whichever saved last.
+    """
+    query = (
         db.client()
         .table("exercises")
         .update(values)
         .eq("gym_id", gym_id)
         .eq("id", exercise_id)
-        .execute()
-        .data
-        or []
     )
+    if read_at:
+        query = query.eq("updated_at", read_at)
+    rows = query.execute().data or []
     return len(rows)
 
 
@@ -304,16 +319,11 @@ def _edit_form(
 
     with st.form(_key(scope, "library_edit", exercise_id)):
         st.caption(f"Επεξεργασία: {fmt.md(name)}")
-        name_el = st.text_input("Όνομα", value=str(exercise.get("name_el") or ""), max_chars=120)
-
-        equipment_labels = list(_EQUIPMENT_CHOICES)
-        current_gear = _EQUIPMENT_LABELS.get(str(exercise.get("equipment") or ""), "")
-        gear_label = st.selectbox(
-            "Εξοπλισμός",
-            options=equipment_labels,
-            index=equipment_labels.index(current_gear) if current_gear in equipment_labels else None,
-            placeholder="Διάλεξε όργανο",
-        )
+        # The name as the screen shows it, not name_el: since 011 the gym's
+        # exercises are named in English only, and a box bound to name_el
+        # opened empty on every one of them.
+        new_name = st.text_input("Όνομα", value=name if name != fmt.EMPTY else "", max_chars=120)
+        tools = _tools_input(gym_id, exercise)
 
         kind_labels = list(_KIND_CHOICES)
         current_kind = _KIND_LABELS.get(str(exercise.get("default_set_kind") or ""), "")
@@ -345,35 +355,52 @@ def _edit_form(
     if not saved:
         return
 
-    if not (name_el or "").strip():
+    if not (new_name or "").strip():
         st.error("Το όνομα δεν μπορεί να μείνει κενό.")
         return
-    if not gear_label or not kind_label:
-        st.error("Διάλεξε εξοπλισμό και τι μετράει.")
+    if not kind_label:
+        st.error("Διάλεξε τι μετράει.")
+        return
+    after_011 = exercises.row_has_tools(exercise)
+    if not after_011 and not tools:
+        st.error("Διάλεξε εξοπλισμό — με τι γίνεται η άσκηση.")
         return
 
+    equipment, options = exercises.stored_tools(tools)
+    values: dict[str, Any] = {
+        "equipment": equipment,
+        "default_set_kind": _KIND_CHOICES[kind_label],
+    }
+    if after_011:
+        # One column for the gym's names (see exercises.create): the Greek one
+        # is cleared so the row cannot answer to two names.
+        values.update({"name_en": new_name.strip(), "name_el": None, "equipment_options": options})
+    else:
+        # Before 011 the name goes back to the column it came from, and the
+        # other is left alone. 011 recognises the old rows by their English
+        # name; writing the Greek one over it would make 011 remove the row
+        # and start the exercise over with no history.
+        values["name_el" if exercise.get("name_el") else "name_en"] = new_name.strip()
     try:
-        touched = _update_exercise(
-            exercise_id,
-            gym_id,
-            {
-                "name_el": name_el.strip(),
-                "equipment": _EQUIPMENT_CHOICES[gear_label],
-                "default_set_kind": _KIND_CHOICES[kind_label],
-            },
-        )
+        touched = _update_exercise(exercise_id, gym_id, values, exercise.get("updated_at"))
     except Exception as exc:
         message = str(exc)
-        if "exercises_gym_el_uniq" in message or "duplicate key" in message:
-            st.error(f"Υπάρχει ήδη άσκηση με το όνομα «{name_el.strip()}».")
+        if "_uniq" in message or "duplicate key" in message:
+            st.error(f"Υπάρχει ήδη άσκηση με το όνομα «{new_name.strip()}».")
         else:
             st.error("Οι αλλαγές δεν αποθηκεύτηκαν.")
             st.caption(message)
         return
     if not touched:
         # An UPDATE no policy let through matches zero rows and reports success
-        # — and the group must not move for an exercise whose row did not.
-        st.error("Οι αλλαγές δεν αποθηκεύτηκαν. Δοκίμασε ξανά.")
+        # — and the group must not move for an exercise whose row did not. The
+        # other way to reach no row is a row someone wrote after this form read
+        # it; the cache is dropped so the next look shows what is there now.
+        _clear()
+        st.error(
+            "Οι αλλαγές δεν αποθηκεύτηκαν: η άσκηση άλλαξε στο μεταξύ. "
+            "Κλείσε τη φόρμα, άνοιξέ τη ξανά και ξαναδοκίμασε."
+        )
         return
     try:
         _refile(exercise_id, gym_id, group_id)
@@ -385,8 +412,60 @@ def _edit_form(
 
     _clear()
     st.session_state.pop(_EDITING, None)
-    ui.notice(_NOTICE, "ok", f"Η «{name_el.strip()}» ενημερώθηκε.")
+    ui.notice(_NOTICE, "ok", f"Η «{new_name.strip()}» ενημερώθηκε.")
     st.rerun()
+
+
+_TOOLS_HELP = (
+    "Ένα όργανο: επιλέγεται μόνο του στην προπόνηση (π.χ. Cable Lateral Raise → Τροχαλία). "
+    "Πολλά: ο προπονητής διαλέγει ανάμεσά τους κάθε φορά (π.χ. Bench Press → Μπάρα / Αλτήρες / Smith). "
+    "Κανένα: όποιο όργανο, κάθε φορά."
+)
+
+
+def _tools_input(gym_id: str, exercise: dict[str, Any] | None) -> list[str]:
+    """The tools an exercise can be done with, as the gym wrote them in its list.
+
+    One field for both of the gym's cases, because they are the same question —
+    "what can this be done with" — and the number of answers is what decides
+    the rest: one and it is selected the moment the exercise is, several and
+    the coach chooses when logging.
+
+    Until the database has run 011 there is nowhere to keep more than one, so
+    the field is the one it always was — a single required όργανο. A field that
+    accepted three tools and kept one, behind a success message, would be a
+    form that lies.
+    """
+    legacy = (
+        not exercises.row_has_tools(exercise)
+        if exercise is not None
+        else not exercises.tools_ready(gym_id)
+    )
+    labels = list(exercises.tool_labels(gym_id).values())
+    if legacy:
+        current = _EQUIPMENT_LABELS.get(str((exercise or {}).get("equipment") or ""), "")
+        picked = st.selectbox(
+            "Εξοπλισμός",
+            options=labels,
+            index=labels.index(current) if current in labels else None,
+            placeholder="Διάλεξε όργανο",
+        )
+        return [_EQUIPMENT_CHOICES[picked]] if picked else []
+
+    allowed = exercises.options_of(exercise)
+    if allowed is None and exercise:
+        allowed = [str(exercise.get("equipment") or "")]
+    if allowed and len(allowed) == len(_EQUIPMENT_LABELS):
+        # "Any tool" is stored as every tool; shown as none, the way it is entered.
+        allowed = []
+    chosen = st.multiselect(
+        "Όργανα",
+        options=labels,
+        default=[_EQUIPMENT_LABELS[value] for value in (allowed or []) if _EQUIPMENT_LABELS.get(value) in labels],
+        placeholder="Κανένα = όποιο όργανο, κάθε φορά",
+        help=_TOOLS_HELP,
+    )
+    return [_EQUIPMENT_CHOICES[label] for label in chosen]
 
 
 def _exercise_row(
@@ -413,7 +492,7 @@ def _exercise_row(
     if archived:
         label = f"~~{label}~~"
     bits = [
-        _EQUIPMENT_LABELS.get(exercise.get("equipment") or "", ""),
+        exercises.tools_label(exercise),
         _KIND_LABELS.get(exercise.get("default_set_kind") or "", ""),
     ]
     if mine:
@@ -465,24 +544,19 @@ def _exercise_row(
 def _new_exercise_form(gym_id: str, groups: list[dict[str, Any]]) -> None:
     with st.expander("Νέα άσκηση"):
         with st.form("library_new", clear_on_submit=True):
-            name_el = st.text_input(
-                "Όνομα στα ελληνικά",
+            name = st.text_input(
+                "Όνομα",
                 max_chars=120,
-                placeholder="Πιέσεις στήθους σε μηχάνημα",
-                help="Τα ελληνικά είναι υποχρεωτικά — έτσι τη λένε οι προπονητές και έτσι θα την ψάξουν.",
+                placeholder="π.χ. Cable Lateral Raise",
+                help="Όπως τη λέτε στο γυμναστήριο — έτσι θα την ψάξουν οι προπονητές.",
             )
             category_label = st.selectbox("Περιοχή σώματος", options=list(_CATEGORY_CHOICES))
-            # Blank, not «Μπάρα». A preselected όργανο is one nobody reads, and
-            # this field decides whether 40 kg means dumbbells or a barbell.
-            equipment_label = st.selectbox(
-                "Εξοπλισμός",
-                options=list(_EQUIPMENT_CHOICES),
-                index=None,
-                placeholder="Διάλεξε όργανο",
-            )
+            tools = _tools_input(gym_id, None)
             kind_label = st.selectbox(
                 "Τι μετράει",
                 options=list(_KIND_CHOICES),
+                index=None,
+                placeholder="Αυτόματα από τα όργανα",
                 help="Ο χρόνος στον διάδρομο και οι επαναλήψεις στη μπάρα δεν είναι το ίδιο μέγεθος.",
             )
 
@@ -499,38 +573,43 @@ def _new_exercise_form(gym_id: str, groups: list[dict[str, Any]]) -> None:
                 "Δευτερεύουσες",
                 options=list(by_id),
                 format_func=lambda i: by_id[i],
-                help="Προαιρετικά. Οι πιέσεις στήθους δουλεύουν και τρικέφαλους και πρόσθιους δελτοειδείς.",
+                help="Προαιρετικά. Το Bench Press δουλεύει και τρικέφαλους και πρόσθιους δελτοειδείς.",
             )
             submitted = st.form_submit_button("Προσθήκη", type="primary")
 
         if not submitted:
             return
-        if not name_el.strip():
-            st.error("Γράψε το ελληνικό όνομα.")
+        if not name.strip():
+            st.error("Γράψε το όνομα της άσκησης.")
             return
-        if not equipment_label:
+        if not tools and not exercises.tools_ready(gym_id):
             st.error("Διάλεξε εξοπλισμό — με τι γίνεται η άσκηση.")
             return
         if not primary:
             st.error("Διάλεξε κύρια μυϊκή ομάδα, αλλιώς η άσκηση δεν θα βρίσκεται στην προπόνηση.")
             return
 
+        equipment, options = exercises.stored_tools(tools)
         try:
             exercises.create(
                 gym_id,
-                name_el=name_el,
+                name=name,
                 category=_CATEGORY_CHOICES[category_label],
-                equipment=_EQUIPMENT_CHOICES[equipment_label],
-                kind=_KIND_CHOICES[kind_label],
+                equipment=equipment,
+                equipment_options=options,
+                kind=_KIND_CHOICES[kind_label] if kind_label else exercises.default_kind(tools),
                 primary_group=primary,
                 secondary_groups=list(secondary),
             )
         except Exception as exc:
-            st.error(f"Η άσκηση δεν προστέθηκε: {exc}")
+            if "_uniq" in str(exc) or "duplicate key" in str(exc):
+                st.error(f"Υπάρχει ήδη άσκηση με το όνομα «{name.strip()}».")
+            else:
+                st.error(f"Η άσκηση δεν προστέθηκε: {exc}")
             return
 
         _clear()
-        ui.notice(_NOTICE, "ok", f"Η «{name_el.strip()}» μπήκε στον κατάλογο.")
+        ui.notice(_NOTICE, "ok", f"Η «{name.strip()}» μπήκε στον κατάλογο.")
         st.rerun()
 
 
@@ -557,15 +636,21 @@ def render() -> None:
     search = st.text_input("Αναζήτηση", placeholder="Όνομα άσκησης", label_visibility="collapsed")
     show_archived = st.toggle("Δείξε και τις αποσυρμένες", value=False)
 
-    visible = [
-        e
-        for e in exercises
-        # A merged duplicate is not a separate movement any more; the block that
-        # still points at it follows the arrow when it renders its name.
-        if not e.get("merged_into_id")
-        and (show_archived or not e.get("is_archived"))
-        and (not search or fmt.matches(fmt.exercise_name(e), search))
-    ]
+    visible = sorted(
+        (
+            e
+            for e in exercises
+            # A merged duplicate is not a separate movement any more; the block
+            # that still points at it follows the arrow when it renders its name.
+            if not e.get("merged_into_id")
+            and (show_archived or not e.get("is_archived"))
+            and (not search or fmt.matches(fmt.exercise_name(e), search))
+        ),
+        # By the name the screen shows. The query used to order by name_el,
+        # which is empty for every exercise since the catalogue went English,
+        # and Postgres hands back NULLs in whatever order they lie on disk.
+        key=lambda e: fmt.fold(fmt.exercise_name(e)),
+    )
 
     mine = sum(1 for e in visible if e.get("gym_id"))
     line = f"{len(visible)} ασκήσεις, από τις οποίες {mine} δικές σας."

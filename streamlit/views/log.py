@@ -102,6 +102,17 @@ _KIND_LABELS = {
 # the cache is the leak that RLS was there to prevent.
 # ---------------------------------------------------------------------------
 
+# One column list for the two reads of an exercise row, because a column one of
+# them forgot is a column the screen silently reads as None: `equipment` went
+# missing from one of these for a week. `equipment_options`, which decides
+# whether the third list is locked or open, is added by exercises.columns()
+# only once the database has it.
+_EXERCISE_COLUMNS = (
+    "id, name_el, name_en, category, equipment, default_set_kind,"
+    " is_archived, merged_into_id, deleted_at"
+)
+
+
 @st.cache_data(ttl=300, show_spinner=False)
 def _catalogue(gym_id: str) -> list[dict[str, Any]]:
     """Every exercise this gym can see — the shared catalogue plus its own.
@@ -118,7 +129,7 @@ def _catalogue(gym_id: str) -> list[dict[str, Any]]:
     return (
         db.client()
         .table("exercises")
-        .select("id, name_el, name_en, category, equipment, default_set_kind, is_archived, merged_into_id, deleted_at")
+        .select(exercises.columns(gym_id, _EXERCISE_COLUMNS))
         .order("name_el")
         .execute()
         .data
@@ -139,7 +150,7 @@ def _exercise(gym_id: str, exercise_id: str) -> dict[str, Any] | None:
     rows = (
         db.client()
         .table("exercises")
-        .select("id, name_el, name_en, category, equipment, default_set_kind, is_archived, merged_into_id, deleted_at")
+        .select(exercises.columns(gym_id, _EXERCISE_COLUMNS))
         .eq("id", exercise_id)
         .limit(1)
         .execute()
@@ -873,7 +884,9 @@ def _go_to(page_key: str) -> None:
     st.switch_page(page)
 
 
-def _kind_of(rows: list[dict[str, Any]], exercise: dict[str, Any] | None) -> str:
+def _kind_of(
+    rows: list[dict[str, Any]], exercise: dict[str, Any] | None, equipment: str = ""
+) -> str:
     """What this block is measured in.
 
     The kind of the sets already in the block wins over the exercise's default:
@@ -881,10 +894,14 @@ def _kind_of(rows: list[dict[str, Any]], exercise: dict[str, Any] | None) -> str
     make the block unreadable and its volume meaningless. Which kind that is, is
     the majority of the live sets and not the first one, so one stray row from a
     stale client cannot decide how every other set in the block renders.
+
+    With no sets yet, the block's tool has a say: a squat done on the body alone
+    asks for repetitions and optional added kilos, not "0 κιλά × 12".
     """
     if rows:
         return fmt.dominant_kind(rows)
-    return str((exercise or {}).get("default_set_kind") or "weight_reps")
+    default = str((exercise or {}).get("default_set_kind") or "weight_reps")
+    return exercises.kind_for_block(default, equipment)
 
 
 def _next_position(rows: list[dict[str, Any]]) -> int:
@@ -1395,7 +1412,7 @@ def _block_card(
                 st.rerun()
         return
 
-    kind = _kind_of(rows, exercise)
+    kind = _kind_of(rows, exercise, str(block.get("equipment") or ""))
 
     # With the όργανο, exactly as the picker offered it. Reading back «Πιέσεις
     # Στήθους · 40×10» without knowing it was dumbbells is how a coach loads
@@ -1562,9 +1579,9 @@ def _picker(
             "Άσκηση",
             options=list(by_name),
             index=None,
-            placeholder="Γράψε ή διάλεξε — π.χ. έλξεις",
+            placeholder="Γράψε ή διάλεξε — π.χ. pull",
             key=f"log_name_{group_index}",
-            help="Γράφοντας φιλτράρει: «ελξ» φέρνει τις Έλξεις χωρίς να ψάξεις ομάδα.",
+            help="Γράφοντας φιλτράρει: «pull» φέρνει το Pull-Up χωρίς να ψάξεις ομάδα.",
         )
 
         # Always drawn, even with nothing chosen above it. The gym asked for three
@@ -1596,23 +1613,38 @@ def _ways_and_add(
 ) -> None:
     """The third list — «Τρόπος άσκησης» — and the button that commits all three.
 
-    Every implement is offered, not only the one the exercise was filed under.
-    `exercises_gym_el_uniq` makes name_el unique within a gym, so «Πιέσεις
-    Στήθους» cannot exist once per implement the way this screen first assumed —
-    each name has exactly one, and the list had exactly one thing in it. 008 put
-    the όργανο on the block instead, so one movement can be pressed with a
-    barbell today and dumbbells on Friday, and each block says which.
+    What it offers is the exercise's own answer to "what can this be done with"
+    (exercises.options_of), which is the gym's list read literally:
 
-    The exercise's own όργανο is the default, because it is what the movement is
-    usually done on. It is a default and not a lock: changing it is one tap and
-    the sheet then reads what actually happened.
+      one tool    «Cable Lateral Raise» is the cable. It is selected the moment
+                  the exercise is, and locked, because the name already said it.
+      several     «Bench Press» is a barbell, dumbbell or Smith press. Nothing
+                  is preselected — a default nobody reads is how 40 kg of
+                  dumbbells gets filed as 40 kg of barbell — and the button
+                  will not add it until one is chosen.
+      not said    an exercise from before 011: every tool, its own first, as
+                  008 left it.
+
+    008 is why any of this can vary: the όργανο lives on the block, so one
+    movement can be pressed with a barbell today and dumbbells on Friday, and
+    each block says which.
     """
     exercise = variants[0] if variants else None
     waiting = not name or exercise is None
 
-    options = list(exercises.EQUIPMENT_LABELS)
-    own = str((exercise or {}).get("equipment") or "")
-    index = options.index(own) if own in options else None
+    allowed = exercises.options_of(exercise)
+    if allowed is None:
+        options = list(exercises.tool_labels(gym_id))
+        own = str((exercise or {}).get("equipment") or "")
+        index = options.index(own) if own in options else None
+        locked = False
+        help_text = "Άλλαξέ το αν σήμερα γίνεται με άλλο όργανο — 40 κιλά με αλτήρες δεν είναι 80 με μπάρα."
+    elif len(allowed) == 1:
+        options, index, locked = allowed, 0, True
+        help_text = "Το όργανο το λέει το όνομα της άσκησης."
+    else:
+        options, index, locked = allowed, None, False
+        help_text = "Με τι γίνεται σήμερα — 40 κιλά με αλτήρες δεν είναι 80 με μπάρα."
 
     chosen = st.selectbox(
         "Τρόπος άσκησης",
@@ -1620,14 +1652,18 @@ def _ways_and_add(
         format_func=lambda key: exercises.EQUIPMENT_LABELS.get(key, key),
         index=None if waiting else index,
         placeholder="Διάλεξε πρώτα άσκηση" if waiting else "Διάλεξε όργανο",
-        key=f"log_way_{group_index}_{fmt.fold(name)}",
-        disabled=waiting,
-        help=(
-            "Πρώτα διάλεξε άσκηση από πάνω."
-            if waiting
-            else "Άλλαξέ το αν σήμερα γίνεται με άλλο όργανο — 40 κιλά με αλτήρες δεν είναι 80 με μπάρα."
-        ),
+        # The tools are in the key: a keyed selectbox keeps its value across a
+        # change of options, so an exercise the owner turns from fixed into a
+        # choice would otherwise keep the old tool preselected — the default
+        # nobody reads that a choice exists to avoid.
+        key=f"log_way_{group_index}_{fmt.fold(name)}_{'any' if allowed is None else '|'.join(allowed)}",
+        disabled=waiting or locked,
+        help="Πρώτα διάλεξε άσκηση από πάνω." if waiting else help_text,
     )
+    if locked and not waiting:
+        # A disabled selectbox still answers with its value; this only makes
+        # the answer independent of any state an older version left behind.
+        chosen = options[0]
 
     if st.button(
         "Προσθήκη άσκησης",
@@ -1702,7 +1738,14 @@ def _repeat_buttons(
         return
 
     offered = [
-        (key, gear) for key, gear in recent if key in by_id and key not in on_screen
+        (key, gear)
+        for key, gear in recent
+        if key in by_id
+        and key not in on_screen
+        # A block from before the tool was recorded cannot say which of the
+        # exercise's tools it was; repeating it would add a block with none.
+        # The three lists below ask, which is the honest way in.
+        and _repeatable(by_id[key], gear)
     ][:4]
     if not offered:
         return
@@ -1711,9 +1754,30 @@ def _repeat_buttons(
     for key, gear in offered:
         # The implement it was actually done on, on the button and on the block
         # it writes: "repeat what they did" must not quietly change the όργανο.
+        # A fixed exercise's tool is written down even when the old block
+        # never said it, so the new block's meaning cannot change the day the
+        # owner edits the exercise.
+        gear = gear or exercises.implement_of(by_id[key])
         if st.button(f"+ {_labelled(by_id[key], gear)}", key=f"log_again_{key}"):
             _put_in_workout(gym_id, session_id, athlete_id, key, next_position, by_id, gear)
     st.divider()
+
+
+def _repeatable(exercise: dict[str, Any], gear: str) -> bool:
+    """May last week's block be repeated as it was, through the exercise's own rules?
+
+    Only with a tool the exercise still offers. A lateral raise logged on the
+    cable before 011 is «Cable Lateral Raise» now; repeating it onto the
+    dumbbell-only «Lateral Raise» would write a block the three lists could never
+    have produced. And an exercise that offers a choice needs to know which:
+    a block that never said is left to the lists, which ask.
+    """
+    allowed = exercises.options_of(exercise)
+    if allowed is None:
+        return True
+    if gear:
+        return gear in allowed
+    return len(allowed) == 1
 
 
 def _labelled(exercise: dict[str, Any], equipment: str = "") -> str:
@@ -1723,7 +1787,7 @@ def _labelled(exercise: dict[str, Any], equipment: str = "") -> str:
     implement it was actually done on. One movement, several implements, and the
     number on the sheet always says which.
     """
-    gear = exercises.EQUIPMENT_LABELS.get(equipment, "") if equipment else exercises.equipment_of(exercise)
+    gear = exercises.equipment_of(exercise, equipment)
     name = fmt.exercise_name(exercise)
     return f"{name} · {gear}" if gear else name
 
@@ -1745,20 +1809,41 @@ def _new_exercise(gym_id: str, session_id: str, athlete_id: str, next_position: 
     st.caption(f"Δεν τη βρίσκεις; Πρόσθεσέ την στο «{group_label}».")
 
     with st.form(f"log_new_exercise_{group_id}", clear_on_submit=True):
-        name_el = st.text_input(
+        name = st.text_input(
             "Όνομα άσκησης",
             max_chars=120,
-            placeholder="π.χ. Πιέσεις στήθους σε Smith",
+            placeholder="π.χ. Cable Lateral Raise",
         )
         # Blank, not «Μπάρα». A preselected όργανο is one nobody reads, and this
         # field is what keeps 40 kg of dumbbells from being read as 80 kg of
-        # barbell for the rest of the exercise's life.
+        # barbell for the rest of the exercise's life. It is the tool of THIS
+        # set of sets — the block — whatever else the exercise allows.
+        tool_choices = list(exercises.tool_labels(gym_id).values())
         gear_label = st.selectbox(
             "Όργανο",
-            options=list(exercises.EQUIPMENT_CHOICES),
+            options=tool_choices,
             index=None,
             placeholder="Διάλεξε όργανο",
             key=f"log_new_gear_{group_id}",
+        )
+        # The gym's two kinds of exercise, without a second screen: leave this
+        # empty and the tool above is the exercise's only one, selected by its
+        # name from now on; add more and the coach chooses among them each time.
+        # A second widget rather than one multiselect, because nothing inside a
+        # form reruns until submit — a "which of these today" question could
+        # never be asked about choices made in the same form.
+        # Only once the database can keep it: before 011 the extra tools would
+        # be accepted here and silently dropped.
+        more_labels = (
+            st.multiselect(
+                "Γίνεται και με",
+                options=tool_choices,
+                placeholder="Κανένα άλλο — το όργανο το λέει το όνομα",
+                key=f"log_new_more_{group_id}",
+                help="Π.χ. Bench Press: Μπάρα πάνω, και Αλτήρες / Smith εδώ — ο προπονητής θα διαλέγει κάθε φορά.",
+            )
+            if exercises.tools_ready(gym_id)
+            else []
         )
         # Keyed, and with NO index derived from the όργανο. Inside a form
         # nothing reruns until submit, so a preselect computed from the box
@@ -1780,7 +1865,7 @@ def _new_exercise(gym_id: str, session_id: str, athlete_id: str, next_position: 
 
     if not submitted:
         return
-    if not name_el.strip():
+    if not name.strip():
         st.error("Γράψε το όνομα της άσκησης.")
         return
     gear = exercises.EQUIPMENT_CHOICES.get(gear_label or "", "")
@@ -1790,19 +1875,20 @@ def _new_exercise(gym_id: str, session_id: str, athlete_id: str, next_position: 
     if not group_id:
         st.error("Διάλεξε πρώτα μυϊκή ομάδα από πάνω.")
         return
-    kind = (
-        exercises.KIND_CHOICES[kind_label]
-        if kind_label
-        else exercises.KIND_FOR_EQUIPMENT.get(gear, "weight_reps")
-    )
+    tools = list(dict.fromkeys([gear] + [exercises.EQUIPMENT_CHOICES[label] for label in more_labels]))
+    # From all of its tools, not today's: an exercise done on the body today and
+    # with a barbell next week is measured in kilos, and kind_for_block() gives
+    # today's bodyweight block its reps form anyway.
+    kind = exercises.KIND_CHOICES[kind_label] if kind_label else exercises.default_kind(tools)
 
     try:
         exercise_id = exercises.create(
             gym_id,
-            name_el=name_el,
+            name=name,
             # The group's own coarse region, so the new exercise sorts with the
             # ones beside it instead of needing the coach to answer twice.
             category=_region_of(gym_id, group_id),
+            equipment_options=tools,
             equipment=gear,
             kind=kind,
             primary_group=group_id,
@@ -1816,13 +1902,15 @@ def _new_exercise(gym_id: str, session_id: str, athlete_id: str, next_position: 
     # block below. Cleared here and not after both writes: when the block
     # insert failed, the 300 s copy still lacked the new exercise, so the
     # picker could not offer it and the natural retry of the same form hit
-    # exercises_gym_el_uniq with a raw duplicate-key message.
+    # the per-gym unique name index with a raw duplicate-key message.
     _catalogue.clear()
     _muscle_groups.clear()
     _exercise_muscles.clear()
 
     try:
-        _add_block(gym_id, session_id, exercise_id, next_position)
+        # With its tool stated: for an exercise that offers several, a block
+        # with none would be a number nobody can read the implement of.
+        _add_block(gym_id, session_id, exercise_id, next_position, gear)
     except Exception as exc:
         st.error(
             "Η άσκηση δημιουργήθηκε αλλά δεν μπήκε στην προπόνηση. "
@@ -1833,7 +1921,7 @@ def _new_exercise(gym_id: str, session_id: str, athlete_id: str, next_position: 
 
     _clear_workout_caches(gym_id, session_id)
     _forget_recent(gym_id, athlete_id)
-    ui.notice(_NOTICE, "ok", f"{name_el.strip()} · {gear_label} — μπήκε στην προπόνηση.")
+    ui.notice(_NOTICE, "ok", f"{name.strip()} · {gear_label} — μπήκε στην προπόνηση.")
     st.rerun()
 
 
@@ -2201,7 +2289,9 @@ def _workout(gym_id: str, athlete: dict[str, Any], session: dict[str, Any]) -> N
         # explicit choice would name.
         defaults = tuple(
             sorted(
-                (str(row["id"]), str(row.get("equipment") or ""))
+                # implement_of, not the column: an exercise that offers a
+                # choice has no tool a tool-less block can be assumed to be.
+                (str(row["id"]), exercises.implement_of(row))
                 for row in rows_of_catalogue
                 if row.get("id")
             )
@@ -2228,8 +2318,9 @@ def _workout(gym_id: str, athlete: dict[str, Any], session: dict[str, Any]) -> N
             by_block.get(str(block["id"]), []),
             last.get((
                 canonical.get(exercise_id, exercise_id),
-                str(block.get("equipment") or "")
-                or str((catalogue.get(exercise_id) or {}).get("equipment") or ""),
+                exercises.implement_of(
+                    catalogue.get(exercise_id), str(block.get("equipment") or "")
+                ),
             )),
             names,
             session.get("logged_by"),

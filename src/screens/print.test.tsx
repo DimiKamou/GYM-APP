@@ -264,6 +264,7 @@ function progressData(): ProgressData {
     nameEn: `Exercise ${index + 1}`,
     category: 'upper' as const,
     equipment: 'barbell' as const,
+    equipmentOptions: null,
     defaultSetKind: row.kind,
     defaultRestS: 90,
     mergedIntoId: null,

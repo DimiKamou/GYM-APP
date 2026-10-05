@@ -2,9 +2,11 @@ import { describe, expect, it } from 'vitest'
 import {
   athleteExercises,
   athleteSessionsAsc,
+  blockEquipment,
   bodyPartShare,
   bodyPartTrend,
   epley,
+  exerciseImplements,
   exerciseTrend,
   lastPerformance,
   muscleGroupShare,
@@ -62,6 +64,7 @@ function exercise(id: Uuid, category: ExerciseCategory, defaultSetKind: SetKind 
     nameEn: id,
     category,
     equipment: 'barbell',
+    equipmentOptions: null,
     defaultSetKind,
     defaultRestS: 90,
     mergedIntoId: null,
@@ -622,6 +625,47 @@ describe('lastPerformance', () => {
       })
       expect(lastPerformance(orphaned, ATHLETE, 'ex-gone', 'cur')?.loadKg).toBe(60)
     })
+  })
+})
+
+// "Bench Press" is one row the coach does with a bar, dumbbells or the Smith; its `equipment`
+// is then only the fallback a reader needing one value gets. Printing that fallback beside a
+// block that never recorded the pick is how "80×8 · Μπάρα" ends up describing dumbbell work.
+describe('the implement a screen may state', () => {
+  const choice: Pick<Exercise, 'equipment' | 'equipmentOptions'> = {
+    equipment: 'barbell',
+    equipmentOptions: ['barbell', 'dumbbell', 'smith'],
+  }
+  const fixed: Pick<Exercise, 'equipment' | 'equipmentOptions'> = {
+    equipment: 'cable',
+    equipmentOptions: ['cable'],
+  }
+  const legacy: Pick<Exercise, 'equipment' | 'equipmentOptions'> = {
+    equipment: 'barbell',
+    equipmentOptions: null,
+  }
+
+
+
+
+  it('names the implement history was matched on, so a number never prints bare', () => {
+    // The PWA records no pick: the lookup runs on the fallback, and the line says which.
+    expect(blockEquipment({ equipment: null }, choice)).toBe('barbell')
+    expect(blockEquipment({ equipment: 'dumbbell' }, choice)).toBe('dumbbell')
+    expect(blockEquipment({ equipment: null }, fixed)).toBe('cable')
+  })
+
+  it('treats a row persisted before the column existed as legacy, not as a choice', () => {
+    // The local demo's stored catalogue carries no `equipmentOptions` key at all.
+    const stored = { equipment: 'barbell' } as Pick<Exercise, 'equipment' | 'equipmentOptions'>
+    expect(exerciseImplements(stored)).toEqual(['barbell'])
+  })
+
+
+  it('describes an exercise by every implement it is done with, or by its one', () => {
+    expect(exerciseImplements(choice)).toEqual(['barbell', 'dumbbell', 'smith'])
+    expect(exerciseImplements(fixed)).toEqual(['cable'])
+    expect(exerciseImplements(legacy)).toEqual(['barbell'])
   })
 })
 

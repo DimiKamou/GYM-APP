@@ -109,6 +109,10 @@ export function ExerciseBlock({
   const last = useLastPerformance(athleteId, exercise?.id, sessionId, block.equipment)
   const name = exerciseName(exercise, locale)
   const hasSets = block.sets.length > 0
+  // The implement of the NUMBERS on the "last time" line, which is the one they were matched
+  // on. The PWA records no pick, so on a movement with a choice of implements this block's
+  // history lookup runs on the fallback — and a barbell 80×8 printed with no implement beside
+  // it is exactly the bare number a coach loads the wrong bar from.
   const implement = blockEquipment(block, exercise)
 
   return (

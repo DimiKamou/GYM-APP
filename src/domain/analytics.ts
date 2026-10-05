@@ -159,6 +159,19 @@ export function blockEquipment(
   return block.equipment ?? exercise?.equipment ?? null
 }
 
+/**
+ * The implements a catalogue row is done with, for a screen that describes the exercise
+ * rather than a block: the coach's choices when there are several, else its one `equipment`.
+ * Naming only the fallback would file "Bench Press" under Μπάρα and hide it from a coach
+ * looking for something to do with dumbbells.
+ */
+export function exerciseImplements(
+  exercise: Pick<Exercise, 'equipment' | 'equipmentOptions'>,
+): Equipment[] {
+  const options = exercise.equipmentOptions
+  return options && options.length >= 2 ? options : [exercise.equipment]
+}
+
 // ---------------------------------------------------------------------------
 // Indexing
 // ---------------------------------------------------------------------------

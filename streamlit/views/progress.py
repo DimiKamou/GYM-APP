@@ -23,7 +23,7 @@ from typing import Any
 import streamlit as st
 
 from lib import db, fmt, gym
-from lib.exercises import EQUIPMENT_LABELS
+from lib.exercises import EQUIPMENT_LABELS, columns, implement_of
 
 _MAX_POINTS = 40
 # Ids per `in_(...)` filter. PostgREST takes the list in the URL, and the
@@ -117,7 +117,7 @@ def _history(gym_id: str, athlete_id: str) -> dict[str, list[dict[str, Any]]]:
     for chunk in _in_chunks(exercise_ids):
         rows_of_catalogue += (
             client.table("exercises")
-            .select("id, name_el, name_en, merged_into_id, equipment")
+            .select(columns(gym_id, "id, name_el, name_en, merged_into_id, equipment"))
             .in_("id", chunk)
             .execute()
             .data
@@ -139,7 +139,7 @@ def _history(gym_id: str, athlete_id: str) -> dict[str, list[dict[str, Any]]]:
     for chunk in _in_chunks(targets):
         rows_of_catalogue += (
             client.table("exercises")
-            .select("id, name_el, name_en, merged_into_id, equipment")
+            .select(columns(gym_id, "id, name_el, name_en, merged_into_id, equipment"))
             .in_("id", chunk)
             .execute()
             .data
@@ -360,7 +360,9 @@ def _records(
 ) -> None:
     canonical = _canonical(exercises)
     titles = {e["id"]: fmt.exercise_name(e) for e in exercises}
-    default_gear = {e["id"]: str(e.get("equipment") or "") for e in exercises}
+    # implement_of, not the column: an exercise that offers a choice of tool has
+    # no tool a tool-less block can be assumed to have used.
+    default_gear = {e["id"]: implement_of(e) for e in exercises}
     by_session = {s["id"]: s for s in sessions}
     by_block = {b["id"]: b for b in blocks}
 

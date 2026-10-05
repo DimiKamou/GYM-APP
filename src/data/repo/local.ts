@@ -720,6 +720,8 @@ export function createLocalRepo(options: LocalRepoOptions = {}): Repo & InviteRe
           nameEn: input.nameEn ?? null,
           category: input.category,
           equipment: input.equipment,
+          // What the server stores for the same input: the form never asks for a constraint.
+          equipmentOptions: null,
           defaultSetKind: input.defaultSetKind ?? 'weight_reps',
           defaultRestS: 90,
           mergedIntoId: null,
