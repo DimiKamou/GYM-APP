@@ -42,6 +42,13 @@ export type Equipment =
   | 'kettlebell'
   /** Its own value, not `machine`: 60 kg on a Smith rack and on a chest press are not comparable. */
   | 'smith'
+  /** Their own values rather than `other`, because a load only compares within one implement. */
+  | 'ez_bar'
+  | 'trap_bar'
+  | 'sandbag'
+  | 'bosu'
+  | 'box'
+  | 'equalizer'
   | 'other'
 
 /** Columns every table carries. Reads always filter `deletedAt === null`. */
@@ -144,10 +151,23 @@ export interface Exercise extends Auditable {
   id: Uuid
   /** `null` = the shared bilingual catalogue. Non-null = this gym's own addition. */
   gymId: Uuid | null
+  /** Null on the gym's English-only rows, so every renderer falls back to `nameEn`. */
   nameEl: string | null
   nameEn: string | null
   category: ExerciseCategory
+  /** The usual implement — and, when `equipmentOptions` lists two or more, only a fallback. */
   equipment: Equipment
+  /**
+   * Which implements this movement may be done with. Three meanings, because the catalogue
+   * holds both kinds of movement and the legacy rows that predate the distinction:
+   *  - `null` — legacy, any implement; `equipment` is the usual one.
+   *  - one element — the tool is fixed by the exercise ("Cable Lateral Raise" is a cable).
+   *  - two or more — the coach chooses among exactly these at log time ("Bench Press" with a
+   *    bar, dumbbells or the Smith), so `equipment` alone says nothing about a given block,
+   *    and a block's implement is shown through `knownEquipment`, never by hand.
+   * When non-null it is non-empty and contains `equipment`; the schema checks both.
+   */
+  equipmentOptions: Equipment[] | null
   defaultSetKind: SetKind
   defaultRestS: number
   /** Fold a duplicate into the canonical row without orphaning historical blocks. */
@@ -207,7 +227,9 @@ export interface Block extends Auditable {
   note: string | null
   /**
    * The implement of this execution. `null` means whatever the exercise says, which is every
-   * block written before the column existed. Resolve it with `blockEquipment`, never by hand.
+   * block written before the column existed — except on an exercise with several
+   * `equipmentOptions`, where it means the pick was not recorded. Resolve it with
+   * `blockEquipment` to compare and `knownEquipment` to display, never by hand.
    */
   equipment: Equipment | null
 }

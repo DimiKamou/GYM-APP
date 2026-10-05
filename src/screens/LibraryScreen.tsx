@@ -12,6 +12,7 @@ import {
   useUndoableDelete,
 } from '@/data/hooks'
 import type { ExerciseMuscleInput } from '@/data/repo/types'
+import { exerciseImplements } from '@/domain/analytics'
 import { matches } from '@/domain/text'
 import { currentLocale } from '@/i18n'
 import type { Locale } from '@/domain/format'
@@ -86,6 +87,12 @@ const EQUIPMENT: readonly Equipment[] = [
   'cardio',
   'kettlebell',
   'smith',
+  'ez_bar',
+  'trap_bar',
+  'sandbag',
+  'bosu',
+  'box',
+  'equalizer',
   'other',
 ]
 
@@ -291,7 +298,7 @@ function LibraryBody() {
   const matching = all.filter((exercise) => {
     if (exercise.isArchived && !withArchived) return false
     if (category !== ALL && exercise.category !== category) return false
-    if (equipment !== ALL && exercise.equipment !== equipment) return false
+    if (equipment !== ALL && !exerciseImplements(exercise).includes(equipment)) return false
     if (search.trim() === '') return true
     // Both names, so a coach who only knows "Bench press" finds "Πιέσεις Στήθους".
     return matches(`${exercise.nameEl ?? ''} ${exercise.nameEn ?? ''}`, search)
@@ -485,7 +492,9 @@ function LibraryBody() {
                           <span style={subStyle}>
                             {[
                               secondary,
-                              t(`equipmentTypes.${exercise.equipment}`),
+                              exerciseImplements(exercise)
+                                .map((value) => t(`equipmentTypes.${value}`))
+                                .join(' / '),
                               own ? t('library.own') : t('library.shared'),
                               exercise.isArchived ? t('library.archived') : null,
                             ]
@@ -841,7 +850,11 @@ function ExerciseSheet({
         </div>
         <div style={detailRow}>
           <span style={{ color: 'var(--th-muted)' }}>{t('library.equipment')}</span>
-          <span>{t(`equipmentTypes.${exercise.equipment}`)}</span>
+          <span>
+            {exerciseImplements(exercise)
+              .map((value) => t(`equipmentTypes.${value}`))
+              .join(' / ')}
+          </span>
         </div>
         <div style={detailRow}>
           <span style={{ color: 'var(--th-muted)' }}>{t('library.setKind')}</span>

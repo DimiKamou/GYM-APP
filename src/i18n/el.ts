@@ -571,6 +571,13 @@ export const el = {
     cardio: 'Αερόβιο',
     kettlebell: 'Kettlebell',
     smith: 'Smith',
+    // The gym says these by their English product names, so Greek keeps them as they are.
+    ez_bar: 'EZ bar',
+    trap_bar: 'Trap bar',
+    sandbag: 'Sandbag',
+    bosu: 'Bosu',
+    box: 'Box',
+    equalizer: 'Equalizer',
     other: 'Άλλο',
   },
 

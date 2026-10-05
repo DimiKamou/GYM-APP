@@ -2,7 +2,7 @@ import type { CSSProperties } from 'react'
 import { useTranslation } from 'react-i18next'
 
 import { useLastPerformance } from '@/data/hooks'
-import { blockEquipment } from '@/domain/analytics'
+import { knownEquipment } from '@/domain/analytics'
 import { formatLastPerformance, type Locale } from '@/domain/format'
 import type { Block, Exercise, SetKind, Uuid, WorkoutSet } from '@/domain/types'
 import { Button, Card, CategoryPill, Icon } from '@/ui'
@@ -109,7 +109,9 @@ export function ExerciseBlock({
   const last = useLastPerformance(athleteId, exercise?.id, sessionId, block.equipment)
   const name = exerciseName(exercise, locale)
   const hasSets = block.sets.length > 0
-  const implement = blockEquipment(block, exercise)
+  // Not `blockEquipment`: on a movement the coach does with a choice of implements, a block
+  // that never recorded the pick has no implement to print, only a fallback.
+  const implement = knownEquipment(block, exercise)
 
   return (
     <Card>

@@ -2,10 +2,13 @@ import { describe, expect, it } from 'vitest'
 import {
   athleteExercises,
   athleteSessionsAsc,
+  blockEquipment,
   bodyPartShare,
   bodyPartTrend,
   epley,
+  exerciseImplements,
   exerciseTrend,
+  knownEquipment,
   lastPerformance,
   muscleGroupShare,
   muscleGroupVolume,
@@ -62,6 +65,7 @@ function exercise(id: Uuid, category: ExerciseCategory, defaultSetKind: SetKind 
     nameEn: id,
     category,
     equipment: 'barbell',
+    equipmentOptions: null,
     defaultSetKind,
     defaultRestS: 90,
     mergedIntoId: null,
@@ -622,6 +626,57 @@ describe('lastPerformance', () => {
       })
       expect(lastPerformance(orphaned, ATHLETE, 'ex-gone', 'cur')?.loadKg).toBe(60)
     })
+  })
+})
+
+// "Bench Press" is one row the coach does with a bar, dumbbells or the Smith; its `equipment`
+// is then only the fallback a reader needing one value gets. Printing that fallback beside a
+// block that never recorded the pick is how "80×8 · Μπάρα" ends up describing dumbbell work.
+describe('the implement a screen may state', () => {
+  const choice: Pick<Exercise, 'equipment' | 'equipmentOptions'> = {
+    equipment: 'barbell',
+    equipmentOptions: ['barbell', 'dumbbell', 'smith'],
+  }
+  const fixed: Pick<Exercise, 'equipment' | 'equipmentOptions'> = {
+    equipment: 'cable',
+    equipmentOptions: ['cable'],
+  }
+  const legacy: Pick<Exercise, 'equipment' | 'equipmentOptions'> = {
+    equipment: 'barbell',
+    equipmentOptions: null,
+  }
+
+  it('states nothing for an unrecorded pick on a movement with a choice of implements', () => {
+    expect(knownEquipment({ equipment: null }, choice)).toBeNull()
+    // Comparisons still need a value, so the history lookup keeps resolving to the fallback.
+    expect(blockEquipment({ equipment: null }, choice)).toBe('barbell')
+  })
+
+  it('states the recorded pick, whatever the exercise allows', () => {
+    expect(knownEquipment({ equipment: 'dumbbell' }, choice)).toBe('dumbbell')
+    expect(knownEquipment({ equipment: 'smith' }, legacy)).toBe('smith')
+  })
+
+  it('states the exercise implement where it is fixed or the row predates the choice', () => {
+    expect(knownEquipment({ equipment: null }, fixed)).toBe('cable')
+    expect(knownEquipment({ equipment: null }, legacy)).toBe('barbell')
+  })
+
+  it('treats a row persisted before the column existed as legacy, not as a choice', () => {
+    // The local demo's stored catalogue carries no `equipmentOptions` key at all.
+    const stored = { equipment: 'barbell' } as Pick<Exercise, 'equipment' | 'equipmentOptions'>
+    expect(knownEquipment({ equipment: null }, stored)).toBe('barbell')
+    expect(exerciseImplements(stored)).toEqual(['barbell'])
+  })
+
+  it('states nothing when neither the block nor the catalogue knows', () => {
+    expect(knownEquipment({ equipment: null }, undefined)).toBeNull()
+  })
+
+  it('describes an exercise by every implement it is done with, or by its one', () => {
+    expect(exerciseImplements(choice)).toEqual(['barbell', 'dumbbell', 'smith'])
+    expect(exerciseImplements(fixed)).toEqual(['cable'])
+    expect(exerciseImplements(legacy)).toEqual(['barbell'])
   })
 })
 

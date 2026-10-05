@@ -218,6 +218,7 @@ export function buildExercises(): Exercise[] {
     nameEn: row.en,
     category: row.category,
     equipment: row.equipment,
+    equipmentOptions: null,
     defaultSetKind: row.kind,
     defaultRestS: row.rest,
     mergedIntoId: null,

@@ -79,7 +79,7 @@ const AUDIT = 'created_at, updated_at, deleted_at, created_by'
 const GYM_COLS = `id, name, timezone, display_unit, ${AUDIT}`
 const MEMBER_COLS = `id, gym_id, user_id, display_name, email, role, status, ${AUDIT}`
 const ATHLETE_COLS = `id, gym_id, full_name, coach_membership_id, plan_phase, plan_focus, birth_date, phone, email, ${AUDIT}`
-const EXERCISE_COLS = `id, gym_id, name_el, name_en, category, equipment, default_set_kind, default_rest_s, merged_into_id, is_archived, ${AUDIT}`
+const EXERCISE_COLS = `id, gym_id, name_el, name_en, category, equipment, equipment_options, default_set_kind, default_rest_s, merged_into_id, is_archived, ${AUDIT}`
 const MUSCLE_GROUP_COLS = `id, gym_id, slug, name_el, name_en, region, position, ${AUDIT}`
 const EXERCISE_MUSCLE_COLS = `exercise_id, muscle_group_id, gym_id, role, ${AUDIT}`
 const SESSION_COLS = `id, gym_id, athlete_id, logged_by, credited_to, appointment_id, title, notes, status, started_at, finished_at, local_date, ${AUDIT}`
@@ -180,6 +180,9 @@ function toExercise(row: Row): Exercise {
     nameEn: strOrNull(row.name_en),
     category: row.category as Exercise['category'],
     equipment: row.equipment as Exercise['equipment'],
+    equipmentOptions: Array.isArray(row.equipment_options)
+      ? (row.equipment_options as Equipment[])
+      : null,
     defaultSetKind: row.default_set_kind as Exercise['defaultSetKind'],
     defaultRestS: num(row.default_rest_s) ?? 90,
     mergedIntoId: strOrNull(row.merged_into_id),
@@ -933,6 +936,8 @@ export function createSupabaseRepo(): Repo & InviteRedeemer {
         name_en: nameEn,
         category: input.category,
         equipment: input.equipment,
+        // `equipment_options` is left to the column's NULL — "any implement, this one usual" —
+        // because nothing on this form asks which implements the movement is limited to.
         default_set_kind: input.defaultSetKind ?? 'weight_reps',
       })
       if (created === 'failed' || input.muscles === undefined) return created
