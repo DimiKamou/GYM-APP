@@ -46,6 +46,16 @@ def reset_round_trips() -> None:
 # two-step write has to survive, and there is no other way to make it happen.
 FAIL_ONCE: list[str] = []
 
+# Columns the "database" does not have yet, per table. A select naming one is
+# refused the way PostgREST refuses it (42703), and so is a write that sends
+# one. It models the hours between a deploy and the gym pasting the SQL, when
+# the app is ahead of the schema.
+MISSING_COLUMNS: dict[str, set[str]] = {}
+
+
+class _MissingColumn(Exception):
+    code = "42703"
+
 
 class _Response:
     def __init__(self, data: list[dict[str, Any]]) -> None:
@@ -96,30 +106,40 @@ class _Query:
     # exercises_gym_el_uniq forbids. The tests passed and the live app could
     # only ever show one option. An index the fake ignores is an index the
     # tests cannot defend.
+    #
+    # Each index is partial on its last column being NOT NULL, as in 001: since
+    # the catalogue went English-only, name_el is NULL on most rows, and NULLs
+    # must not collide with each other. Both name columns are indexed, because
+    # the database indexes both — the fake knowing only name_el let a duplicate
+    # English name through every test.
     _UNIQUE = {
-        "exercises": ("gym_id", "name_el"),
-        "athletes": ("gym_id", "full_name"),
+        "exercises": (("gym_id", "name_el"), ("gym_id", "name_en")),
+        "athletes": (("gym_id", "full_name"),),
     }
 
     def _check_unique(self, row: dict[str, Any], ignore_id: Any = None) -> None:
-        columns = self._UNIQUE.get(self._table)
-        if not columns:
-            return
-        def key(candidate: dict[str, Any]) -> tuple[Any, ...]:
-            return tuple(
-                str(candidate.get(c) or "").lower() if isinstance(candidate.get(c), str)
-                else candidate.get(c)
-                for c in columns
-            )
-        wanted = key(row)
-        for existing in self._store.get(self._table, []):
-            if ignore_id is not None and existing.get("id") == ignore_id:
+        for columns in self._UNIQUE.get(self._table, ()):
+            if row.get(columns[-1]) is None:
                 continue
-            if existing.get("deleted_at") is None and key(existing) == wanted:
-                raise ValueError(
-                    f"duplicate key value violates unique constraint "
-                    f"\"{self._table}_{'_'.join(columns)}_uniq\": {wanted}"
+
+            def key(candidate: dict[str, Any], columns: tuple[str, ...] = columns) -> tuple[Any, ...]:
+                return tuple(
+                    str(candidate.get(c) or "").lower() if isinstance(candidate.get(c), str)
+                    else candidate.get(c)
+                    for c in columns
                 )
+
+            wanted = key(row)
+            for existing in self._store.get(self._table, []):
+                if ignore_id is not None and existing.get("id") == ignore_id:
+                    continue
+                if existing.get(columns[-1]) is None:
+                    continue
+                if existing.get("deleted_at") is None and key(existing) == wanted:
+                    raise ValueError(
+                        f"duplicate key value violates unique constraint "
+                        f"\"{self._table}_{'_'.join(columns)}_uniq\": {wanted}"
+                    )
 
     def insert(self, payload: Any, **_: Any) -> "_Query":
         rows = payload if isinstance(payload, list) else [payload]
@@ -214,6 +234,18 @@ class _Query:
     # --- execution -----------------------------------------------------
     def execute(self) -> _Response:
         ROUND_TRIPS.append(f"{self._mode}:{self._table}")
+        missing = MISSING_COLUMNS.get(self._table, set())
+        named = set(self._columns or [])
+        named |= {key for row in self._written for key in row}
+        named |= set(getattr(self, "_patch", {}) or {})
+        for column in sorted(missing & named):
+            if self._mode == "insert":
+                # Nothing was written: the INSERT is one statement.
+                store = self._store.get(self._table, [])
+                for row in self._written:
+                    if row in store:
+                        store.remove(row)
+            raise _MissingColumn(f"column {self._table}.{column} does not exist")
         if FAIL_ONCE and FAIL_ONCE[0] == f"{self._mode}:{self._table}":
             FAIL_ONCE.pop(0)
             raise _NetworkDown("connection reset by peer")

@@ -23,15 +23,25 @@ select
   b.note                                             as "Σημείωση άσκησης",
   -- Το όργανο της εκτέλεσης, όταν ο προπονητής διάλεξε άλλο από αυτό της
   -- άσκησης (μπάρα ή αλτήρες στις ίδιες «Πιέσεις Στήθους»)· αλλιώς της άσκησης.
-  case coalesce(b.equipment, e.equipment)
+  -- ::text, so the file runs on a database that does not have the 010 tools
+  -- yet: compared as the enum, 'ez_bar' would be refused as an invalid value
+  -- before a single row was read.
+  case coalesce(b.equipment, e.equipment)::text
     when 'barbell'    then 'Μπάρα'
+    when 'ez_bar'     then 'EZ bar'
+    when 'trap_bar'   then 'Trap bar'
     when 'dumbbell'   then 'Αλτήρες'
+    when 'kettlebell' then 'Kettlebell'
+    when 'sandbag'    then 'Sandbag'
     when 'smith'      then 'Smith'
     when 'machine'    then 'Μηχάνημα'
     when 'cable'      then 'Τροχαλία'
-    when 'kettlebell' then 'Kettlebell'
     when 'bodyweight' then 'Σωματικό βάρος'
+    when 'box'        then 'Box'
+    when 'equalizer'  then 'Equalizer'
+    when 'bosu'       then 'Bosu'
     when 'cardio'     then 'Cardio'
+    when 'other'      then 'Άλλο'
     else ''
   end                                                as "Όργανο",
   st.position + 1                                    as "Σετ",

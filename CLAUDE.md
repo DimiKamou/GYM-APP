@@ -91,9 +91,23 @@ missing from the log screen's catalogue read for a week: the όργανο never
 appeared anywhere, and the code that was supposed to show it looked correct.
 The fake in `tests/` projects the select list for this reason.
 
-**Equipment belongs to the exercise, not the set.** 40 kg of dumbbells is not
-80 kg of barbell; the variants are separate rows, which is what keeps the
-"τελευταία φορά" line honest.
+**Equipment belongs to the block, chosen from the exercise's list — never to the set.**
+40 kg of dumbbells is not 80 kg of barbell. `exercises.equipment_options` (011)
+says what an exercise can be done with: one tool = fixed by the name and
+preselected («Cable Lateral Raise»); several = the coach picks at log time,
+nothing preselected («Bench Press»); NULL = an exercise from before 011. The
+block records the tool actually used (008), and "τελευταία φορά" is keyed on
+(exercise, tool). For an exercise with several tools, `exercises.equipment` is
+only the schema's required fallback: never print it as if it were known — use
+`exercises.implement_of()`. Exercise names live in `name_en` (English only,
+one namespace for uniqueness); `name_el` is NULL on the gym's catalogue.
+
+**The app ships before the SQL.** Streamlit Cloud redeploys on merge; the owner
+pastes migrations by hand later. A select naming a column the database does not
+have yet is refused outright (42703), so a read of a new column goes through a
+probe (`exercises.has_tool_lists`) until the paste has happened. The files at
+the repository root are the paste copies; `supabase/tests/run.sh` fails if they
+differ from their migration by a byte.
 
 ## Conventions
 

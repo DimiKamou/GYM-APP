@@ -28,6 +28,20 @@ run "pg_ctl -D $WORK/data -l $WORK/pg.log -o \"-k $WORK/sock -h ''\" start" >/de
 
 for _ in $(seq 1 30); do psql -h "$WORK/sock" -U trainhub -d postgres -c 'select 1' >/dev/null 2>&1 && break; sleep 0.5; done
 
+# The files at the repository root are what the gym actually pastes into the
+# Supabase SQL editor, so they must be the migrations this suite tests, byte for
+# byte. The 006 copy drifted once: 006 learned to refuse an empty project and
+# to fold name collisions, and the copy the owner would paste learned neither.
+for pair in "006_adopt_catalogue.sql:trainhub-ασκησεις-δικες-μου.sql" \
+            "010_equipment_more.sql:trainhub-νεες-ασκησεις-1-οργανα.sql" \
+            "011_powerhouse_catalogue.sql:trainhub-νεες-ασκησεις-2-καταλογος.sql"; do
+  migration="${pair%%:*}"; copy="${pair##*:}"
+  if ! cmp -s "$HERE/../migrations/$migration" "$HERE/../../$copy"; then
+    echo "ΛΑΘΟΣ: το $copy δεν είναι ίδιο με το $migration — αντέγραψέ το ξανά"
+    exit 1
+  fi
+done
+
 psql -h "$WORK/sock" -U trainhub -d postgres -v ON_ERROR_STOP=1 -q -f "$HERE/00_supabase_shim.sql"
 # Every migration, in filename order. Naming them one by one is how 003 came to be written,
 # committed and silently never applied here — the suite passed because it was testing a schema

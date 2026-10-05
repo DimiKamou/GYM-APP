@@ -29,6 +29,14 @@ BLOCK = "b1"
 SET = "set1"
 CHEST = "mg-chest"
 BACK = "mg-back"
+SHOULDERS = "mg-shoulders"
+QUADS = "mg-quads"
+# The gym's own list (011): English names only, and each exercise says which
+# tools it can be done with. One tool is fixed by the name; several are the
+# coach's choice at log time.
+CHOICE = "e-incline"      # Incline Bench Press: barbell, dumbbell or Smith
+FIXED = "e-cable-lat"     # Cable Lateral Raise: the cable, nothing else
+STEP_UP = "e-step-up"     # Step-Up: on the body alone, or loaded
 
 NOW = "2026-09-01T07:00:00+00:00"
 
@@ -55,6 +63,10 @@ _SEED: dict[str, list[dict[str, Any]]] = {
          "region": "upper", "position": 1, "deleted_at": None},
         {"id": BACK, "gym_id": None, "name_el": "Πλάτη", "name_en": "Back",
          "region": "upper", "position": 2, "deleted_at": None},
+        {"id": SHOULDERS, "gym_id": None, "name_el": "Ώμοι", "name_en": "Shoulders",
+         "region": "upper", "position": 3, "deleted_at": None},
+        {"id": QUADS, "gym_id": None, "name_el": "Τετρακέφαλοι", "name_en": "Quadriceps",
+         "region": "lower", "position": 7, "deleted_at": None},
     ],
     "exercises": [
         # The gym's own row. Everything else is the shared catalogue, which the
@@ -78,6 +90,20 @@ _SEED: dict[str, list[dict[str, Any]]] = {
         {"id": "e-db", "gym_id": None, "name_el": "Κωπηλατική", "name_en": "Row",
          "category": "upper", "equipment": "dumbbell", "default_set_kind": "weight_reps",
          "is_archived": False, "merged_into_id": None, "deleted_at": None},
+        {"id": CHOICE, "gym_id": GYM, "name_el": None, "name_en": "Incline Bench Press",
+         "category": "upper", "equipment": "barbell",
+         "equipment_options": ["barbell", "dumbbell", "smith"],
+         "default_set_kind": "weight_reps", "is_archived": False,
+         "merged_into_id": None, "deleted_at": None},
+        {"id": FIXED, "gym_id": GYM, "name_el": None, "name_en": "Cable Lateral Raise",
+         "category": "upper", "equipment": "cable", "equipment_options": ["cable"],
+         "default_set_kind": "weight_reps", "is_archived": False,
+         "merged_into_id": None, "deleted_at": None},
+        {"id": STEP_UP, "gym_id": GYM, "name_el": None, "name_en": "Step-Up",
+         "category": "lower", "equipment": "bodyweight",
+         "equipment_options": ["bodyweight", "barbell", "dumbbell", "kettlebell"],
+         "default_set_kind": "weight_reps", "is_archived": False,
+         "merged_into_id": None, "deleted_at": None},
     ],
     "exercise_muscles": [
         {"exercise_id": "e-pullup", "muscle_group_id": BACK, "role": "primary",
@@ -94,6 +120,12 @@ _SEED: dict[str, list[dict[str, Any]]] = {
          "gym_id": None, "deleted_at": None},
         {"exercise_id": "e-db", "muscle_group_id": BACK, "role": "primary",
          "gym_id": None, "deleted_at": None},
+        {"exercise_id": CHOICE, "muscle_group_id": CHEST, "role": "primary",
+         "gym_id": GYM, "deleted_at": None},
+        {"exercise_id": FIXED, "muscle_group_id": SHOULDERS, "role": "primary",
+         "gym_id": GYM, "deleted_at": None},
+        {"exercise_id": STEP_UP, "muscle_group_id": QUADS, "role": "primary",
+         "gym_id": GYM, "deleted_at": None},
 
     ],
     "sessions": [
@@ -176,14 +208,17 @@ def _assert_seed_is_possible() -> None:
     three-list picker was passing against a world that cannot exist, while the
     live app could only ever show one implement per movement.
     """
-    seen: set[tuple[Any, str]] = set()
+    seen: set[tuple[Any, str, str]] = set()
     for row in STORE.get("exercises", []):
         if row.get("deleted_at") is not None:
             continue
-        key = (row.get("gym_id"), str(row.get("name_el") or "").lower())
-        if key in seen:
-            raise AssertionError(f"seed breaks exercises_gym_el_uniq: {key}")
-        seen.add(key)
+        for column in ("name_el", "name_en"):
+            if row.get(column) is None:
+                continue
+            key = (row.get("gym_id"), column, str(row.get(column)).lower())
+            if key in seen:
+                raise AssertionError(f"seed breaks the unique {column} index: {key}")
+            seen.add(key)
 
 
 def reset() -> None:
@@ -192,6 +227,7 @@ def reset() -> None:
     _assert_seed_is_possible()
     fake_supabase.reset_round_trips()
     fake_supabase.FAIL_ONCE.clear()
+    fake_supabase.MISSING_COLUMNS.clear()
     fake_supabase.REFRESH_CALLS.clear()
     fake_supabase.SIGN_OUT_CALLS.clear()
     # Streamlit's caches outlive an AppTest run — they belong to the process,
