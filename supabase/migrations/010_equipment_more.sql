@@ -8,9 +8,8 @@
 -- which one the number was.
 --
 -- A file of its own, and run on its own, because a new enum value cannot be
--- USED in the transaction that adds it (Postgres 12+). 011 uses these values,
--- and the Supabase SQL editor runs a pasted script as one transaction — so
--- this one is pasted and run first, then 011.
+-- USED in the transaction that adds it (Postgres 12+). 011 uses these values
+-- and is a single statement, so this one is pasted and run first, then 011.
 --
 -- IF NOT EXISTS makes it re-runnable, like every migration after 001.
 
