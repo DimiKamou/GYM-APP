@@ -73,8 +73,8 @@ done
 
 # 011 refuses to run without exactly one gym, and refusing must leave NOTHING
 # behind: a committed equipment_options column over an unreplaced catalogue
-# switches the app into its post-011 mode and makes every later paste of 011
-# believe it already ran. Once on the empty database above, once with two gyms.
+# switches the app into its post-011 mode. Once on the empty database above,
+# once with two gyms.
 column_count() {
   psql -h "$WORK/sock" -U trainhub -d "$1" -tAq -c "select count(*) from information_schema.columns
      where table_schema = 'public' and table_name = 'exercises' and column_name = 'equipment_options'"
@@ -103,7 +103,8 @@ dropdb -h "$WORK/sock" -U trainhub twogyms
 # a DO block — nothing outside it but comments.
 if [ "$(grep -v -E '^[[:space:]]*(--.*)?$' "$HERE/../migrations/011_powerhouse_catalogue.sql" \
         | sed -n '1p;$p' | tr '\n' ' ')" != 'do $$ $$; ' ] \
-   || [ "$(grep -c -E '^\$\$;$' "$HERE/../migrations/011_powerhouse_catalogue.sql")" != "1" ]; then
+   || [ "$(grep -v -E '^[[:space:]]*--' "$HERE/../migrations/011_powerhouse_catalogue.sql" \
+           | grep -o '\$\$' | wc -l)" != "2" ]; then
   echo "ΛΑΘΟΣ: το 011 δεν είναι μία εντολή — ο SQL Editor μπορεί να το τρέξει κομμάτια"; exit 1
 fi
 

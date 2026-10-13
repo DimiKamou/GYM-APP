@@ -44,10 +44,13 @@
 -- Runs only on a project with exactly one gym, like 006, and only after 006
 -- (a shared catalogue would still show beside the gym's own). Run 010 first,
 -- as its own paste: this file uses its tools, and a new enum value cannot be
--- used in the transaction that adds it. A second run does nothing: once any
--- exercise of the gym has a tool list, the list is the gym's to edit, and
--- re-running this would undo the owner's edits and remove exercises the
--- trainers added since.
+-- used in the transaction that adds it. A second run does nothing: once it
+-- has run, the list is the gym's to edit, and re-running it would undo the
+-- owner's edits and remove exercises the trainers added since. What says it
+-- ran is an exercise only this file creates (step 5: ids derived from the
+-- name, never hard-deleted). A catalogue that already held every name on the
+-- list would get none, and a second run there would not know; on this
+-- project the run created most of the list.
 --
 -- One statement, whatever runs it. The Supabase SQL editor was seen running a
 -- paste one statement at a time, each in a session of its own: the scratch
@@ -228,9 +231,9 @@ begin
       'Το 011 δεν έτρεξε: δεν υπάρχει γυμναστήριο ακόμη. Φτιάξε το γυμναστήριο στην εφαρμογή και τρέξε ξανά το 011.';
   end if;
   if gyms > 1 then
-    -- An exception, not a notice: a notice would let the transaction commit
-    -- the new column with nothing replaced, and from then on every run of
-    -- this file would think it had already happened.
+    -- An exception, not a notice: a notice would let the statement commit
+    -- the new column with nothing replaced, and the app would switch to its
+    -- post-011 screens over the old catalogue.
     raise exception
       'Το 011 δεν έτρεξε: βρέθηκαν % γυμναστήρια. Ο κατάλογος γράφτηκε για ένα γυμναστήριο, το PowerHouseGym.',
       gyms;
