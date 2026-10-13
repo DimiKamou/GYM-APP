@@ -107,7 +107,16 @@ pastes migrations by hand later. A select naming a column the database does not
 have yet is refused outright (42703), so a read of a new column goes through a
 probe (`exercises.has_tool_lists`) until the paste has happened. The files at
 the repository root are the paste copies; `supabase/tests/run.sh` fails if they
-differ from their migration by a byte.
+differ from their migration by a byte. A migration without a paste copy is never
+run: 005, 007 and 008 had none, the gym's database never got 008, and every
+screen that reads `blocks.equipment` was refused until a catch-up paste
+(`trainhub-προηγουμενες-αλλαγες.sql`).
+
+**The SQL editor may split a paste.** Supabase ran 011 one statement at a time,
+each in a session of its own: the temp table one statement created was gone by
+the next (42P01), and the DDL before it committed with nothing after it. A
+paste that must be atomic, or that keeps anything in the session, is ONE
+statement — a DO block. `run.sh` checks 011's shape.
 
 ## Conventions
 

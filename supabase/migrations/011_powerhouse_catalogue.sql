@@ -44,33 +44,55 @@
 -- Runs only on a project with exactly one gym, like 006, and only after 006
 -- (a shared catalogue would still show beside the gym's own). Run 010 first,
 -- as its own paste: this file uses its tools, and a new enum value cannot be
--- used in the transaction that adds it. A second run does nothing: once any
--- exercise of the gym has a tool list, the list is the gym's to edit, and
--- re-running this would undo the owner's edits and remove exercises the
--- trainers added since.
+-- used in the transaction that adds it. A second run does nothing: once it
+-- has run, the list is the gym's to edit, and re-running it would undo the
+-- owner's edits and remove exercises the trainers added since. What says it
+-- ran is an exercise only this file creates (step 5: ids derived from the
+-- name, never hard-deleted). A catalogue that already held every name on the
+-- list would get none, and a second run there would not know; on this
+-- project the run created most of the list.
 --
--- One explicit transaction, whatever runs it. The SQL editor already runs a
--- paste as one; plain `psql -f` does not, and without this a failed list
--- insert would let the swap below run on an EMPTY list — removing the whole
--- catalogue — and leave the new column behind, so that every later run of
--- this file believed it had already happened.
-
-begin;
+-- One statement, whatever runs it. The Supabase SQL editor was seen running a
+-- paste one statement at a time, each in a session of its own: the scratch
+-- list created by one statement was gone by the next (42P01), and the new
+-- column, already committed, stayed behind with nothing replaced. A single DO
+-- block cannot be split: it is atomic in the editor, through a pooler and in
+-- `psql -f`, and its scratch tables live exactly as long as it does. Without
+-- that atomicity a failed list insert would let the swap below run on an
+-- EMPTY list — removing the whole catalogue.
 
 do $$
+declare
+  the_gym   uuid;
+  gyms      integer;
+  frozen    integer;
+  folded    integer := 0;
+  removed   integer;
+  reused    integer;
+  created   integer;
+  moved     integer;
+  r         record;
+  found_id  uuid;
+  bad       text;
 begin
   if not ('bosu' = any (enum_range(null::public.equipment)::text[])) then
     raise exception
       'Το 011 δεν έτρεξε: λείπουν τα νέα όργανα. Τρέξε πρώτα το 010 μόνο του, και μετά ξανά το 011.';
   end if;
-end;
-$$;
+  -- 005 (smith is on the list) and 008 (the tool of each block, frozen below).
+  -- Both shipped without a paste copy, and the gym's database had 005 but not 008.
+  if not ('smith' = any (enum_range(null::public.equipment)::text[]))
+     or not exists (
+       select 1 from pg_attribute
+        where attrelid = 'public.blocks'::regclass and attname = 'equipment' and not attisdropped
+     ) then
+    raise exception
+      'Το 011 δεν έτρεξε: λείπουν παλιότερες αλλαγές (005, 007, 008). Τρέξε πρώτα αυτές και μετά ξανά το 011.';
+  end if;
 
-alter table public.exercises
-  add column if not exists equipment_options public.equipment[];
+  alter table public.exercises
+    add column if not exists equipment_options public.equipment[];
 
-do $$
-begin
   if not exists (
     select 1 from pg_constraint
      where conname = 'exercises_equipment_options_check'
@@ -86,31 +108,36 @@ begin
         or (cardinality(equipment_options) >= 1 and equipment = any (equipment_options))
       );
   end if;
-end;
-$$;
 
-comment on column public.exercises.equipment_options is
-  'Τα όργανα της άσκησης. Ένα = το λέει το όνομα, επιλέγεται μόνο του. '
-  'Πολλά = ο προπονητής διαλέγει στην προπόνηση. NULL = όποιο όργανο, πρώτο το equipment.';
+  comment on column public.exercises.equipment_options is
+    'Τα όργανα της άσκησης. Ένα = το λέει το όνομα, επιλέγεται μόνο του. '
+    'Πολλά = ο προπονητής διαλέγει στην προπόνηση. NULL = όποιο όργανο, πρώτο το equipment.';
 
-drop table if exists pg_temp.powerhouse_list;
-create temporary table powerhouse_list (
-  ord             integer primary key,
-  name            text not null,
-  options         public.equipment[] not null,
-  kind            public.set_kind not null,
-  category        public.exercise_category not null,
-  rest_s          integer not null,
-  primary_slug    text not null,
-  secondary_slugs text[] not null,
-  -- An old catalogue row (002) that is this same movement, named in another
-  -- language or another way. Same-name rows are found without it.
-  reuse_id        uuid
-);
+  -- A session that ran an older copy of this file may still hold its tables.
+  drop table if exists pg_temp.powerhouse_list;
+  drop table if exists pg_temp.powerhouse_targets;
+  create temporary table powerhouse_list (
+    ord             integer primary key,
+    name            text not null,
+    options         public.equipment[] not null,
+    kind            public.set_kind not null,
+    category        public.exercise_category not null,
+    rest_s          integer not null,
+    primary_slug    text not null,
+    secondary_slugs text[] not null,
+    -- An old catalogue row (002) that is this same movement, named in another
+    -- language or another way. Same-name rows are found without it.
+    reuse_id        uuid
+  ) on commit drop;
+  create temporary table powerhouse_targets (
+    ord       integer primary key,
+    target_id uuid,
+    reused    boolean not null default false
+  ) on commit drop;
 
-insert into powerhouse_list
+  insert into powerhouse_list
   (ord, name, options, kind, category, rest_s, primary_slug, secondary_slugs, reuse_id)
-values
+  values
 -- @@CATALOGUE@@
   -- Chest
   (1, 'Bench Press', '{barbell,dumbbell,smith}', 'weight_reps', 'upper', 180, 'στηθοσ', '{τρικεφαλοι,ωμοι}', 'ca7a1000-0000-4000-8000-000000000001'),
@@ -196,47 +223,32 @@ values
   (76, 'Cable Overhead Triceps Extension', '{cable}', 'weight_reps', 'upper', 60, 'τρικεφαλοι', '{}', null),
   (77, 'Cable Bent-Over Triceps Extension', '{cable}', 'weight_reps', 'upper', 60, 'τρικεφαλοι', '{}', null)
 -- @@END@@
-;
+  ;
 
-drop table if exists pg_temp.powerhouse_targets;
-create temporary table powerhouse_targets (
-  ord       integer primary key,
-  target_id uuid,
-  reused    boolean not null default false
-);
-
-do $$
-declare
-  the_gym   uuid;
-  gyms      integer;
-  frozen    integer;
-  folded    integer := 0;
-  removed   integer;
-  reused    integer;
-  created   integer;
-  moved     integer;
-  r         record;
-  found_id  uuid;
-  bad       text;
-begin
   select count(*) into gyms from public.gyms where deleted_at is null;
   if gyms = 0 then
     raise exception
       'Το 011 δεν έτρεξε: δεν υπάρχει γυμναστήριο ακόμη. Φτιάξε το γυμναστήριο στην εφαρμογή και τρέξε ξανά το 011.';
   end if;
   if gyms > 1 then
-    -- An exception, not a notice: a notice would let the transaction commit
-    -- the new column with nothing replaced, and from then on every run of
-    -- this file would think it had already happened.
+    -- An exception, not a notice: a notice would let the statement commit
+    -- the new column with nothing replaced, and the app would switch to its
+    -- post-011 screens over the old catalogue.
     raise exception
       'Το 011 δεν έτρεξε: βρέθηκαν % γυμναστήρια. Ο κατάλογος γράφτηκε για ένα γυμναστήριο, το PowerHouseGym.',
       gyms;
   end if;
   select id into the_gym from public.gyms where deleted_at is null;
 
+  -- The exercises only this file creates say it ran: their ids come from their
+  -- names (step 5), and nothing is ever hard-deleted. The column does not —
+  -- an earlier copy of this file, run a statement at a time, committed the
+  -- column with nothing replaced, and the app may have filled a tool list or
+  -- two since.
   if exists (
-    select 1 from public.exercises
-     where gym_id = the_gym and equipment_options is not null and deleted_at is null
+    select 1 from public.exercises e
+      join powerhouse_list l on e.id = md5('powerhouse-011:' || lower(l.name))::uuid
+     where e.gym_id = the_gym
   ) then
     raise notice 'Το 011 έχει ήδη τρέξει: ο κατάλογος του γυμναστηρίου μένει όπως τον έχετε.';
     return;
@@ -472,10 +484,8 @@ begin
     'Αφαιρέθηκαν % παλιές, % διπλές ενώθηκαν. % παλιά blocks κράτησαν το όργανό τους, '
     '% πέρασαν στην άσκηση τροχαλίας τους.',
     reused + created, reused, created, removed, folded, frozen, moved;
+
+  drop table powerhouse_targets;
+  drop table powerhouse_list;
 end;
 $$;
-
-drop table if exists pg_temp.powerhouse_targets;
-drop table if exists pg_temp.powerhouse_list;
-
-commit;

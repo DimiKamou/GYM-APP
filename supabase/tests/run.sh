@@ -41,6 +41,13 @@ for pair in "006_adopt_catalogue.sql:trainhub-ασκησεις-δικες-μου
     exit 1
   fi
 done
+# 005, 007 and 008 shipped without a copy and never reached the gym's database.
+# They are pasted together, so their copy is the three files end to end.
+if ! cat "$HERE"/../migrations/{005_equipment_smith,007_block_note,008_block_equipment}.sql \
+     | cmp -s - "$HERE/../../trainhub-προηγουμενες-αλλαγες.sql"; then
+  echo "ΛΑΘΟΣ: το trainhub-προηγουμενες-αλλαγες.sql δεν είναι τα 005, 007, 008 — φτιάξ' το ξανά"
+  exit 1
+fi
 
 psql -h "$WORK/sock" -U trainhub -d postgres -v ON_ERROR_STOP=1 -q -f "$HERE/00_supabase_shim.sql"
 # Every migration, in filename order. Naming them one by one is how 003 came to be written,
@@ -66,8 +73,8 @@ done
 
 # 011 refuses to run without exactly one gym, and refusing must leave NOTHING
 # behind: a committed equipment_options column over an unreplaced catalogue
-# switches the app into its post-011 mode and makes every later paste of 011
-# believe it already ran. Once on the empty database above, once with two gyms.
+# switches the app into its post-011 mode. Once on the empty database above,
+# once with two gyms.
 column_count() {
   psql -h "$WORK/sock" -U trainhub -d "$1" -tAq -c "select count(*) from information_schema.columns
      where table_schema = 'public' and table_name = 'exercises' and column_name = 'equipment_options'"
@@ -89,6 +96,56 @@ if ! grep -q 'γυμναστήρια' <<<"$out" || [ "$(column_count twogyms)" !
 fi
 echo "011: με δύο γυμναστήρια αρνήθηκε και δεν άφησε τίποτα πίσω: σωστό"
 dropdb -h "$WORK/sock" -U trainhub twogyms
+
+# The Supabase SQL editor ran the first 011 one statement at a time, each in a
+# session of its own: the scratch list was gone by the statement that filled it,
+# and the column committed with nothing replaced. 011 is therefore ONE statement,
+# a DO block — nothing outside it but comments.
+if [ "$(grep -v -E '^[[:space:]]*(--.*)?$' "$HERE/../migrations/011_powerhouse_catalogue.sql" \
+        | sed -n '1p;$p' | tr '\n' ' ')" != 'do $$ $$; ' ] \
+   || [ "$(grep -v -E '^[[:space:]]*--' "$HERE/../migrations/011_powerhouse_catalogue.sql" \
+           | grep -o '\$\$' | wc -l)" != "2" ]; then
+  echo "ΛΑΘΟΣ: το 011 δεν είναι μία εντολή — ο SQL Editor μπορεί να το τρέξει κομμάτια"; exit 1
+fi
+
+# A database that never got 008 (the gym's did not): refused by name, nothing left behind.
+createdb -h "$WORK/sock" -U trainhub -T postgres no008
+psql -h "$WORK/sock" -U trainhub -d no008 -q -c "alter table public.blocks drop column equipment;
+  insert into public.gyms (id, name) values ('aaaaaaaa-0000-0000-0000-0000000000a1', 'A')"
+if out="$(psql -h "$WORK/sock" -U trainhub -d no008 -v ON_ERROR_STOP=1 -q \
+            -f "$HERE/../migrations/011_powerhouse_catalogue.sql" 2>&1)"; then
+  echo "ΛΑΘΟΣ: το 011 έτρεξε χωρίς το 008"; exit 1
+fi
+if ! grep -q '005, 007, 008' <<<"$out" || [ "$(column_count no008)" != "0" ]; then
+  printf '%s\n' "$out"
+  echo "ΛΑΘΟΣ: το 011 χωρίς το 008 δεν αρνήθηκε καθαρά"; exit 1
+fi
+echo "011: χωρίς το 008 αρνήθηκε με όνομα και δεν άφησε τίποτα πίσω: σωστό"
+dropdb -h "$WORK/sock" -U trainhub no008
+
+# What the split run left on the gym's database: the column, its rule, and a
+# tool list the app may have written since. 011 must still replace the
+# catalogue, not take the column for proof that it already ran.
+createdb -h "$WORK/sock" -U trainhub -T postgres halfway
+psql -h "$WORK/sock" -U trainhub -d halfway -q -c "insert into public.gyms (id, name)
+  values ('aaaaaaaa-0000-0000-0000-0000000000a1', 'A')"
+psql -h "$WORK/sock" -U trainhub -d halfway -q -f "$HERE/../migrations/006_adopt_catalogue.sql" >/dev/null 2>&1
+psql -h "$WORK/sock" -U trainhub -d halfway -q -c "
+  alter table public.exercises add column equipment_options public.equipment[];
+  alter table public.exercises add constraint exercises_equipment_options_check
+    check (equipment_options is null or (cardinality(equipment_options) >= 1 and equipment = any (equipment_options)));
+  insert into public.exercises (gym_id, name_en, category, equipment, equipment_options, default_set_kind)
+  values ('aaaaaaaa-0000-0000-0000-0000000000a1', 'Landmine Press', 'upper', 'barbell', '{barbell}', 'weight_reps')"
+if ! out="$(psql -h "$WORK/sock" -U trainhub -d halfway -v ON_ERROR_STOP=1 -q \
+              -f "$HERE/../migrations/011_powerhouse_catalogue.sql" 2>&1)" \
+   || ! grep -q 'Ο νέος κατάλογος' <<<"$out" \
+   || [ "$(psql -h "$WORK/sock" -U trainhub -d halfway -tAq -c "select count(*) from public.exercises
+         where deleted_at is null and (equipment_options is null or name_en = 'Landmine Press')")" != "0" ]; then
+  printf '%s\n' "$out"
+  echo "ΛΑΘΟΣ: το 011 δεν αντικατέστησε τον κατάλογο πάνω στα μισά του προηγούμενου"; exit 1
+fi
+echo "011: πάνω στα μισά μιας κομματιασμένης εκτέλεσης αντικατέστησε τον κατάλογο: σωστό"
+dropdb -h "$WORK/sock" -U trainhub halfway
 
 status=0
 for test in "$HERE"/0[0-9]_*_test.sql; do
