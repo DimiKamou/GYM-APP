@@ -309,6 +309,93 @@ def test_last_time_does_not_read_one_implement_under_another() -> None:
     check("and the dumbbell numbers still are not", "40×10" not in body, body[:600])
 
 
+def test_an_empty_block_does_not_hide_last_time() -> None:
+    """A workout opened, given the bench and left without a set is not the
+    bench's last time. «Νέα προπόνηση» leaves the earlier workout open, so this
+    is ordinary use, and it used to read «Πρώτη φορά» over last week's 77,5×5."""
+    import streamlit as st
+
+    def history_and_a_newer_empty_block(*, deleted_set: bool) -> None:
+        state.reset()
+        st.cache_data.clear()
+        state.STORE["blocks"].append({
+            "id": "b-bar-hist", "gym_id": state.GYM, "session_id": state.LAST_SESSION,
+            "exercise_id": "e-bar", "position": 1, "note": None,
+            "equipment": "barbell", "deleted_at": None,
+        })
+        state.STORE["sets"].append({
+            "id": "s-bar-hist", "gym_id": state.GYM, "block_id": "b-bar-hist", "position": 0,
+            "kind": "weight_reps", "load_kg": "77.50", "reps": 5, "seconds": None,
+            "meters": None, "note": None, "done_at": state.NOW, "created_by": state.OWNER,
+            "deleted_at": None,
+        })
+        # 28 Aug: between last week's workout and today's, with the bench in it
+        # and nothing logged — or one set, then deleted.
+        state.STORE["sessions"].append({
+            "id": "s-empty", "gym_id": state.GYM, "athlete_id": state.ATHLETE,
+            "status": "finished", "title": None, "notes": None, "local_date": "2026-08-28",
+            "started_at": "2026-08-28T07:00:00+00:00",
+            "finished_at": "2026-08-28T08:00:00+00:00",
+            "logged_by": state.TRAINER, "credited_to": None, "created_at": state.NOW,
+            "deleted_at": None,
+        })
+        state.STORE["blocks"].append({
+            "id": "b-empty", "gym_id": state.GYM, "session_id": "s-empty",
+            "exercise_id": "e-bar", "position": 0, "note": None,
+            "equipment": "barbell", "deleted_at": None,
+        })
+        if deleted_set:
+            state.STORE["sets"].append({
+                "id": "s-gone", "gym_id": state.GYM, "block_id": "b-empty", "position": 0,
+                "kind": "weight_reps", "load_kg": "90.00", "reps": 3, "seconds": None,
+                "meters": None, "note": None, "done_at": state.NOW,
+                "created_by": state.TRAINER, "deleted_at": "2026-08-28T07:11:00+00:00",
+            })
+
+    history_and_a_newer_empty_block(deleted_set=False)
+    body = texts(open_log())
+    check("an empty newer block falls back to the last real bench",
+          "Τελευταία φορά: 77,5×5 · 25 Αυγ · Δημήτρης" in body, body[:600])
+    check("and does not call it the first time", "Πρώτη φορά" not in body, body[:600])
+
+    history_and_a_newer_empty_block(deleted_set=True)
+    body = texts(open_log())
+    check("a newer block whose only set was deleted falls back too",
+          "Τελευταία φορά: 77,5×5 · 25 Αυγ · Δημήτρης" in body, body[:600])
+    check("and the deleted set is not quoted", "90×3" not in body, body[:600])
+
+    # On this database a hang is a count. Looking further back must cost one
+    # more query, not one per abandoned workout: here the bench was left empty
+    # in twenty workouts in a row, on the barbell and on dumbbells.
+    def sets_reads_to_open(empty_workouts: int) -> tuple[int, str]:
+        history_and_a_newer_empty_block(deleted_set=False)
+        for n in range(empty_workouts):
+            day = f"2026-08-{26 + n % 3:02d}"
+            state.STORE["sessions"].append({
+                "id": f"s-left-{n}", "gym_id": state.GYM, "athlete_id": state.ATHLETE,
+                "status": "active", "title": None, "notes": None, "local_date": day,
+                "started_at": f"{day}T{6 + n // 3:02d}:00:00+00:00", "finished_at": None,
+                "logged_by": state.TRAINER, "credited_to": None, "created_at": state.NOW,
+                "deleted_at": None,
+            })
+            for gear in ("barbell", "dumbbell"):
+                state.STORE["blocks"].append({
+                    "id": f"b-left-{n}-{gear}", "gym_id": state.GYM,
+                    "session_id": f"s-left-{n}", "exercise_id": "e-bar", "position": 0,
+                    "note": None, "equipment": gear, "deleted_at": None,
+                })
+        fake_supabase.reset_round_trips()
+        body = texts(open_log())
+        return sum(trip == "select:sets" for trip in fake_supabase.ROUND_TRIPS), body
+
+    one_empty, _ = sets_reads_to_open(0)
+    many_empty, body = sets_reads_to_open(20)
+    check("twenty abandoned workouts still fall back to the last real bench",
+          "Τελευταία φορά: 77,5×5 · 25 Αυγ · Δημήτρης" in body, body[:600])
+    check(f"and cost the same sets reads as one ({many_empty} vs {one_empty})",
+          many_empty == one_empty, " ".join(fake_supabase.ROUND_TRIPS))
+
+
 def test_the_add_button_waits_for_a_movement() -> None:
     state.reset()
     at = open_log()

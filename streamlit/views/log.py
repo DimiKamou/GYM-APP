@@ -270,7 +270,7 @@ def _last_performance(
     exercise_keys: tuple[tuple[str, str], ...],
     current_session: tuple[str, str, str],
     defaults: tuple[tuple[str, str], ...] = (),
-) -> dict[str, dict[str, Any]]:
+) -> dict[tuple[str, str], dict[str, Any]]:
     """(canonical exercise, όργανο) -> the athlete's last top set, with day and author.
 
     Keyed by the implement as well as the movement, since 008: one exercise can
@@ -284,7 +284,10 @@ def _last_performance(
 
     Three queries for the whole screen rather than one per block: the athlete's
     recent sessions, the blocks of those sessions that use these exercises, and
-    the sets of the winning blocks.
+    the sets of the newest of them. One more query only when an exercise's
+    newest block turned out empty: a workout opened, given the bench and
+    abandoned is not the bench's last time, and must not hide last week's.
+    lastPerformance() in src/domain/analytics.ts skips it the same way.
 
     `exercise_keys` pairs every id a block may carry with the canonical id it
     stands for. A movement whose duplicate has been folded in is logged under two
@@ -329,7 +332,6 @@ def _last_performance(
     if not history:
         return {}
     rank_of = {str(row["id"]): rank for rank, row in enumerate(history)}
-    session_of = {str(row["id"]): row for row in history}
 
     fallback = dict(defaults)
     blocks = (
@@ -346,10 +348,10 @@ def _last_performance(
     if not blocks:
         return {}
 
-    # The most recent session that used each exercise. A session that used it
-    # twice (straight sets, then a drop-set block) contributes both blocks, and
-    # the top set is taken across them.
-    winners: dict[str, dict[str, Any]] = {}
+    # Every earlier session that used each exercise, by rank. A session that used
+    # it twice (straight sets, then a drop-set block) contributes both blocks,
+    # and the top set is taken across them.
+    candidates: dict[tuple[str, str], dict[int, list[str]]] = {}
     for block in blocks:
         rank = rank_of.get(str(block.get("session_id")))
         if rank is None:
@@ -363,49 +365,44 @@ def _last_performance(
         # NULL on the block means "as the exercise says", so it resolves to the
         # same key an explicit choice of that implement would.
         gear = str(block.get("equipment") or fallback.get(raw_id, ""))
-        exercise_id = (exercise_id, gear)
-        current = winners.get(exercise_id)
-        if current is None or rank < current["rank"]:
-            winners[exercise_id] = {
-                "rank": rank,
-                "session_id": str(block["session_id"]),
-                "block_ids": [str(block["id"])],
-            }
-        elif rank == current["rank"]:
-            current["block_ids"].append(str(block["id"]))
+        candidates.setdefault((exercise_id, gear), {}).setdefault(rank, []).append(
+            str(block["id"])
+        )
 
-    wanted = [bid for winner in winners.values() for bid in winner["block_ids"]]
-    if not wanted:
-        return {}
+    def sets_of(block_ids: list[str]) -> dict[str, list[dict[str, Any]]]:
+        # In groups, so the block_id=in.(...) list stays the size it has always
+        # been allowed to be: one id per session of the history window.
+        by_block: dict[str, list[dict[str, Any]]] = {}
+        for start in range(0, len(block_ids), _HISTORY_SESSIONS):
+            performed = (
+                client.table("sets")
+                .select("block_id, kind, load_kg, reps, seconds, meters")
+                .eq("gym_id", gym_id)
+                .in_("block_id", block_ids[start : start + _HISTORY_SESSIONS])
+                .is_("deleted_at", "null")
+                .execute()
+                .data
+                or []
+            )
+            for row in performed:
+                by_block.setdefault(str(row.get("block_id")), []).append(row)
+        return by_block
 
-    performed = (
-        client.table("sets")
-        .select("block_id, kind, load_kg, reps, seconds, meters")
-        .eq("gym_id", gym_id)
-        .in_("block_id", wanted)
-        .is_("deleted_at", "null")
-        .execute()
-        .data
-        or []
-    )
-    by_block: dict[str, list[dict[str, Any]]] = {}
-    for row in performed:
-        by_block.setdefault(str(row.get("block_id")), []).append(row)
-
-    result: dict[str, dict[str, Any]] = {}
-    for exercise_id, winner in winners.items():
-        rows = [row for bid in winner["block_ids"] for row in by_block.get(bid, [])]
+    def answer(
+        key: tuple[str, str], rank: int, by_block: dict[str, list[dict[str, Any]]]
+    ) -> dict[str, Any] | None:
+        rows = [row for bid in candidates[key][rank] for row in by_block.get(bid, [])]
         if not rows:
-            continue
+            return None
         # The block's own kind first, then the best set within it. A treadmill
         # set and a bench set are not comparable, and the winner of a comparison
         # across kinds renders in the loser's unit.
         kind = fmt.dominant_kind(rows)
         top = fmt.top_set(rows, kind)
         if top is None:
-            continue
-        session = session_of[winner["session_id"]]
-        result[exercise_id] = {
+            return None
+        session = history[rank]
+        return {
             "set": top,
             "kind": kind,
             "day": fmt.parse_local_date(session.get("local_date")),
@@ -415,6 +412,31 @@ def _last_performance(
             # point of credited_to is that this edit is visible.
             "author": session.get("credited_to") or session.get("logged_by"),
         }
+
+    ranks_of = {key: sorted(by_rank) for key, by_rank in candidates.items()}
+    newest = sets_of([bid for key, ranks in ranks_of.items() for bid in candidates[key][ranks[0]]])
+    result: dict[tuple[str, str], dict[str, Any]] = {}
+    unanswered: list[tuple[str, str]] = []
+    for key, ranks in ranks_of.items():
+        found = answer(key, ranks[0], newest)
+        if found is not None:
+            result[key] = found
+        elif len(ranks) > 1:
+            unanswered.append(key)
+
+    if unanswered:
+        # Every older block of those exercises at once, not one session per
+        # round trip: a bench left empty in five workouts in a row would
+        # otherwise cost the screen five more waits in a row.
+        older = sets_of(
+            [bid for key in unanswered for rank in ranks_of[key][1:] for bid in candidates[key][rank]]
+        )
+        for key in unanswered:
+            for rank in ranks_of[key][1:]:
+                found = answer(key, rank, older)
+                if found is not None:
+                    result[key] = found
+                    break
     return result
 
 
