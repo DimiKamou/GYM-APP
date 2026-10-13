@@ -364,6 +364,37 @@ def test_an_empty_block_does_not_hide_last_time() -> None:
           "Τελευταία φορά: 77,5×5 · 25 Αυγ · Δημήτρης" in body, body[:600])
     check("and the deleted set is not quoted", "90×3" not in body, body[:600])
 
+    # On this database a hang is a count. Looking further back must cost one
+    # more query, not one per abandoned workout: here the bench was left empty
+    # in twenty workouts in a row, on the barbell and on dumbbells.
+    def sets_reads_to_open(empty_workouts: int) -> tuple[int, str]:
+        history_and_a_newer_empty_block(deleted_set=False)
+        for n in range(empty_workouts):
+            day = f"2026-08-{26 + n % 3:02d}"
+            state.STORE["sessions"].append({
+                "id": f"s-left-{n}", "gym_id": state.GYM, "athlete_id": state.ATHLETE,
+                "status": "active", "title": None, "notes": None, "local_date": day,
+                "started_at": f"{day}T{6 + n // 3:02d}:00:00+00:00", "finished_at": None,
+                "logged_by": state.TRAINER, "credited_to": None, "created_at": state.NOW,
+                "deleted_at": None,
+            })
+            for gear in ("barbell", "dumbbell"):
+                state.STORE["blocks"].append({
+                    "id": f"b-left-{n}-{gear}", "gym_id": state.GYM,
+                    "session_id": f"s-left-{n}", "exercise_id": "e-bar", "position": 0,
+                    "note": None, "equipment": gear, "deleted_at": None,
+                })
+        fake_supabase.reset_round_trips()
+        body = texts(open_log())
+        return sum(trip == "select:sets" for trip in fake_supabase.ROUND_TRIPS), body
+
+    one_empty, _ = sets_reads_to_open(0)
+    many_empty, body = sets_reads_to_open(20)
+    check("twenty abandoned workouts still fall back to the last real bench",
+          "Τελευταία φορά: 77,5×5 · 25 Αυγ · Δημήτρης" in body, body[:600])
+    check(f"and cost the same sets reads as one ({many_empty} vs {one_empty})",
+          many_empty == one_empty, " ".join(fake_supabase.ROUND_TRIPS))
+
 
 def test_the_add_button_waits_for_a_movement() -> None:
     state.reset()

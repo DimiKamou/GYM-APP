@@ -284,8 +284,8 @@ def _last_performance(
 
     Three queries for the whole screen rather than one per block: the athlete's
     recent sessions, the blocks of those sessions that use these exercises, and
-    the sets of the newest of them. Another round of sets only for an exercise
-    whose newest block turned out empty: a workout opened, given the bench and
+    the sets of the newest of them. One more query only when an exercise's
+    newest block turned out empty: a workout opened, given the bench and
     abandoned is not the bench's last time, and must not hide last week's.
     lastPerformance() in src/domain/analytics.ts skips it the same way.
 
@@ -369,52 +369,74 @@ def _last_performance(
             str(block["id"])
         )
 
-    result: dict[tuple[str, str], dict[str, Any]] = {}
-    pending = {key: sorted(by_rank) for key, by_rank in candidates.items()}
-    while pending:
-        # The newest untried session of every exercise still unanswered, in one
-        # query: the sets of the newest blocks only, so the id list stays short.
-        trying = {key: ranks[0] for key, ranks in pending.items()}
-        wanted = [bid for key, rank in trying.items() for bid in candidates[key][rank]]
-        performed = (
-            client.table("sets")
-            .select("block_id, kind, load_kg, reps, seconds, meters")
-            .eq("gym_id", gym_id)
-            .in_("block_id", wanted)
-            .is_("deleted_at", "null")
-            .execute()
-            .data
-            or []
-        )
+    def sets_of(block_ids: list[str]) -> dict[str, list[dict[str, Any]]]:
+        # In groups, so the block_id=in.(...) list stays the size it has always
+        # been allowed to be: one id per session of the history window.
         by_block: dict[str, list[dict[str, Any]]] = {}
-        for row in performed:
-            by_block.setdefault(str(row.get("block_id")), []).append(row)
+        for start in range(0, len(block_ids), _HISTORY_SESSIONS):
+            performed = (
+                client.table("sets")
+                .select("block_id, kind, load_kg, reps, seconds, meters")
+                .eq("gym_id", gym_id)
+                .in_("block_id", block_ids[start : start + _HISTORY_SESSIONS])
+                .is_("deleted_at", "null")
+                .execute()
+                .data
+                or []
+            )
+            for row in performed:
+                by_block.setdefault(str(row.get("block_id")), []).append(row)
+        return by_block
 
-        unanswered = {}
-        for key, rank in trying.items():
-            rows = [row for bid in candidates[key][rank] for row in by_block.get(bid, [])]
-            # The block's own kind first, then the best set within it. A treadmill
-            # set and a bench set are not comparable, and the winner of a
-            # comparison across kinds renders in the loser's unit.
-            kind = fmt.dominant_kind(rows) if rows else None
-            top = fmt.top_set(rows, kind) if rows else None
-            if top is None:
-                if len(pending[key]) > 1:
-                    unanswered[key] = pending[key][1:]
-                continue
-            session = history[rank]
-            result[key] = {
-                "set": top,
-                "kind": kind,
-                "day": fmt.parse_local_date(session.get("local_date")),
-                # sessionAuthorId() in src/domain/analytics.ts: the credit,
-                # falling back to who typed it. A session Μαρία typed and
-                # re-credited to Νίκος reads as Νίκος everywhere else in the
-                # product, and the whole point of credited_to is that this edit
-                # is visible.
-                "author": session.get("credited_to") or session.get("logged_by"),
-            }
-        pending = unanswered
+    def answer(
+        key: tuple[str, str], rank: int, by_block: dict[str, list[dict[str, Any]]]
+    ) -> dict[str, Any] | None:
+        rows = [row for bid in candidates[key][rank] for row in by_block.get(bid, [])]
+        if not rows:
+            return None
+        # The block's own kind first, then the best set within it. A treadmill
+        # set and a bench set are not comparable, and the winner of a comparison
+        # across kinds renders in the loser's unit.
+        kind = fmt.dominant_kind(rows)
+        top = fmt.top_set(rows, kind)
+        if top is None:
+            return None
+        session = history[rank]
+        return {
+            "set": top,
+            "kind": kind,
+            "day": fmt.parse_local_date(session.get("local_date")),
+            # sessionAuthorId() in src/domain/analytics.ts: the credit, falling
+            # back to who typed it. A session Μαρία typed and re-credited to
+            # Νίκος reads as Νίκος everywhere else in the product, and the whole
+            # point of credited_to is that this edit is visible.
+            "author": session.get("credited_to") or session.get("logged_by"),
+        }
+
+    ranks_of = {key: sorted(by_rank) for key, by_rank in candidates.items()}
+    newest = sets_of([bid for key, ranks in ranks_of.items() for bid in candidates[key][ranks[0]]])
+    result: dict[tuple[str, str], dict[str, Any]] = {}
+    unanswered: list[tuple[str, str]] = []
+    for key, ranks in ranks_of.items():
+        found = answer(key, ranks[0], newest)
+        if found is not None:
+            result[key] = found
+        elif len(ranks) > 1:
+            unanswered.append(key)
+
+    if unanswered:
+        # Every older block of those exercises at once, not one session per
+        # round trip: a bench left empty in five workouts in a row would
+        # otherwise cost the screen five more waits in a row.
+        older = sets_of(
+            [bid for key in unanswered for rank in ranks_of[key][1:] for bid in candidates[key][rank]]
+        )
+        for key in unanswered:
+            for rank in ranks_of[key][1:]:
+                found = answer(key, rank, older)
+                if found is not None:
+                    result[key] = found
+                    break
     return result
 
 
