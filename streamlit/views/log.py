@@ -270,7 +270,7 @@ def _last_performance(
     exercise_keys: tuple[tuple[str, str], ...],
     current_session: tuple[str, str, str],
     defaults: tuple[tuple[str, str], ...] = (),
-) -> dict[str, dict[str, Any]]:
+) -> dict[tuple[str, str], dict[str, Any]]:
     """(canonical exercise, όργανο) -> the athlete's last top set, with day and author.
 
     Keyed by the implement as well as the movement, since 008: one exercise can
@@ -284,7 +284,10 @@ def _last_performance(
 
     Three queries for the whole screen rather than one per block: the athlete's
     recent sessions, the blocks of those sessions that use these exercises, and
-    the sets of the winning blocks.
+    the sets of the newest of them. Another round of sets only for an exercise
+    whose newest block turned out empty: a workout opened, given the bench and
+    abandoned is not the bench's last time, and must not hide last week's.
+    lastPerformance() in src/domain/analytics.ts skips it the same way.
 
     `exercise_keys` pairs every id a block may carry with the canonical id it
     stands for. A movement whose duplicate has been folded in is logged under two
@@ -329,7 +332,6 @@ def _last_performance(
     if not history:
         return {}
     rank_of = {str(row["id"]): rank for rank, row in enumerate(history)}
-    session_of = {str(row["id"]): row for row in history}
 
     fallback = dict(defaults)
     blocks = (
@@ -346,10 +348,10 @@ def _last_performance(
     if not blocks:
         return {}
 
-    # The most recent session that used each exercise. A session that used it
-    # twice (straight sets, then a drop-set block) contributes both blocks, and
-    # the top set is taken across them.
-    winners: dict[str, dict[str, Any]] = {}
+    # Every earlier session that used each exercise, by rank. A session that used
+    # it twice (straight sets, then a drop-set block) contributes both blocks,
+    # and the top set is taken across them.
+    candidates: dict[tuple[str, str], dict[int, list[str]]] = {}
     for block in blocks:
         rank = rank_of.get(str(block.get("session_id")))
         if rank is None:
@@ -363,58 +365,56 @@ def _last_performance(
         # NULL on the block means "as the exercise says", so it resolves to the
         # same key an explicit choice of that implement would.
         gear = str(block.get("equipment") or fallback.get(raw_id, ""))
-        exercise_id = (exercise_id, gear)
-        current = winners.get(exercise_id)
-        if current is None or rank < current["rank"]:
-            winners[exercise_id] = {
-                "rank": rank,
-                "session_id": str(block["session_id"]),
-                "block_ids": [str(block["id"])],
+        candidates.setdefault((exercise_id, gear), {}).setdefault(rank, []).append(
+            str(block["id"])
+        )
+
+    result: dict[tuple[str, str], dict[str, Any]] = {}
+    pending = {key: sorted(by_rank) for key, by_rank in candidates.items()}
+    while pending:
+        # The newest untried session of every exercise still unanswered, in one
+        # query: the sets of the newest blocks only, so the id list stays short.
+        trying = {key: ranks[0] for key, ranks in pending.items()}
+        wanted = [bid for key, rank in trying.items() for bid in candidates[key][rank]]
+        performed = (
+            client.table("sets")
+            .select("block_id, kind, load_kg, reps, seconds, meters")
+            .eq("gym_id", gym_id)
+            .in_("block_id", wanted)
+            .is_("deleted_at", "null")
+            .execute()
+            .data
+            or []
+        )
+        by_block: dict[str, list[dict[str, Any]]] = {}
+        for row in performed:
+            by_block.setdefault(str(row.get("block_id")), []).append(row)
+
+        unanswered = {}
+        for key, rank in trying.items():
+            rows = [row for bid in candidates[key][rank] for row in by_block.get(bid, [])]
+            # The block's own kind first, then the best set within it. A treadmill
+            # set and a bench set are not comparable, and the winner of a
+            # comparison across kinds renders in the loser's unit.
+            kind = fmt.dominant_kind(rows) if rows else None
+            top = fmt.top_set(rows, kind) if rows else None
+            if top is None:
+                if len(pending[key]) > 1:
+                    unanswered[key] = pending[key][1:]
+                continue
+            session = history[rank]
+            result[key] = {
+                "set": top,
+                "kind": kind,
+                "day": fmt.parse_local_date(session.get("local_date")),
+                # sessionAuthorId() in src/domain/analytics.ts: the credit,
+                # falling back to who typed it. A session Μαρία typed and
+                # re-credited to Νίκος reads as Νίκος everywhere else in the
+                # product, and the whole point of credited_to is that this edit
+                # is visible.
+                "author": session.get("credited_to") or session.get("logged_by"),
             }
-        elif rank == current["rank"]:
-            current["block_ids"].append(str(block["id"]))
-
-    wanted = [bid for winner in winners.values() for bid in winner["block_ids"]]
-    if not wanted:
-        return {}
-
-    performed = (
-        client.table("sets")
-        .select("block_id, kind, load_kg, reps, seconds, meters")
-        .eq("gym_id", gym_id)
-        .in_("block_id", wanted)
-        .is_("deleted_at", "null")
-        .execute()
-        .data
-        or []
-    )
-    by_block: dict[str, list[dict[str, Any]]] = {}
-    for row in performed:
-        by_block.setdefault(str(row.get("block_id")), []).append(row)
-
-    result: dict[str, dict[str, Any]] = {}
-    for exercise_id, winner in winners.items():
-        rows = [row for bid in winner["block_ids"] for row in by_block.get(bid, [])]
-        if not rows:
-            continue
-        # The block's own kind first, then the best set within it. A treadmill
-        # set and a bench set are not comparable, and the winner of a comparison
-        # across kinds renders in the loser's unit.
-        kind = fmt.dominant_kind(rows)
-        top = fmt.top_set(rows, kind)
-        if top is None:
-            continue
-        session = session_of[winner["session_id"]]
-        result[exercise_id] = {
-            "set": top,
-            "kind": kind,
-            "day": fmt.parse_local_date(session.get("local_date")),
-            # sessionAuthorId() in src/domain/analytics.ts: the credit, falling
-            # back to who typed it. A session Μαρία typed and re-credited to
-            # Νίκος reads as Νίκος everywhere else in the product, and the whole
-            # point of credited_to is that this edit is visible.
-            "author": session.get("credited_to") or session.get("logged_by"),
-        }
+        pending = unanswered
     return result
 
 
