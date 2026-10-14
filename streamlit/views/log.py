@@ -41,7 +41,7 @@ from typing import Any
 
 import streamlit as st
 
-from lib import db, exercises, fmt, gym, nav, ui
+from lib import db, exercises, fmt, gym, nav, recap, ui
 
 # How far back the "last time" lookup reads. It is a window, not the whole
 # history, because the session ids go into a PostgREST `in.(…)` filter and a URL
@@ -55,6 +55,12 @@ _HISTORY_SESSIONS = 60
 # dropped from the programme a month ago should stop being the first thing
 # offered.
 _RECENT_SESSIONS = 3
+
+# The workouts summarised above the log: the last three that had a set done in
+# them. Read from a few more than three, because a workout opened and left empty
+# is skipped rather than shown as a blank.
+_RECAP_WORKOUTS = 3
+_RECAP_LOOKBACK = 12
 
 # numeric(6,2) on sets.load_kg and numeric(9,2) on sets.meters are the hard
 # limits; these are the sane-input limits, so a slipped keyboard says so in Greek
@@ -438,6 +444,101 @@ def _last_performance(
                     result[key] = found
                     break
     return result
+
+
+# Long: nothing typed into the open workout changes the ones before it, and at
+# 120 s the entry ran out during an ordinary rest, so most sets paid four reads
+# for a section that had not changed.
+@st.cache_data(ttl=1800, show_spinner=False)
+def _recent_workouts(
+    gym_id: str,
+    athlete_id: str,
+    current_session: tuple[str, str, str],
+) -> list[dict[str, Any]]:
+    """The athlete's last three workouts before this one that had a set done.
+
+    Three queries — sessions, their blocks, their sets — and cached, so a set
+    logged in the open workout costs nothing here: what happened BEFORE this
+    workout is not changed by anything typed into it. `current_session` is
+    (local_date, started_at, id) as for _last_performance, and only sessions
+    strictly before it count, so a workout reopened from last week does not
+    summarise the ones after it.
+    """
+    client = db.client()
+    query = (
+        client.table("sessions")
+        .select("id, local_date, started_at, logged_by, credited_to, title")
+        .eq("gym_id", gym_id)
+        .eq("athlete_id", athlete_id)
+        .is_("deleted_at", "null")
+    )
+    # Bounded at the open workout's day BEFORE the limit: a workout reopened
+    # from a month ago otherwise spent the whole window on the sessions after it
+    # and summarised none of the ones before.
+    if current_session[0]:
+        query = query.lte("local_date", current_session[0])
+    sessions = (
+        query.order("local_date", desc=True)
+        .order("started_at", desc=True)
+        .order("id", desc=True)
+        .limit(_RECAP_LOOKBACK + 1)
+        .execute()
+        .data
+        or []
+    )
+    current_key = _session_order(*current_session)
+    earlier = [
+        row
+        for row in sessions
+        if str(row.get("id")) != current_session[2]
+        and _session_order(row.get("local_date"), row.get("started_at"), row.get("id")) < current_key
+    ][:_RECAP_LOOKBACK]
+    if not earlier:
+        return []
+
+    blocks = (
+        client.table("blocks")
+        .select("id, session_id, exercise_id, position, equipment")
+        .eq("gym_id", gym_id)
+        .in_("session_id", [str(row["id"]) for row in earlier])
+        .is_("deleted_at", "null")
+        .execute()
+        .data
+        or []
+    )
+    if not blocks:
+        return []
+
+    block_ids = [str(block["id"]) for block in blocks]
+    sets: list[dict[str, Any]] = []
+    for start in range(0, len(block_ids), _HISTORY_SESSIONS):
+        sets += (
+            client.table("sets")
+            .select("id, block_id, position, kind, load_kg, reps, seconds, meters, done_at")
+            .eq("gym_id", gym_id)
+            .in_("block_id", block_ids[start : start + _HISTORY_SESSIONS])
+            .is_("deleted_at", "null")
+            .execute()
+            .data
+            or []
+        )
+    done = recap.performed(sets)
+    session_of_block = {str(block["id"]): str(block.get("session_id")) for block in blocks}
+
+    workouts: list[dict[str, Any]] = []
+    for row in earlier:
+        session_id = str(row["id"])
+        own_sets = [s for s in done if session_of_block.get(str(s.get("block_id"))) == session_id]
+        if not own_sets:
+            continue
+        workouts.append({
+            "session": row,
+            "blocks": [b for b in blocks if str(b.get("session_id")) == session_id],
+            "sets": own_sets,
+        })
+        if len(workouts) == _RECAP_WORKOUTS:
+            break
+    return workouts
 
 
 @st.cache_data(ttl=600, show_spinner=False)
@@ -2239,6 +2340,55 @@ def _open_or_reuse(gym_id: str, athlete_id: str) -> dict[str, Any] | None:
     return row
 
 
+def _recap(
+    gym_id: str,
+    athlete_id: str,
+    session: dict[str, Any],
+    catalogue: dict[str, dict[str, Any]],
+    names: dict[str, str],
+    today: date,
+    started: bool,
+) -> None:
+    """The last three workouts, above the log: what this athlete has been doing.
+
+    Open while the workout is still empty, which is when the coach reads it to
+    decide what today is; folded once an exercise is in, so it stops pushing the
+    set forms down the phone.
+    """
+    current_session = (
+        str(session.get("local_date") or ""),
+        str(session.get("started_at") or ""),
+        str(session["id"]),
+    )
+    if not catalogue:
+        # The catalogue read failed (the screen already says so). Every line
+        # would be «—» beside a number: no name to load a bar from.
+        return
+    try:
+        workouts = _recent_workouts(gym_id, athlete_id, current_session)
+    except Exception:
+        # Like «Τελευταία φορά»: the nicest thing on the screen and the least
+        # essential — losing it must not stop the coach logging.
+        return
+    if not workouts:
+        return
+    try:
+        groups = recap.primary_groups(_exercise_muscles(gym_id), _muscle_groups(gym_id))
+    except Exception:
+        # The muscle group only prefixes each line; the workouts are already read.
+        groups = {}
+
+    count = len(workouts)
+    label = "Η προηγούμενη προπόνηση" if count == 1 else f"Οι {count} τελευταίες προπονήσεις"
+    with st.expander(label, expanded=not started):
+        for workout in workouts:
+            st.markdown(
+                "**" + fmt.md(recap.workout_heading(workout["session"], names, today)) + "**"
+            )
+            lines = recap.workout_lines(workout["blocks"], workout["sets"], catalogue, groups)
+            st.markdown("\n".join(f"- {fmt.md(line)}" for line in lines))
+
+
 def _workout(gym_id: str, athlete: dict[str, Any], session: dict[str, Any]) -> None:
     athlete_id = str(athlete["id"])
     session_id = str(session["id"])
@@ -2326,6 +2476,10 @@ def _workout(gym_id: str, athlete: dict[str, Any], session: dict[str, Any]) -> N
         # losing it must not stop the coach logging the set in front of them.
         last = {}
 
+    # Drawn here, above the set forms, but filled after them: its reads must not
+    # hold back the form the coach is waiting to type into.
+    recap_slot = st.container()
+
     if not blocks:
         st.info("Καμία άσκηση ακόμα. Πρόσθεσε την πρώτη από το «Προσθήκη άσκησης».")
 
@@ -2348,6 +2502,9 @@ def _workout(gym_id: str, athlete: dict[str, Any], session: dict[str, Any]) -> N
             session.get("logged_by"),
             today,
         )
+
+    with recap_slot:
+        _recap(gym_id, athlete_id, session, catalogue, names, today, bool(blocks))
 
     _picker(
         gym_id,
@@ -2386,6 +2543,11 @@ def _workout(gym_id: str, athlete: dict[str, Any], session: dict[str, Any]) -> N
             return
         st.session_state.pop("session_id", None)
         st.session_state[_FINISHED] = {"session_id": session_id, "athlete_id": athlete_id}
+        # A finished workout is the moment Πρόοδος has something new to show,
+        # and it keeps the history it read for five minutes.
+        from views import progress
+
+        progress._history.clear(gym_id, athlete_id)
         # A pending «Αναίρεση» would otherwise be drawn over «ολοκληρώθηκε» and
         # silently change the summary under the coach.
         ui.clear_undo(_NOTICE)
