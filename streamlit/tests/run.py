@@ -22,7 +22,7 @@ import re
 import sys
 import time
 import traceback
-from datetime import date
+from datetime import date, datetime, timedelta
 
 HERE = pathlib.Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE.parent))
@@ -2056,6 +2056,15 @@ def test_recap_lines_say_sets_reps_and_load() -> None:
     check("a plank is time", got == "2×45 δευτ.", got)
     got = recap.sets_summary([row(0, None, None, kind="distance", meters="5000")])
     check("a run is distance", got == "1×5,0 χλμ", got)
+    got = recap.sets_summary([row(0, "0", 10, kind="bodyweight"), row(1, None, 10, kind="bodyweight"),
+                              row(2, "0.00", 10, kind="bodyweight")])
+    check("sets that read the same are one run, whatever the columns hold", got == "3×10", got)
+    got = recap.sets_summary([row(0, None, None, kind="distance", meters="2000"),
+                              row(1, None, None, kind="distance", meters="2040")])
+    check("and so are two distances that print the same", got == "2×2,0 χλμ", got)
+    check("a block whose exercise was not read still names its tool",
+          "Μπάρα" in real.block_line(None, {"equipment": "barbell"}, [row(0, "80", 8)]),
+          real.block_line(None, {"equipment": "barbell"}, [row(0, "80", 8)]))
 
 
 def test_recap_periods_are_calendar_weeks_and_months() -> None:
@@ -2204,6 +2213,69 @@ def test_a_reopened_workout_does_not_summarise_the_ones_after_it() -> None:
     check("the one after it is not", "1 Σεπ ·" not in body.replace("Σε εξέλιξη", ""), body[:600])
 
 
+def test_a_workout_reopened_from_long_ago_still_gets_its_three() -> None:
+    """Thirteen later workouts used to fill the whole window and leave none before it."""
+    state.reset()
+    for row in state.rows("sessions", id=state.SESSION):
+        row["status"] = "finished"
+    for row in state.rows("sessions", id=state.LAST_SESSION):
+        row["status"] = "active"
+    for n in range(3):
+        _past_workout(f"before{n}", f"2026-08-1{n + 1}", [("e-bar", "barbell", [("70.00", 10, True)])])
+    for n in range(14):
+        _past_workout(f"after{n}", f"2026-09-{n + 2:02d}", [("e-db", "dumbbell", [("40.00", 10, True)])])
+    at = open_log(session_id=state.LAST_SESSION)
+    labels = [e.label for e in at.expander]
+    check("the three before it", "Οι 3 τελευταίες προπονήσεις" in labels, str(labels))
+    body = "\n".join(_lines(at))
+    check("and none after it", "Σεπ" not in body.split("Σε εξέλιξη")[-1].replace("Σε εξέλιξη", ""),
+          body[:600])
+
+
+def test_the_recap_sits_above_the_set_forms() -> None:
+    """Filled after the forms, so its reads wait for them — but still drawn on top."""
+    state.reset()
+    state.STORE["sets"].append({
+        "id": "s-b0", "gym_id": state.GYM, "block_id": "b0", "position": 0,
+        "kind": "weight_reps", "load_kg": "35.00", "reps": 12, "seconds": None,
+        "meters": None, "note": None, "done_at": state.NOW, "created_by": state.OWNER,
+        "deleted_at": None,
+    })
+    at = open_log()
+    lines = _lines(at)
+    recap_at = next((i for i, line in enumerate(lines) if "Τρίτη 25 Αυγ" in line), -1)
+    card_at = next((i for i, line in enumerate(lines) if "Πιέσεις Στήθους · Μπάρα · 1 σετ" in line), -1)
+    check("the last workouts come before today's first exercise", -1 < recap_at < card_at,
+          f"{recap_at} {card_at}")
+
+
+def test_the_recap_survives_its_lookups_failing() -> None:
+    import streamlit as st
+
+    state.reset()
+    state.STORE["sets"].append({
+        "id": "s-b0", "gym_id": state.GYM, "block_id": "b0", "position": 0,
+        "kind": "weight_reps", "load_kg": "35.00", "reps": 12, "seconds": None,
+        "meters": None, "note": None, "done_at": state.NOW, "created_by": state.OWNER,
+        "deleted_at": None,
+    })
+    st.cache_data.clear()
+    fake_supabase.FAIL_ONCE[:] = ["select:exercise_muscles"]
+    at = open_log()
+    fake_supabase.FAIL_ONCE[:] = []
+    body = "\n".join(_lines(at))
+    check("a failed muscle-group read keeps the workouts, without the group",
+          "- Κωπηλατική · Αλτήρες · 1×12 · 35 kg" in body, body[:600])
+
+    st.cache_data.clear()
+    fake_supabase.FAIL_ONCE[:] = ["select:exercises"]
+    at = open_log()
+    fake_supabase.FAIL_ONCE[:] = []
+    labels = [e.label for e in at.expander]
+    check("a failed catalogue read shows no recap of nameless numbers",
+          "Η προηγούμενη προπόνηση" not in labels, str(labels))
+
+
 def test_no_past_workout_no_section() -> None:
     state.reset()
     state.STORE["sessions"] = [s for s in state.STORE["sessions"] if s["id"] != state.LAST_SESSION]
@@ -2289,6 +2361,80 @@ def test_progress_does_not_step_into_the_future() -> None:
           bool(jump) and "1 Σεπ" in str(jump[0].label), str([b.label for b in at.button]))
     press(at, "progress_latest")
     check("which it goes to", "#### 31 Αυγ – 6 Σεπ" in _progress_texts(at), _progress_texts(at)[:300])
+
+
+def _gym_today() -> date:
+    """Today where the gym is, the way gym.today() works it out."""
+    from zoneinfo import ZoneInfo
+
+    return datetime.now(ZoneInfo("Europe/Athens")).date()
+
+
+def test_progress_comes_back_to_a_workout_logged_since() -> None:
+    """The coach looks, trains the athlete, looks again: today's workout is there."""
+    import streamlit as st
+    from lib import recap
+
+    state.reset()
+    st.cache_data.clear()
+    at = open_screen(PROGRESS_DRIVER)
+    check("first look: the last week trained", "#### 31 Αυγ – 6 Σεπ" in _progress_texts(at))
+    check("the screen's own choice is not written down as the coach's",
+          "progress_anchor" not in at.session_state, "")
+
+    today = _gym_today()
+    _past_workout("p-today", today.isoformat(), [("e-bar", "barbell", [("90.00", 5, True)] * 3)])
+    st.cache_data.clear()
+    at.run()
+    raise_on_exception(at)
+    first, last = recap.period(recap.WEEK, today)
+    label = recap.period_label(recap.WEEK, first, last, today)
+    body = _progress_texts(at)
+    check("second look: this week, with today's workout", f"#### {label}" in body
+          and "3×5 · 90 kg" in body, body[:400])
+
+    # A week the coach stepped to stays where they put it.
+    press(at, "progress_back")
+    at.run()
+    raise_on_exception(at)
+    first, last = recap.period(recap.WEEK, first - timedelta(days=1))
+    check("a week the coach chose is kept across reruns",
+          f"#### {recap.period_label(recap.WEEK, first, last, today)}" in _progress_texts(at),
+          _progress_texts(at)[:300])
+
+
+def test_progress_default_follows_the_period_kind() -> None:
+    """Μήνας → Εβδομάδα must not land on an empty current week."""
+    from lib import recap
+
+    trained = [{"local_date": "2026-10-02"}]
+    today = date(2026, 10, 14)
+    check("this month had a workout, so the month opens on today",
+          recap.default_anchor(recap.MONTH, trained, today) == today)
+    check("this week had none, so the week opens on the latest workout's",
+          recap.default_anchor(recap.WEEK, trained, today) == date(2026, 10, 2))
+    check("nobody trained yet: today", recap.default_anchor(recap.WEEK, [], today) == today)
+    check("a workout dated after today does not pull the screen into the future",
+          recap.default_anchor(recap.WEEK, [{"local_date": "2026-11-02"}], today) == today)
+
+
+def test_finishing_a_workout_refreshes_progress() -> None:
+    """Πρόοδος keeps its history five minutes; a finished workout is news it must see."""
+    import streamlit as st
+    from lib import recap
+
+    state.reset()
+    st.cache_data.clear()
+    open_screen(PROGRESS_DRIVER)
+    today = _gym_today()
+    _past_workout("p-today", today.isoformat(), [("e-bar", "barbell", [("90.00", 5, True)] * 3)])
+    at = open_log()
+    press(at, "log_finish")
+    at = open_screen(PROGRESS_DRIVER)
+    first, last = recap.period(recap.WEEK, today)
+    check("after «Τέλος προπόνησης» the new workout is on Πρόοδος",
+          f"#### {recap.period_label(recap.WEEK, first, last, today)}" in _progress_texts(at),
+          _progress_texts(at)[:300])
 
 
 def test_progress_starts_each_athlete_on_their_own_latest_week() -> None:

@@ -51,16 +51,11 @@ def _ordered(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
     return sorted(rows, key=lambda r: (fmt.integer(r.get("position")) or 0, str(r.get("id"))))
 
 
-def _identity(row: dict[str, Any]) -> tuple[Any, ...]:
-    load = fmt.decimal(row.get("load_kg"))
-    meters = fmt.decimal(row.get("meters"))
-    return (
-        row.get("kind"),
-        None if load is None else round(load, 2),
-        fmt.integer(row.get("reps")),
-        fmt.integer(row.get("seconds")),
-        None if meters is None else round(meters, 2),
-    )
+def _identity(row: dict[str, Any]) -> str:
+    # What a set prints as, not its raw columns: a bodyweight set stored with
+    # load 0 and the next with no load both read «×10», and «1×10, 1×10, 1×10»
+    # looks like three different sets on a line that says «3×10» on the card.
+    return _run(1, row)
 
 
 def _kg(load: float) -> str:
@@ -162,7 +157,9 @@ def block_line(
         return ""
     parts = [group] if group else []
     parts.append(fmt.exercise_name(exercise))
-    gear = equipment_of(exercise, str(block.get("equipment") or "")) if exercise else ""
+    # The block's own record of the tool stands even when its exercise row could
+    # not be read: «— · Μπάρα · 1×8 · 80 kg» still says what the bar held.
+    gear = equipment_of(exercise, str(block.get("equipment") or ""))
     if gear:
         parts.append(gear)
     parts.append(sets)
@@ -217,6 +214,21 @@ def workout_heading(session: dict[str, Any], names: dict[str, str], today: date)
 # ---------------------------------------------------------------------------
 # Periods
 # ---------------------------------------------------------------------------
+
+def default_anchor(kind: str, sessions: list[dict[str, Any]], today: date) -> date:
+    """A day inside the period a screen should open on.
+
+    This period if the athlete trained in it, else the period of their latest
+    workout: on a Monday morning "this week" is empty, and an empty page is not
+    what a coach opening someone's progress came to read. `sessions` are the
+    workouts that had a set done.
+    """
+    first, last = period(kind, today)
+    if any(in_period(s, first, last) for s in sessions):
+        return today
+    days = [d for d in (fmt.parse_local_date(s.get("local_date")) for s in sessions) if d and d <= today]
+    return max(days) if days else today
+
 
 def period(kind: str, anchor: date) -> tuple[date, date]:
     """The calendar week (Monday to Sunday) or month that contains `anchor`."""

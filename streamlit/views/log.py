@@ -446,7 +446,10 @@ def _last_performance(
     return result
 
 
-@st.cache_data(ttl=120, show_spinner=False)
+# Long: nothing typed into the open workout changes the ones before it, and at
+# 120 s the entry ran out during an ordinary rest, so most sets paid four reads
+# for a section that had not changed.
+@st.cache_data(ttl=1800, show_spinner=False)
 def _recent_workouts(
     gym_id: str,
     athlete_id: str,
@@ -462,13 +465,20 @@ def _recent_workouts(
     summarise the ones after it.
     """
     client = db.client()
-    sessions = (
+    query = (
         client.table("sessions")
         .select("id, local_date, started_at, logged_by, credited_to, title")
         .eq("gym_id", gym_id)
         .eq("athlete_id", athlete_id)
         .is_("deleted_at", "null")
-        .order("local_date", desc=True)
+    )
+    # Bounded at the open workout's day BEFORE the limit: a workout reopened
+    # from a month ago otherwise spent the whole window on the sessions after it
+    # and summarised none of the ones before.
+    if current_session[0]:
+        query = query.lte("local_date", current_session[0])
+    sessions = (
+        query.order("local_date", desc=True)
         .order("started_at", desc=True)
         .order("id", desc=True)
         .limit(_RECAP_LOOKBACK + 1)
@@ -2350,15 +2360,23 @@ def _recap(
         str(session.get("started_at") or ""),
         str(session["id"]),
     )
+    if not catalogue:
+        # The catalogue read failed (the screen already says so). Every line
+        # would be «—» beside a number: no name to load a bar from.
+        return
     try:
         workouts = _recent_workouts(gym_id, athlete_id, current_session)
-        groups = recap.primary_groups(_exercise_muscles(gym_id), _muscle_groups(gym_id))
     except Exception:
         # Like «Τελευταία φορά»: the nicest thing on the screen and the least
         # essential — losing it must not stop the coach logging.
         return
     if not workouts:
         return
+    try:
+        groups = recap.primary_groups(_exercise_muscles(gym_id), _muscle_groups(gym_id))
+    except Exception:
+        # The muscle group only prefixes each line; the workouts are already read.
+        groups = {}
 
     count = len(workouts)
     label = "Η προηγούμενη προπόνηση" if count == 1 else f"Οι {count} τελευταίες προπονήσεις"
@@ -2458,7 +2476,9 @@ def _workout(gym_id: str, athlete: dict[str, Any], session: dict[str, Any]) -> N
         # losing it must not stop the coach logging the set in front of them.
         last = {}
 
-    _recap(gym_id, athlete_id, session, catalogue, names, today, bool(blocks))
+    # Drawn here, above the set forms, but filled after them: its reads must not
+    # hold back the form the coach is waiting to type into.
+    recap_slot = st.container()
 
     if not blocks:
         st.info("Καμία άσκηση ακόμα. Πρόσθεσε την πρώτη από το «Προσθήκη άσκησης».")
@@ -2482,6 +2502,9 @@ def _workout(gym_id: str, athlete: dict[str, Any], session: dict[str, Any]) -> N
             session.get("logged_by"),
             today,
         )
+
+    with recap_slot:
+        _recap(gym_id, athlete_id, session, catalogue, names, today, bool(blocks))
 
     _picker(
         gym_id,
@@ -2520,6 +2543,11 @@ def _workout(gym_id: str, athlete: dict[str, Any], session: dict[str, Any]) -> N
             return
         st.session_state.pop("session_id", None)
         st.session_state[_FINISHED] = {"session_id": session_id, "athlete_id": athlete_id}
+        # A finished workout is the moment Πρόοδος has something new to show,
+        # and it keeps the history it read for five minutes.
+        from views import progress
+
+        progress._history.clear(gym_id, athlete_id)
         # A pending «Αναίρεση» would otherwise be drawn over «ολοκληρώθηκε» and
         # silently change the summary under the coach.
         ui.clear_undo(_NOTICE)

@@ -37,10 +37,12 @@ _MAX_POINTS = 40
 _IN_CHUNK = 100
 
 _PERIOD_KEY = "progress_period"
-# {"athlete": id, "day": date}: any day inside the period on screen. A day rather
-# than an offset, so switching between week and month stays around the same
-# time, and tied to the athlete, so opening another one starts from their own
-# latest week instead of wherever the last one was left.
+# {"athlete": id, "day": date}: a day inside the period the coach stepped to. A
+# day rather than an offset, so switching between week and month stays around
+# the same time, and tied to the athlete, so opening another one starts from
+# their own latest week. Written only when the coach moves: the screen's own
+# default is worked out afresh on every render, or a workout logged since the
+# first look would never come into view.
 _ANCHOR_KEY = "progress_anchor"
 
 
@@ -67,7 +69,11 @@ def _athletes(gym_id: str) -> list[dict[str, Any]]:
     )
 
 
-@st.cache_data(ttl=60, show_spinner=False)
+# Five minutes, not one: stepping ‹ through a few weeks while reading them is a
+# rerun per step, and a full history read per step was fifteen round trips to
+# read nothing new. The log screen clears this athlete's entry when a workout
+# is finished, which is when one appears.
+@st.cache_data(ttl=300, show_spinner=False)
 def _history(gym_id: str, athlete_id: str) -> dict[str, list[dict[str, Any]]]:
     """Every live session, block and set for one athlete, plus what names them.
 
@@ -451,18 +457,7 @@ def _anchor(athlete_id: str, sessions: list[dict[str, Any]], kind: str, today: d
         and isinstance(stored.get("day"), date)
     ):
         return stored["day"]
-    # This week if they trained in it, else the week of their latest workout:
-    # on a Monday morning "this week" is empty, and an empty page is not what a
-    # coach opening someone's progress came to read.
-    first, last = recap.period(kind, today)
-    day = today
-    if not any(recap.in_period(s, first, last) for s in sessions):
-        days = [d for d in (fmt.parse_local_date(s.get("local_date")) for s in sessions) if d]
-        earlier = [d for d in days if d <= today]
-        if earlier:
-            day = max(earlier)
-    _move(athlete_id, day)
-    return day
+    return recap.default_anchor(kind, sessions, today)
 
 
 def _move(athlete_id: str, day: date) -> None:
@@ -489,9 +484,10 @@ def _period_section(
     first, last = recap.period(kind, anchor)
 
     # One row that stays one row: st.columns stacks below 640px, which on a
-    # phone put ‹, the dates and › one under the other.
+    # phone put ‹, the dates and › one under the other. No help= on the arrows:
+    # it wraps the button out of app.py's 44px rule, and a phone has no hover.
     row = st.container(horizontal=True, vertical_alignment="center", wrap=False)
-    if row.button("‹", key="progress_back", help="Προηγούμενη εβδομάδα" if week else "Προηγούμενος μήνας"):
+    if row.button("‹", key="progress_back", width=48):
         _move(athlete_id, first - timedelta(days=1))
         st.rerun()
     row.markdown(
@@ -500,12 +496,7 @@ def _period_section(
         text_alignment="center",
     )
     # Nothing has happened after today, so there is nothing to step forward to.
-    if row.button(
-        "›",
-        key="progress_forward",
-        help="Επόμενη εβδομάδα" if week else "Επόμενος μήνας",
-        disabled=last >= today,
-    ):
+    if row.button("›", key="progress_forward", width=48, disabled=last >= today):
         _move(athlete_id, last + timedelta(days=1))
         st.rerun()
     if first != recap.period(kind, today)[0] and st.button(
