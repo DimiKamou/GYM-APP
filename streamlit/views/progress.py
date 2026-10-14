@@ -1,5 +1,10 @@
 """Πρόοδος — what actually changed, for one athlete.
 
+It opens on a week: which workouts, which exercises, how many sets of what —
+the last week the athlete trained, so it never opens on an empty page — and
+steps back a week or a month at a time. The charts below it are the whole
+history.
+
 Three rules shape this screen more than any chart library does.
 
 The four set kinds are not one number. Twenty minutes on the treadmill and ten
@@ -17,12 +22,12 @@ act on carries both.
 
 from __future__ import annotations
 
-from datetime import date, datetime, timezone
+from datetime import date, datetime, timedelta, timezone
 from typing import Any
 
 import streamlit as st
 
-from lib import db, fmt, gym
+from lib import db, fmt, gym, recap
 from lib.exercises import EQUIPMENT_LABELS, columns, implement_of
 
 _MAX_POINTS = 40
@@ -30,6 +35,13 @@ _MAX_POINTS = 40
 # gateway refuses a URL past roughly 16 KB — about 400 uuids — so an athlete
 # with a year of history was exactly the athlete whose screen could not load.
 _IN_CHUNK = 100
+
+_PERIOD_KEY = "progress_period"
+# {"athlete": id, "day": date}: any day inside the period on screen. A day rather
+# than an offset, so switching between week and month stays around the same
+# time, and tied to the athlete, so opening another one starts from their own
+# latest week instead of wherever the last one was left.
+_ANCHOR_KEY = "progress_anchor"
 
 
 def _in_chunks(ids: list[Any]) -> list[list[Any]]:
@@ -419,6 +431,141 @@ def _records(
     st.caption("Κάθε επίδοση με την ημερομηνία και τον προπονητή που την έγραψε.")
 
 
+def _trained(data: dict[str, list[dict[str, Any]]]) -> list[dict[str, Any]]:
+    """Sessions with at least one set done, oldest first.
+
+    A workout opened and left empty — or the one open right now with nothing in
+    it yet — is not a workout the athlete did: it must not decide which week the
+    screen opens on, and a card reading «κανένα σετ» says nothing.
+    """
+    session_of_block = {b["id"]: b.get("session_id") for b in data["blocks"]}
+    done = {session_of_block.get(row.get("block_id")) for row in _performed(data["sets"])}
+    return [s for s in data["sessions"] if s["id"] in done]
+
+
+def _anchor(athlete_id: str, sessions: list[dict[str, Any]], kind: str, today: date) -> date:
+    stored = st.session_state.get(_ANCHOR_KEY)
+    if (
+        isinstance(stored, dict)
+        and stored.get("athlete") == athlete_id
+        and isinstance(stored.get("day"), date)
+    ):
+        return stored["day"]
+    # This week if they trained in it, else the week of their latest workout:
+    # on a Monday morning "this week" is empty, and an empty page is not what a
+    # coach opening someone's progress came to read.
+    first, last = recap.period(kind, today)
+    day = today
+    if not any(recap.in_period(s, first, last) for s in sessions):
+        days = [d for d in (fmt.parse_local_date(s.get("local_date")) for s in sessions) if d]
+        earlier = [d for d in days if d <= today]
+        if earlier:
+            day = max(earlier)
+    _move(athlete_id, day)
+    return day
+
+
+def _move(athlete_id: str, day: date) -> None:
+    st.session_state[_ANCHOR_KEY] = {"athlete": athlete_id, "day": day}
+
+
+def _period_section(
+    athlete_id: str,
+    data: dict[str, list[dict[str, Any]]],
+    names: dict[str, str],
+    today: date,
+) -> None:
+    """One week or one month: the workouts in it, and what was done in each."""
+    sessions = _trained(data)
+    kind = st.radio(
+        "Περίοδος",
+        options=[recap.WEEK, recap.MONTH],
+        format_func=lambda k: "Εβδομάδα" if k == recap.WEEK else "Μήνας",
+        horizontal=True,
+        key=_PERIOD_KEY,
+    )
+    week = kind == recap.WEEK
+    anchor = _anchor(athlete_id, sessions, kind, today)
+    first, last = recap.period(kind, anchor)
+
+    # One row that stays one row: st.columns stacks below 640px, which on a
+    # phone put ‹, the dates and › one under the other.
+    row = st.container(horizontal=True, vertical_alignment="center", wrap=False)
+    if row.button("‹", key="progress_back", help="Προηγούμενη εβδομάδα" if week else "Προηγούμενος μήνας"):
+        _move(athlete_id, first - timedelta(days=1))
+        st.rerun()
+    row.markdown(
+        f"#### {fmt.md(recap.period_label(kind, first, last, today))}",
+        width="stretch",
+        text_alignment="center",
+    )
+    # Nothing has happened after today, so there is nothing to step forward to.
+    if row.button(
+        "›",
+        key="progress_forward",
+        help="Επόμενη εβδομάδα" if week else "Επόμενος μήνας",
+        disabled=last >= today,
+    ):
+        _move(athlete_id, last + timedelta(days=1))
+        st.rerun()
+    if first != recap.period(kind, today)[0] and st.button(
+        "Αυτή την εβδομάδα" if week else "Αυτόν τον μήνα", key="progress_now"
+    ):
+        _move(athlete_id, today)
+        st.rerun()
+
+    in_range = [s for s in sessions if recap.in_period(s, first, last)]
+    if not in_range:
+        st.info("Καμία προπόνηση αυτή την εβδομάδα." if week else "Καμία προπόνηση αυτόν τον μήνα.")
+        earlier = [
+            d for d in (fmt.parse_local_date(s.get("local_date")) for s in sessions) if d and d < first
+        ]
+        if earlier:
+            latest = max(earlier)
+            if st.button(
+                f"Στην προηγούμενη προπόνηση ({fmt.format_day(latest, today)})", key="progress_latest"
+            ):
+                _move(athlete_id, latest)
+                st.rerun()
+        return
+
+    ids = {s["id"] for s in in_range}
+    blocks = [b for b in data["blocks"] if b.get("session_id") in ids]
+    block_ids = {b["id"] for b in blocks}
+    sets = [r for r in data["sets"] if r.get("block_id") in block_ids]
+    totals = _totals(_performed(sets))
+
+    # One line rather than three metric tiles, which a phone stacks into a
+    # screenful of three numbers before the first workout.
+    counted = [f"{len(in_range)} προπονήσεις" if len(in_range) != 1 else "1 προπόνηση",
+               f"{int(totals['sets'])} σετ"]
+    if totals["kg"]:
+        counted.append(f"{totals['kg']:,.0f}".replace(",", ".") + "\u00a0kg")
+    st.markdown("**" + fmt.md(" · ".join(counted)) + "**")
+
+    by_id = {e["id"]: e for e in data["exercises"]}
+    groups = recap.primary_groups(data["links"], data["groups"])
+    canonical = _canonical(data["exercises"])
+    worked: dict[str, int] = {}
+    by_block = {b["id"]: b for b in blocks}
+    for row in _performed(sets):
+        raw_id = (by_block.get(row.get("block_id") or "") or {}).get("exercise_id") or ""
+        group = groups.get(canonical.get(raw_id, raw_id)) or groups.get(raw_id)
+        if group:
+            worked[group] = worked.get(group, 0) + 1
+    if worked:
+        ordered = sorted(worked.items(), key=lambda kv: (-kv[1], kv[0]))
+        st.caption("Μυϊκές ομάδες: " + " · ".join(f"{name} {n} σετ" for name, n in ordered))
+
+    # In the order they happened: a week read Monday to Sunday is the programme.
+    for session in in_range:
+        with st.container(border=True):
+            st.markdown("**" + fmt.md(recap.workout_heading(session, names, today)) + "**")
+            own = [b for b in blocks if b.get("session_id") == session["id"]]
+            lines = recap.workout_lines(own, sets, by_id, groups)
+            st.markdown("\n".join(f"- {fmt.md(line)}" for line in lines))
+
+
 def render() -> None:
     st.header("Πρόοδος")
 
@@ -462,8 +609,11 @@ def render() -> None:
     names = gym.names_or_empty(gym_id)
     today = gym.today(gym_id)
 
-    _summary(sessions, data["sets"], names)
+    _period_section(athlete_id, data, names, today)
+
     st.divider()
+    st.subheader("Όλο το ιστορικό")
+    _summary(sessions, data["sets"], names)
 
     st.subheader("Όγκος")
     _volume_chart(sessions, data["blocks"], data["sets"])

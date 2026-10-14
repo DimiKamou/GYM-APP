@@ -18,9 +18,11 @@ from __future__ import annotations
 
 import os
 import pathlib
+import re
 import sys
 import time
 import traceback
+from datetime import date
 
 HERE = pathlib.Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE.parent))
@@ -1976,6 +1978,335 @@ def test_a_new_exercise_is_measured_by_all_its_tools() -> None:
     keys = {w.key for w in at.number_input}
     check("today's bodyweight block still gets the reps form", f"log_bwreps_{block.get('id')}" in keys,
           str(sorted(k for k in keys if k)))
+
+
+# ---------------------------------------------------------------------------
+# Past workouts in a coach's words: the last three above the log, and Πρόοδος
+# a week or a month at a time.
+# ---------------------------------------------------------------------------
+
+def _past_workout(session_id: str, day: str, lifts: list[tuple[str, str | None, list[tuple]]],
+                  *, coach: str = state.OWNER, credited: str | None = None,
+                  title: str | None = None, athlete: str = state.ATHLETE) -> None:
+    """A finished workout on `day`: per exercise (id, όργανο, [(kg, reps, done)])."""
+    state.STORE["sessions"].append({
+        "id": session_id, "gym_id": state.GYM, "athlete_id": athlete, "status": "finished",
+        "title": title, "notes": None, "local_date": day,
+        "started_at": f"{day}T07:00:00+00:00", "finished_at": f"{day}T08:00:00+00:00",
+        "logged_by": coach, "credited_to": credited, "created_at": state.NOW, "deleted_at": None,
+    })
+    for b, (exercise_id, gear, sets) in enumerate(lifts):
+        block_id = f"{session_id}-b{b}"
+        state.STORE["blocks"].append({
+            "id": block_id, "gym_id": state.GYM, "session_id": session_id,
+            "exercise_id": exercise_id, "position": b, "note": None,
+            "equipment": gear, "deleted_at": None,
+        })
+        for n, (kg, reps, done) in enumerate(sets):
+            state.STORE["sets"].append({
+                "id": f"{block_id}-s{n}", "gym_id": state.GYM, "block_id": block_id,
+                "position": n, "kind": "weight_reps", "load_kg": kg, "reps": reps,
+                "seconds": None, "meters": None, "note": None,
+                "done_at": f"{day}T07:30:00+00:00" if done else None,
+                "created_by": coach, "deleted_at": None,
+            })
+
+
+def _empty_open_workout() -> None:
+    """Today's workout with nothing in it yet: the moment the coach reads the recap."""
+    state.STORE["blocks"] = [b for b in state.STORE["blocks"] if b["session_id"] != state.SESSION]
+    state.STORE["sets"] = [s for s in state.STORE["sets"] if s["block_id"] != state.BLOCK]
+
+
+def _lines(at: AppTest) -> list[str]:
+    """Every markdown element, unescaped and with plain spaces, in screen order."""
+    return [re.sub(r"\\(.)", r"\1", str(m.value)).replace("\u00a0", " ") for m in at.markdown]
+
+
+def test_recap_lines_say_sets_reps_and_load() -> None:
+    """«3×12 · 60 kg» is sets × reps, then the load — the owner's own words."""
+    from lib import recap as real
+
+    class recap:  # noqa: N801 — the same functions, read with ordinary spaces
+        @staticmethod
+        def sets_summary(rows):
+            return real.sets_summary(rows).replace("\u00a0", " ")
+
+    def row(i, kg, reps, kind="weight_reps", done=True, **extra):
+        return {"id": f"r{i}", "position": i, "kind": kind, "load_kg": kg, "reps": reps,
+                "seconds": extra.get("seconds"), "meters": extra.get("meters"),
+                "done_at": state.NOW if done else None}
+
+    check("straight sets", recap.sets_summary([row(i, "60.00", 12) for i in range(3)]) == "3×12 · 60 kg",
+          recap.sets_summary([row(i, "60.00", 12) for i in range(3)]))
+    got = recap.sets_summary([row(0, "60", 12), row(1, "60", 12), row(2, "70", 8)])
+    check("the bar going up stays as runs, in order", got == "2×12 · 60 kg, 1×8 · 70 kg", got)
+    got = recap.sets_summary([row(2, "70", 8), row(0, "60", 12), row(1, "60", 12)])
+    check("ordered by position, not by how they arrived", got == "2×12 · 60 kg, 1×8 · 70 kg", got)
+    got = recap.sets_summary([row(0, "72.50", 10), row(1, "72.5", 10)])
+    check("a Greek decimal comma, and 72,50 is 72,5", got == "2×10 · 72,5 kg", got)
+    got = recap.sets_summary([row(0, "60", 12), row(1, "200", 1, done=False)])
+    check("a prescribed set nobody lifted is not in it", got == "1×12 · 60 kg", got)
+    check("nothing done is an empty string", recap.sets_summary([row(0, "60", 12, done=False)]) == "")
+    got = recap.sets_summary([row(i, None, 10, kind="bodyweight") for i in range(3)])
+    check("bodyweight is just sets × reps", got == "3×10", got)
+    got = recap.sets_summary([row(0, "10", 8, kind="bodyweight")])
+    check("a belt is added load", got == "1×8 · +10 kg", got)
+    got = recap.sets_summary([row(i, None, None, kind="duration", seconds=45) for i in range(2)])
+    check("a plank is time", got == "2×45 δευτ.", got)
+    got = recap.sets_summary([row(0, None, None, kind="distance", meters="5000")])
+    check("a run is distance", got == "1×5,0 χλμ", got)
+
+
+def test_recap_periods_are_calendar_weeks_and_months() -> None:
+    from lib import recap
+
+    first, last = recap.period(recap.WEEK, date(2026, 10, 18))
+    check("a Sunday belongs to the week that began on Monday",
+          (first, last) == (date(2026, 10, 12), date(2026, 10, 18)), f"{first} {last}")
+    first, last = recap.period(recap.MONTH, date(2028, 2, 10))
+    check("February of a leap year ends on the 29th", last == date(2028, 2, 29), str(last))
+    first, last = recap.period(recap.MONTH, date(2026, 12, 31))
+    check("December ends on the 31st", (first, last) == (date(2026, 12, 1), date(2026, 12, 31)))
+
+    today = date(2026, 10, 14)
+    check("a week inside one month", recap.period_label(
+        recap.WEEK, date(2026, 10, 12), date(2026, 10, 18), today) == "12–18 Οκτ")
+    check("a week across two months", recap.period_label(
+        recap.WEEK, date(2026, 9, 28), date(2026, 10, 4), today) == "28 Σεπ – 4 Οκτ")
+    got = recap.period_label(recap.WEEK, date(2025, 12, 29), date(2026, 1, 4), today)
+    check("a week across two years names both", got == "29 Δεκ 2025 – 4 Ιαν 2026", got)
+    got = recap.period_label(recap.WEEK, date(2025, 10, 13), date(2025, 10, 19), today)
+    check("last year's week says so", got == "13–19 Οκτ 2025", got)
+    got = recap.period_label(recap.MONTH, date(2026, 10, 1), date(2026, 10, 31), today)
+    check("a month is its name and year", got == "Οκτώβριος 2026", got)
+
+
+def test_recap_names_the_folded_movement_and_its_credited_coach() -> None:
+    from lib import recap
+
+    by_id = {
+        "e-dup": {"id": "e-dup", "name_el": "Πιέσεις (παλιό)", "merged_into_id": "e-bar",
+                  "equipment": "barbell"},
+        "e-bar": {"id": "e-bar", "name_el": "Πιέσεις Στήθους", "merged_into_id": None,
+                  "equipment": "barbell"},
+        state.CHOICE: {"id": state.CHOICE, "name_el": None, "name_en": "Incline Bench Press",
+                       "equipment": "barbell", "equipment_options": ["barbell", "dumbbell", "smith"]},
+    }
+    blocks = [{"id": "x1", "exercise_id": "e-dup", "position": 0, "equipment": None},
+              {"id": "x2", "exercise_id": state.CHOICE, "position": 1, "equipment": None},
+              {"id": "x3", "exercise_id": "e-bar", "position": 2, "equipment": None}]
+    sets = [{"id": "y1", "block_id": "x1", "position": 0, "kind": "weight_reps",
+             "load_kg": "80", "reps": 8, "done_at": state.NOW},
+            {"id": "y2", "block_id": "x2", "position": 0, "kind": "weight_reps",
+             "load_kg": "30", "reps": 10, "done_at": state.NOW}]
+    lines = [line.replace("\u00a0", " ") for line in
+             recap.workout_lines(blocks, sets, by_id, {"e-bar": "Στήθος", state.CHOICE: "Στήθος"})]
+    check("a block naming the folded duplicate reads as the movement it became",
+          lines[0] == "Στήθος · Πιέσεις Στήθους · Μπάρα · 1×8 · 80 kg", str(lines))
+    check("a choice of tools that was never made prints no tool",
+          lines[1] == "Στήθος · Incline Bench Press · 1×10 · 30 kg", str(lines))
+    check("an exercise with nothing done is left out", len(lines) == 2, str(lines))
+
+    names = {state.OWNER: "Δημήτρης", state.TRAINER: "Γιώργος"}
+    heading = recap.workout_heading(
+        {"local_date": "2026-10-13", "logged_by": state.OWNER, "credited_to": state.TRAINER,
+         "title": "Πόδια"}, names, date(2026, 10, 14))
+    check("the heading is the day, the coach it is credited to, and the title",
+          heading == "Τρίτη 13 Οκτ · Γιώργος · Πόδια", heading)
+    heading = recap.workout_heading({"local_date": "2026-10-13", "logged_by": "m-gone"},
+                                    names, date(2026, 10, 14))
+    check("an author nobody can name is said so, never left blank",
+          heading == "Τρίτη 13 Οκτ · άγνωστο μέλος", heading)
+
+
+def test_the_log_opens_with_the_last_three_workouts() -> None:
+    """The coach starting a workout sees what this athlete has been doing, newest first."""
+    state.reset()
+    _empty_open_workout()
+    _past_workout("p18", "2026-08-18", [("e-bar", "barbell", [("70.00", 10, True)])])
+    _past_workout("p20", "2026-08-20", [("e-pullup", None, [(None, 8, True)] * 3)],
+                  coach=state.TRAINER)
+    _past_workout("p28", "2026-08-28", [
+        (state.CHOICE, "barbell", [("60.00", 12, True)] * 3 + [("70.00", 8, True)]),
+        ("e-db", "dumbbell", [("40.00", 10, True)] * 3),
+        ("e-bar", "barbell", [("200.00", 1, False)]),
+    ], credited=state.TRAINER)
+    # Opened and left: nothing done in it, so it is not one of the three.
+    _past_workout("p29", "2026-08-29", [("e-bar", "barbell", [])])
+    # The seeded 25 Aug workout gets something done in it.
+    state.STORE["sets"].append({
+        "id": "s-b0", "gym_id": state.GYM, "block_id": "b0", "position": 0,
+        "kind": "weight_reps", "load_kg": "35.00", "reps": 12, "seconds": None,
+        "meters": None, "note": None, "done_at": state.NOW, "created_by": state.OWNER,
+        "deleted_at": None,
+    })
+
+    at = open_log()
+    labels = [e.label for e in at.expander]
+    check("the section names how many", "Οι 3 τελευταίες προπονήσεις" in labels, str(labels))
+    recap_box = [e for e in at.expander if e.label == "Οι 3 τελευταίες προπονήσεις"]
+    check("and is open while the workout is empty",
+          bool(recap_box) and recap_box[0].proto.expanded, str(labels))
+
+    lines = _lines(at)
+    headings = [line for line in lines if line.startswith("**") and " · " in line]
+    order = [h for h in headings if any(d in h for d in ("28 Αυγ", "25 Αυγ", "20 Αυγ", "18 Αυγ", "29 Αυγ"))]
+    check("the three are newest first, each with its day and coach",
+          order[:3] == ["**Παρασκευή 28 Αυγ · Γιώργος**", "**Τρίτη 25 Αυγ · Δημήτρης**",
+                        "**Πέμπτη 20 Αυγ · Γιώργος**"], str(order))
+    check("the fourth is not shown", not any("18 Αυγ" in h for h in headings), str(headings))
+    check("an empty workout is skipped, not shown blank",
+          not any("29 Αυγ" in h for h in headings), str(headings))
+    body = "\n".join(lines)
+    check("the line the owner asked for",
+          "- Στήθος · Incline Bench Press · Μπάρα · 3×12 · 60 kg, 1×8 · 70 kg" in body, body[:900])
+    check("every exercise of that workout, in order",
+          "- Πλάτη · Κωπηλατική · Αλτήρες · 3×10 · 40 kg" in body, body[:900])
+    check("bodyweight work as sets × reps", "- Πλάτη · Έλξεις · Σωματικό βάρος · 3×8" in body, body[:900])
+    check("the set nobody lifted is not in it", "200" not in body, body[:900])
+
+
+def test_the_recap_folds_away_once_the_workout_has_an_exercise() -> None:
+    state.reset()
+    state.STORE["sets"].append({
+        "id": "s-b0", "gym_id": state.GYM, "block_id": "b0", "position": 0,
+        "kind": "weight_reps", "load_kg": "35.00", "reps": 12, "seconds": None,
+        "meters": None, "note": None, "done_at": state.NOW, "created_by": state.OWNER,
+        "deleted_at": None,
+    })
+    at = open_log()
+    box = [e for e in at.expander if e.label == "Η προηγούμενη προπόνηση"]
+    check("one past workout is named in the singular", bool(box), str([e.label for e in at.expander]))
+    check("and it is folded: the set forms come first now", bool(box) and not box[0].proto.expanded)
+
+    # And logging a set does not read the history again: nothing before this
+    # workout changed.
+    fake_supabase.reset_round_trips()
+    at.text_input(key=f"log_kg_{state.BLOCK}").set_value("60")
+    at.number_input(key=f"log_reps_{state.BLOCK}").set_value(10)
+    button(at, f"log_set_{state.BLOCK}").click().run()
+    raise_on_exception(at)
+    trips = list(fake_supabase.ROUND_TRIPS)
+    check("a set costs no history reads", trips.count("select:blocks") <= 1, " ".join(trips))
+
+
+def test_a_reopened_workout_does_not_summarise_the_ones_after_it() -> None:
+    state.reset()
+    for row in state.rows("sessions", id=state.SESSION):
+        row["status"] = "finished"
+    for row in state.rows("sessions", id=state.LAST_SESSION):
+        row["status"] = "active"
+    _past_workout("p20", "2026-08-20", [("e-bar", "barbell", [("70.00", 10, True)])])
+    at = open_log(session_id=state.LAST_SESSION)
+    body = "\n".join(_lines(at))
+    check("the workout before it is shown", "Πέμπτη 20 Αυγ" in body, body[:600])
+    check("the one after it is not", "1 Σεπ ·" not in body.replace("Σε εξέλιξη", ""), body[:600])
+
+
+def test_no_past_workout_no_section() -> None:
+    state.reset()
+    state.STORE["sessions"] = [s for s in state.STORE["sessions"] if s["id"] != state.LAST_SESSION]
+    state.STORE["blocks"] = [b for b in state.STORE["blocks"] if b["session_id"] != state.LAST_SESSION]
+    at = open_log()
+    labels = [e.label for e in at.expander]
+    check("a first workout has nothing to summarise",
+          not any("προπόνησ" in label and label != "Επεξεργασία προπόνησης" for label in labels),
+          str(labels))
+
+
+def _progress_texts(at: AppTest) -> str:
+    return "\n".join(_lines(at))
+
+
+def test_progress_opens_on_the_last_week_the_athlete_trained() -> None:
+    """This week is empty on a Monday; an empty page is not what the coach came for."""
+    state.reset()
+    _past_workout("p25b", "2026-08-27", [("e-db", "dumbbell", [("40.00", 10, True)] * 3)])
+    at = open_screen(PROGRESS_DRIVER)
+    body = _progress_texts(at)
+    check("the week of the latest workout", "#### 31 Αυγ – 6 Σεπ" in body, body[:400])
+    check("with that workout, its day and its coach", "**Τρίτη 1 Σεπ · Δημήτρης**" in body, body[:600])
+    check("and its exercise in the owner's words",
+          "- Στήθος · Πιέσεις Στήθους · Μπάρα · 1×8 · 80 kg" in body, body[:600])
+    check("not the week before's", "Κωπηλατική" not in body, body[:600])
+    check("the way back to this week is there",
+          any(b.key == "progress_now" for b in at.button), str([b.key for b in at.button]))
+
+    press(at, "progress_back")
+    body = _progress_texts(at)
+    check("‹ steps back one week", "#### 24–30 Αυγ" in body, body[:400])
+    check("to that week's workouts",
+          "- Πλάτη · Κωπηλατική · Αλτήρες · 3×10 · 40 kg" in body and "Πέμπτη 27 Αυγ" in body, body[:600])
+    check("its muscle groups in sets", "Μυϊκές ομάδες: Πλάτη 3 σετ" in texts(at), texts(at)[:600])
+    check("and its totals on one line", "**1 προπόνηση · 3 σετ · 1.200 kg**" in body, body[:600])
+
+
+def test_progress_does_not_open_on_an_empty_workout() -> None:
+    """The workout open right now with nothing in it is not the athlete's last week."""
+    state.reset()
+    _empty_open_workout()
+    _past_workout("p25b", "2026-08-27", [("e-db", "dumbbell", [("40.00", 10, True)] * 3)])
+    at = open_screen(PROGRESS_DRIVER)
+    body = _progress_texts(at)
+    check("it opens on the last week something was done", "#### 24–30 Αυγ" in body, body[:400])
+    press(at, "progress_forward")
+    body = _progress_texts(at)
+    check("and the week of the empty workout lists nothing", "Τρίτη 1 Σεπ" not in body, body[:400])
+    check("so it says so", "Καμία προπόνηση αυτή την εβδομάδα." in texts(at), texts(at)[:400])
+
+
+def test_progress_steps_a_month_at_a_time() -> None:
+    state.reset()
+    _past_workout("p25b", "2026-08-27", [("e-db", "dumbbell", [("40.00", 10, True)] * 3)])
+    state.STORE["sets"].append({
+        "id": "s-b0", "gym_id": state.GYM, "block_id": "b0", "position": 0,
+        "kind": "weight_reps", "load_kg": "35.00", "reps": 12, "seconds": None,
+        "meters": None, "note": None, "done_at": state.NOW, "created_by": state.OWNER,
+        "deleted_at": None,
+    })
+    at = open_screen(PROGRESS_DRIVER)
+    at.radio(key="progress_period").set_value("month").run()
+    raise_on_exception(at)
+    body = _progress_texts(at)
+    check("the month of the latest workout", "#### Σεπτέμβριος 2026" in body, body[:400])
+    press(at, "progress_back")
+    body = _progress_texts(at)
+    check("‹ steps back a month", "#### Αύγουστος 2026" in body, body[:400])
+    check("with every workout of it, in the order they happened",
+          body.find("Πέμπτη 27 Αυγ") > body.find("Τρίτη 25 Αυγ") > -1, body[:800])
+
+
+def test_progress_does_not_step_into_the_future() -> None:
+    state.reset()
+    at = open_screen(PROGRESS_DRIVER)
+    press(at, "progress_now")
+    forward = button(at, "progress_forward")
+    check("› is greyed out on this week", forward.disabled)
+    check("an empty week says so", "Καμία προπόνηση αυτή την εβδομάδα." in texts(at), texts(at)[:400])
+    jump = [b for b in at.button if b.key == "progress_latest"]
+    check("and offers the latest workout instead",
+          bool(jump) and "1 Σεπ" in str(jump[0].label), str([b.label for b in at.button]))
+    press(at, "progress_latest")
+    check("which it goes to", "#### 31 Αυγ – 6 Σεπ" in _progress_texts(at), _progress_texts(at)[:300])
+
+
+def test_progress_starts_each_athlete_on_their_own_latest_week() -> None:
+    state.reset()
+    state.STORE["athletes"].append({
+        "id": "a2", "gym_id": state.GYM, "full_name": "Άννα Παπά", "plan_phase": None,
+        "plan_focus": None, "coach_membership_id": state.TRAINER, "deleted_at": None,
+    })
+    _past_workout("q1", "2026-07-15", [("e-bar", "barbell", [("40.00", 12, True)] * 3)],
+                  coach=state.TRAINER, athlete="a2")
+    at = open_screen(PROGRESS_DRIVER)
+    check("the first athlete opens on hers", "#### 31 Αυγ – 6 Σεπ" in _progress_texts(at))
+    at.selectbox[0].set_value("a2").run()
+    raise_on_exception(at)
+    body = _progress_texts(at)
+    check("the next one on his own, not on the week left open",
+          "#### 13–19 Ιουλ" in body and "**Τετάρτη 15 Ιουλ · Γιώργος**" in body, body[:500])
+    check("in his own numbers", "- Στήθος · Πιέσεις Στήθους · Μπάρα · 3×12 · 40 kg" in body, body[:500])
 
 
 # ---------------------------------------------------------------------------
