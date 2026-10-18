@@ -1,23 +1,61 @@
 {
-  "name": "TrainHub",
-  "short_name": "TrainHub",
-  "description": "Το κοινό δελτίο προπόνησης του γυμναστηρίου — κάθε σετ, με το όνομα του προπονητή που το έγραψε.",
+  "id": "/",
+  "name": "PowerHouse",
+  "short_name": "PowerHouse",
+  "description": "Το πρόγραμμα του γυμναστηρίου: οι προπονητές καταγράφουν κάθε σετ με το όνομά τους, οι αθλητές βλέπουν την πρόοδό τους.",
   "lang": "el",
   "dir": "ltr",
-  "start_url": "/athletes",
+  "start_url": "/",
   "scope": "/",
   "display": "standalone",
   "orientation": "portrait",
   "background_color": "#F4F0E7",
   "theme_color": "#F4F0E7",
-  "categories": ["health", "fitness", "productivity"],
+  "categories": [
+    "health",
+    "fitness",
+    "productivity"
+  ],
   "icons": [
-    { "src": "/icons/icon-192.png", "sizes": "192x192", "type": "image/png", "purpose": "any" },
-    { "src": "/icons/icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "any" },
-    { "src": "/icons/icon-maskable-512.png", "sizes": "512x512", "type": "image/png", "purpose": "maskable" }
+    {
+      "src": "/icons/icon-192.png",
+      "sizes": "192x192",
+      "type": "image/png",
+      "purpose": "any"
+    },
+    {
+      "src": "/icons/icon-512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "any"
+    },
+    {
+      "src": "/icons/icon-maskable-512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "maskable"
+    }
   ],
   "shortcuts": [
-    { "name": "Αθλητές", "url": "/athletes", "icons": [{ "src": "/icons/icon-192.png", "sizes": "192x192" }] },
-    { "name": "Πρόγραμμα", "url": "/calendar", "icons": [{ "src": "/icons/icon-192.png", "sizes": "192x192" }] }
+    {
+      "name": "Αθλητές",
+      "url": "/athletes",
+      "icons": [
+        {
+          "src": "/icons/icon-192.png",
+          "sizes": "192x192"
+        }
+      ]
+    },
+    {
+      "name": "Πρόγραμμα",
+      "url": "/calendar",
+      "icons": [
+        {
+          "src": "/icons/icon-192.png",
+          "sizes": "192x192"
+        }
+      ]
+    }
   ]
 }

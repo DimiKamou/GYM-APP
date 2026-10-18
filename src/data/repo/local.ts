@@ -24,6 +24,8 @@ import { newId } from '@/data/ids'
 import { createIdbStorage, type OutboxStorage } from '@/data/outbox'
 import { buildSeed, localDateIn, SEED_IDS, type SeedData } from '@/data/repo/seed'
 import type {
+  AthleteIdentity,
+  AthletePortal,
   Block,
   Briefing,
   Exercise,
@@ -46,6 +48,8 @@ import type {
 // interface takes the gym id a joiner does not have yet.
 import type { InviteRedeemer, RedeemOutcome } from '@/data/hooks/useTeam'
 import type {
+  AthleteRedeemOutcome,
+  AthleteSide,
   ExerciseMuscleInput,
   NewAppointmentInput,
   NewExerciseInput,
@@ -81,7 +85,23 @@ interface LocalDb extends SeedData {
    * written before invites were redeemable here has none, and an absent map is an empty one.
    */
   inviteTokens?: Record<string, Uuid>
+  /**
+   * Athlete accounts in the demo, by athlete: who is connected and since when. There is no
+   * auth user to point at, so the address is all a link records — the Team screen of a real
+   * gym shows no more.
+   */
+  athleteLinks?: Record<Uuid, { linkedAt: Timestamp; email: string }>
+  /** `digest(secret) -> pending athlete link`, with the same once-only property as above. */
+  athleteInviteTokens?: Record<
+    string,
+    { athleteId: Uuid; email: string | null; expiresAt: Timestamp; revokedAt: Timestamp | null; acceptedAt: Timestamp | null }
+  >
+  /** Whose sheet "see it as the athlete" opens. The last athlete to redeem a link here. */
+  portalAthleteId?: Uuid
 }
+
+/** The demo's athlete before anyone has redeemed a link: the one with the longest history. */
+const DEFAULT_PORTAL_ATHLETE = SEED_IDS.athletes.nikos
 
 export interface LocalRepoOptions {
   /** Injected by tests so no IndexedDB is needed. */
@@ -217,7 +237,7 @@ function resilient(storage: OutboxStorage): OutboxStorage {
 
 // ---------------------------------------------------------------------------
 
-export function createLocalRepo(options: LocalRepoOptions = {}): Repo & InviteRedeemer {
+export function createLocalRepo(options: LocalRepoOptions = {}): Repo & InviteRedeemer & AthleteSide {
   const storage = resilient(options.storage ?? createIdbStorage())
   const now = options.now ?? (() => new Date())
   const acting = options.actingMembershipId ?? SEED_IDS.owner
@@ -312,11 +332,54 @@ export function createLocalRepo(options: LocalRepoOptions = {}): Repo & InviteRe
     return localDateIn(db.gym.timezone, at)
   }
 
+  /**
+   * What `my_athlete_portal()` returns, built from the local store with the same allow-list:
+   * the staff's free text is nulled, other athletes are absent, and every exercise a block
+   * names is included whether or not it is still in the catalogue.
+   */
+  function portalOf(db: LocalDb, athleteId: Uuid): AthletePortal | null {
+    const athlete = live(db.athletes).find((a) => a.id === athleteId)
+    if (!athlete) return null
+    const sessions = athleteSessionsDesc(db, athleteId).map((s) => ({ ...s, notes: null }))
+    const sessionIds = new Set(sessions.map((s) => s.id))
+    const blocks = live(db.blocks)
+      .filter((b) => sessionIds.has(b.sessionId))
+      .map((b) => ({ ...b, note: null }))
+    const blockIds = new Set(blocks.map((b) => b.id))
+    const sets = live(db.sets)
+      .filter((x) => blockIds.has(x.blockId))
+      .map((x) => ({ ...x, note: null }))
+    const exerciseIds = new Set(blocks.map((b) => b.exerciseId))
+    const staffIds = new Set<Uuid>(
+      [athlete.coachMembershipId, ...sessions.flatMap((s) => [s.loggedBy, s.creditedTo])].filter(
+        (id): id is Uuid => Boolean(id),
+      ),
+    )
+    return {
+      gym: { id: db.gym.id, name: db.gym.name, timezone: db.gym.timezone, displayUnit: db.gym.displayUnit },
+      athlete: {
+        id: athlete.id,
+        gymId: athlete.gymId,
+        fullName: athlete.fullName,
+        coachMembershipId: athlete.coachMembershipId,
+        planPhase: athlete.planPhase,
+        planFocus: athlete.planFocus,
+      },
+      staff: db.memberships
+        .filter((m) => staffIds.has(m.id))
+        .map((m) => ({ id: m.id, displayName: m.displayName })),
+      sessions,
+      blocks,
+      sets,
+      exercises: db.exercises.filter((e) => exerciseIds.has(e.id)),
+    }
+  }
+
   // -------------------------------------------------------------------------
   // Reads
   // -------------------------------------------------------------------------
 
-  const repo: Repo & InviteRedeemer = {
+  const repo: Repo & InviteRedeemer & AthleteSide = {
     kind: 'local',
 
     getGym: (gymId) => read((db) => gymOf(db, gymId)),
@@ -700,8 +763,9 @@ export function createLocalRepo(options: LocalRepoOptions = {}): Repo & InviteRe
 
     createExercise: (gymId, input: NewExerciseInput) =>
       write(gymId, (db, at) => {
-        const nameEl = input.nameEl.trim()
-        if (nameEl === '') return false
+        const nameEl = input.nameEl?.trim() || null
+        const nameEn = input.nameEn?.trim() || null
+        if (!nameEl && !nameEn) return false
         // The server's `exercises_gym_el_uniq` / `_en_uniq`: one name per gym among LIVE
         // rows, archived and merged ones included. Refused here for the same reason the
         // Supabase repository refuses it before queueing — an exercise that only fails once
@@ -709,7 +773,7 @@ export function createLocalRepo(options: LocalRepoOptions = {}): Repo & InviteRe
         const taken = live(db.exercises).some(
           (e) =>
             e.gymId === gymId &&
-            (sameName(e.nameEl, nameEl) || sameName(e.nameEn, input.nameEn)),
+            (sameName(e.nameEl, nameEl) || sameName(e.nameEn, nameEn)),
         )
         if (taken) return false
         db.exercises.push({
@@ -717,7 +781,7 @@ export function createLocalRepo(options: LocalRepoOptions = {}): Repo & InviteRe
           // Non-null: this is the gym's own addition, not an edit to the shared catalogue.
           gymId,
           nameEl,
-          nameEn: input.nameEn ?? null,
+          nameEn,
           category: input.category,
           equipment: input.equipment,
           // What the server stores for the same input: the form never asks for a constraint.
@@ -1064,6 +1128,105 @@ export function createLocalRepo(options: LocalRepoOptions = {}): Repo & InviteRe
         const invite = db.invites.find((i) => i.id === inviteId)
         if (!invite) return false
         invite.revokedAt = at
+      }),
+
+    // ---- athlete accounts — the same rules as 012, so the demo teaches the real flow ----
+
+    createAthleteInvite: (gymId, athleteId, email) =>
+      serialize(async (): Promise<{ state: WriteState; secret?: string }> => {
+        const db = await load()
+        if (db.gym.id !== gymId) return { state: 'failed' }
+        const self = live(db.memberships).find((m) => m.id === acting)
+        if (!self || self.role !== 'owner') return { state: 'failed' }
+        if (!live(db.athletes).some((a) => a.id === athleteId)) return { state: 'failed' }
+        const at = now().toISOString()
+        const tokens = { ...(db.athleteInviteTokens ?? {}) }
+        // One live link per athlete: a new one is how a link sent to the wrong chat is fixed.
+        for (const pending of Object.values(tokens)) {
+          if (pending.athleteId === athleteId && pending.acceptedAt === null) pending.revokedAt ??= at
+        }
+        const secret = newId().replace(/-/g, '')
+        tokens[digest(secret)] = {
+          athleteId,
+          email: email?.trim().toLowerCase() || null,
+          expiresAt: new Date(now().getTime() + 14 * 24 * 60 * 60_000).toISOString(),
+          revokedAt: null,
+          acceptedAt: null,
+        }
+        db.athleteInviteTokens = tokens
+        await save(db)
+        return { state: 'saved', secret }
+      }),
+
+    getExercisesByIds: (gymId, ids) =>
+      read((db) => (gymOf(db, gymId) ? db.exercises.filter((e) => ids.includes(e.id)) : [])),
+
+    getAthleteAccess: (gymId, athleteId) =>
+      read((db) => {
+        const link = gymOf(db, gymId) ? db.athleteLinks?.[athleteId] : undefined
+        const pending = Object.values(db.athleteInviteTokens ?? {})
+          .filter(
+            (t) =>
+              t.athleteId === athleteId &&
+              t.revokedAt === null &&
+              t.acceptedAt === null &&
+              Date.parse(t.expiresAt) > now().getTime(),
+          )
+          .map((t) => t.expiresAt)
+          .sort()
+        return {
+          linked: Boolean(link),
+          linkedAt: link?.linkedAt ?? null,
+          email: link?.email ?? null,
+          pendingExpires: pending[pending.length - 1] ?? null,
+        }
+      }),
+
+    revokeAthleteAccess: (gymId, athleteId) =>
+      write(gymId, (db, at) => {
+        const self = live(db.memberships).find((m) => m.id === acting)
+        if (!self || self.role !== 'owner') return false
+        const links = { ...(db.athleteLinks ?? {}) }
+        delete links[athleteId]
+        db.athleteLinks = links
+        for (const pending of Object.values(db.athleteInviteTokens ?? {})) {
+          if (pending.athleteId === athleteId && pending.acceptedAt === null) pending.revokedAt ??= at
+        }
+      }),
+
+    getMyAthlete: () =>
+      read((db): AthleteIdentity | null => {
+        const athlete = live(db.athletes).find((a) => a.id === (db.portalAthleteId ?? DEFAULT_PORTAL_ATHLETE))
+        return athlete
+          ? { gymId: db.gym.id, gymName: db.gym.name, athleteId: athlete.id, fullName: athlete.fullName }
+          : null
+      }),
+
+    getAthletePortal: () =>
+      read((db): AthletePortal | null => portalOf(db, db.portalAthleteId ?? DEFAULT_PORTAL_ATHLETE)),
+
+    redeemAthleteInvite: (secret) =>
+      serialize(async (): Promise<AthleteRedeemOutcome> => {
+        const db = await load()
+        const pending = db.athleteInviteTokens?.[digest(secret.trim())]
+        if (
+          !pending ||
+          pending.revokedAt !== null ||
+          pending.acceptedAt !== null ||
+          Date.parse(pending.expiresAt) <= now().getTime() ||
+          !live(db.athletes).some((a) => a.id === pending.athleteId)
+        ) {
+          return { ok: false }
+        }
+        const at = now().toISOString()
+        pending.acceptedAt = at
+        db.athleteLinks = {
+          ...(db.athleteLinks ?? {}),
+          [pending.athleteId]: { linkedAt: at, email: pending.email ?? 'demo@athlete.local' },
+        }
+        db.portalAthleteId = pending.athleteId
+        await save(db)
+        return { ok: true, gymId: db.gym.id, athleteId: pending.athleteId }
       }),
 
     updateMember: (gymId, membershipId, patch) =>

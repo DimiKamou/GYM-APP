@@ -67,9 +67,19 @@ const auth: AuthContextValue = {
   missingEnv: [],
   resolvedOffline: false,
   isDemo: true,
+  athlete: null,
+  oauthProviders: [],
   error: null,
   signInWithOtp: async () => {},
   verifyOtp: async () => {},
+  signInWithPassword: async () => {},
+  signUpWithPassword: async () => ({ needsCode: false }),
+  signInWithProvider: async () => {},
+  completeOAuth: async () => {},
+  changePassword: async () => {},
+  deleteAccount: async () => {},
+  demoPersona: 'staff',
+  setDemoPersona: () => {},
   signOut: async () => {},
   reload: async () => {},
 }
@@ -192,6 +202,23 @@ describe('the session on screen', () => {
         expect(text).toContain(formatSet(set))
       }
     }
+  })
+
+  it('still names an exercise the catalogue has since retired (011 deleted half the old list)', async () => {
+    // The same seed, with the first block's exercise soft-deleted, the way 011 left the gym's
+    // database: the session still points at it by id, and the live catalogue no longer has it.
+    const seed = buildSeed({ today: TODAY })
+    const first = (await tree()).blocks[0]
+    const retired = seed.exercises.find((exercise) => exercise.id === first.exerciseId)
+    if (!retired) throw new Error('the seeded block names no exercise')
+    retired.deletedAt = '2026-08-01T00:00:00.000Z'
+    repo = createLocalRepo({ storage: memoryStorage(), seed })
+    expect((await repo.listExercises(GYM)).some((exercise) => exercise.id === retired.id)).toBe(false)
+
+    const host = renderLog()
+    await settle()
+
+    expect(textOf(host)).toContain(retired.nameEl ?? retired.nameEn ?? '∅')
   })
 
   it('never renders the last-time number without its date and its author', async () => {

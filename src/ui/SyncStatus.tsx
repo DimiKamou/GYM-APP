@@ -154,6 +154,14 @@ function useDefaultSource(kind: RepoKind): SyncSource | null {
   )
 }
 
+/**
+ * How many writes this device is still holding for the gym — zero with no queue at all. The
+ * update banner waits on it: a reload with ops in flight is how a set gets typed twice.
+ */
+export function useOutboxPending(): number {
+  return useOutboxStatus(useDefaultSource(useRepoKind())).pending
+}
+
 function useOutboxStatus(source: SyncSource | null): OutboxStatus {
   const [status, setStatus] = useState<OutboxStatus>(() => source?.status() ?? IDLE)
 

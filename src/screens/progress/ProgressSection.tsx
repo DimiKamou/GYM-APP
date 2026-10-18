@@ -13,7 +13,7 @@ import {
 } from '@/domain/analytics'
 import { formatDate, formatWeight, type Locale } from '@/domain/format'
 import { currentLocale } from '@/i18n'
-import type { Block, Exercise, LocalDate, Uuid, WorkoutSet } from '@/domain/types'
+import type { Block, Exercise, LocalDate, Membership, Uuid, WorkoutSet } from '@/domain/types'
 import { Card, Chip, EmptyState, Spinner } from '@/ui'
 import { ShareBar, TrendChart, VolumeBars, type SeriesPoint, type WeekBar } from '@/screens/progress/Charts'
 
@@ -28,6 +28,17 @@ import { ShareBar, TrendChart, VolumeBars, type SeriesPoint, type WeekBar } from
 
 export interface ProgressSectionProps {
   athleteId: Uuid
+}
+
+export interface ProgressViewProps {
+  athleteId: Uuid
+  /** Undefined while it loads. */
+  progress: ProgressData | undefined
+  pending: boolean
+  /** Only the names are read, so the athlete's own sheet can hand over exactly what it has. */
+  memberships: readonly Pick<Membership, 'id' | 'displayName'>[]
+  /** The empty state's second line, which tells staff to log and an athlete to wait. */
+  emptyHint?: string
 }
 
 const heading: CSSProperties = {
@@ -47,26 +58,43 @@ const WEEKS_SHOWN = 12
 /** More exercise chips than this and the picker is a second screen, not a row. */
 const EXERCISES_SHOWN = 6
 
+/** The staff's section: the athlete's progress through the gym's own reads. */
 export function ProgressSection({ athleteId }: ProgressSectionProps) {
-  const { t } = useTranslation()
-  const locale = currentLocale()
   const progress = useProgressData(athleteId)
   const team = useTeam()
+  return (
+    <ProgressView
+      athleteId={athleteId}
+      progress={progress.data}
+      pending={progress.isPending}
+      memberships={team.data ?? []}
+    />
+  )
+}
+
+/**
+ * The charts themselves, for whoever holds the data — the staff's Athlete screen, or the
+ * athlete's own sheet, which arrives in one read from `my_athlete_portal()`. One component, so
+ * the athlete and their coach can never be looking at two different 1RMs for the same lift.
+ */
+export function ProgressView({ athleteId, progress: progressData, pending, memberships, emptyHint }: ProgressViewProps) {
+  const { t } = useTranslation()
+  const locale = currentLocale()
   const [chosen, setChosen] = useState<Uuid | null>(null)
 
   const data = useMemo<AnalyticsData | null>(() => {
-    if (!progress.data) return null
+    if (!progressData) return null
     return {
-      sessions: progress.data.sessions,
+      sessions: progressData.sessions,
       // `ProgressData.blocks` is exactly the subset analytics reads (id, session, exercise,
       // position, deletedAt); widening it would mean inventing audit columns the repository
       // deliberately did not fetch.
-      blocks: progress.data.blocks as Block[],
-      sets: progress.data.sets,
-      exercises: progress.data.exercises,
-      memberships: team.data ?? [],
+      blocks: progressData.blocks as Block[],
+      sets: progressData.sets,
+      exercises: progressData.exercises,
+      memberships,
     }
-  }, [progress.data, team.data])
+  }, [progressData, memberships])
 
   const usage = useMemo(
     () => (data ? athleteExercises(data, athleteId).slice(0, EXERCISES_SHOWN) : []),
@@ -75,9 +103,9 @@ export function ProgressSection({ athleteId }: ProgressSectionProps) {
 
   const exerciseById = useMemo(() => {
     const map = new Map<Uuid, Exercise>()
-    for (const exercise of progress.data?.exercises ?? []) map.set(exercise.id, exercise)
+    for (const exercise of progressData?.exercises ?? []) map.set(exercise.id, exercise)
     return map
-  }, [progress.data])
+  }, [progressData])
 
   const selected = chosen && usage.some((u) => u.exerciseId === chosen) ? chosen : (usage[0]?.exerciseId ?? null)
 
@@ -87,9 +115,9 @@ export function ProgressSection({ athleteId }: ProgressSectionProps) {
   )
 
   const share = useMemo(() => (data ? bodyPartShare(data, athleteId) : []), [data, athleteId])
-  const weeks = useMemo(() => (progress.data ? weeklyVolume(progress.data) : []), [progress.data])
+  const weeks = useMemo(() => (progressData ? weeklyVolume(progressData) : []), [progressData])
 
-  if (progress.isPending) return <Spinner label={t('common.loading')} />
+  if (pending) return <Spinner label={t('common.loading')} />
 
   if (!data || usage.length === 0) {
     return (
@@ -98,7 +126,7 @@ export function ProgressSection({ athleteId }: ProgressSectionProps) {
         <EmptyState
           icon="sparkle"
           title={t('progress.noExercises')}
-          description={t('progress.noExercisesHint')}
+          description={emptyHint ?? t('progress.noExercisesHint')}
         />
       </section>
     )
@@ -128,9 +156,9 @@ export function ProgressSection({ athleteId }: ProgressSectionProps) {
   const latestCaption = (): string | null => {
     const last = trend?.points[trend.points.length - 1]
     if (!last || points.length < 2) return null
-    const session = progress.data?.sessions.find((s) => s.id === last.sessionId)
+    const session = progressData?.sessions.find((s) => s.id === last.sessionId)
     const author = session
-      ? ((team.data ?? []).find((member) => member.id === sessionAuthorId(session))?.displayName ?? null)
+      ? (memberships.find((member) => member.id === sessionAuthorId(session))?.displayName ?? null)
       : null
     return [
       `${t('progress.latest')}: ${formatValue(weighted ? last.oneRm : last.topReps)}`,

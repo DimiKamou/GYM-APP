@@ -2,15 +2,39 @@
 // know the `test` key, so the config below would not typecheck against it.
 import { defineConfig } from 'vitest/config'
 import react from '@vitejs/plugin-react'
+import { VitePWA } from 'vite-plugin-pwa'
 import { fileURLToPath, URL } from 'node:url'
 
-// The service worker is deliberately NOT registered yet (see M5 in the build plan).
-// During a live pilot a service worker serves trainers the bug you fixed an hour ago;
-// being able to redeploy a fix between two clients is the whole reason we chose the web.
-// vite-plugin-pwa is installed and wired in M5, once the code stops changing daily.
-// The manifest itself ships now, as a static file in public/ — that is the no-app-store premise.
+// The service worker ships with the Play Store build: an installed app that opens to Chrome's
+// offline page is a broken app. It is generated here and registered by hand in
+// src/pwa/serviceWorker.ts, which is where the rules live — a new build waits for a tap, and
+// never while the outbox is holding writes. The manifest stays the static file in public/.
 export default defineConfig({
-  plugins: [react()],
+  plugins: [
+    react(),
+    VitePWA({
+      strategies: 'generateSW',
+      // 'prompt': the worker waits until the app posts SKIP_WAITING, i.e. until someone taps.
+      registerType: 'prompt',
+      injectRegister: false,
+      manifest: false,
+      workbox: {
+        // woff2 only: every browser that can run this app reads it, and the woff fallbacks
+        // the font packages also emit would double the fonts in the offline cache.
+        globPatterns: ['**/*.{js,css,html,svg,png,woff2,webmanifest}'],
+        navigateFallback: '/index.html',
+        // Not the SPA: the Digital Asset Links file Android checks the domain with, and the
+        // two static legal pages, which must load as themselves (cleanUrls serves them
+        // without the extension).
+        navigateFallbackDenylist: [/^\/\.well-known\//, /^\/privacy/, /^\/delete-account/],
+        cleanupOutdatedCaches: true,
+        // Supabase is never cached here. Reads have the persisted query cache, with its own
+        // ages and its own wipe on sign-out; a second, invisible cache of the same rows would
+        // survive that wipe.
+        runtimeCaching: [],
+      },
+    }),
+  ],
   resolve: {
     alias: { '@': fileURLToPath(new URL('./src', import.meta.url)) },
   },

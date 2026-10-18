@@ -74,9 +74,19 @@ const auth: AuthContextValue = {
   missingEnv: [],
   resolvedOffline: false,
   isDemo: true,
+  athlete: null,
+  oauthProviders: [],
   error: null,
   signInWithOtp: async () => {},
   verifyOtp: async () => {},
+  signInWithPassword: async () => {},
+  signUpWithPassword: async () => ({ needsCode: false }),
+  signInWithProvider: async () => {},
+  completeOAuth: async () => {},
+  changePassword: async () => {},
+  deleteAccount: async () => {},
+  demoPersona: 'staff',
+  setDemoPersona: () => {},
   signOut: async () => {},
   reload: async () => {},
 }
@@ -372,8 +382,10 @@ describe('adding a movement without leaving the session', () => {
     )
     await settle()
 
-    const created = (await repo.listExercises(GYM)).find((row) => row.nameEl === 'Ζόρμπας Press')
+    // Stored as the one name the gym's list uses (011): English, `name_el` left empty.
+    const created = (await repo.listExercises(GYM)).find((row) => row.nameEn === 'Ζόρμπας Press')
     expect(created).toBeDefined()
+    expect(created?.nameEl).toBeNull()
     if (!created) return
 
     // Chosen for the block, so the coach is back on the sheet with a set to log.
@@ -393,10 +405,11 @@ describe('adding a movement without leaving the session', () => {
     // server's unique index still counts it, and choosing the minted id would point the block
     // at an exercise that will never exist.
     const ARCHIVED = '22222222-2222-4222-8222-222222222222'
+    // English, the namespace the picker now creates in (011): the server's indexes are one
+    // per language, so only a name in the same one can collide.
     await repo.createExercise(GYM, {
       id: ARCHIVED,
-      nameEl: 'Ζόρμπας Press',
-      nameEn: null,
+      nameEn: 'Zorbas Press',
       category: 'upper',
       equipment: 'other',
     })
@@ -404,7 +417,7 @@ describe('adding a movement without leaving the session', () => {
 
     renderPicker()
     await settle()
-    typeInto(searchBox(), 'Ζόρμπας Press')
+    typeInto(searchBox(), 'Zorbas Press')
     await settle()
     click(
       Array.from(sheet().querySelectorAll<HTMLElement>('button')).find(
@@ -416,7 +429,7 @@ describe('adding a movement without leaving the session', () => {
     expect(chosen).toEqual([])
     expect(textOf(sheet())).toContain(i18n.t('library.createFailed'))
     // Nothing was minted behind the refusal either.
-    const named = (await repo.listExercises(GYM)).filter((row) => row.nameEl === 'Ζόρμπας Press')
+    const named = (await repo.listExercises(GYM)).filter((row) => row.nameEn === 'Zorbas Press')
     expect(named.map((row) => row.id)).toEqual([ARCHIVED])
   })
 

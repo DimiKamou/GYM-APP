@@ -13,8 +13,7 @@ import {
 import { compareSessions } from '@/domain/analytics'
 import { formatWeight } from '@/domain/format'
 import { normalizeText } from '@/domain/text'
-import { currentLocale, LOCALES, setLocale } from '@/i18n'
-import { useTheme, type ThemePreference } from '@/theme/ThemeProvider'
+import { currentLocale } from '@/i18n'
 import type { Locale } from '@/domain/format'
 import type {
   Athlete,
@@ -27,6 +26,8 @@ import type {
   WorkoutSet,
 } from '@/domain/types'
 import { Button, Card, Field, Icon, Input, Screen, Segmented } from '@/ui'
+import { AccountActions } from '@/screens/account/AccountActions'
+import { Preferences } from '@/screens/account/Preferences'
 import { readBackend, SyncStatus } from '@/ui/SyncStatus'
 
 /**
@@ -43,8 +44,6 @@ import { readBackend, SyncStatus } from '@/ui/SyncStatus'
  * this writes UTF-8 with a BOM, CRLF line endings and a semicolon delimiter, which is the
  * combination that opens in columns by double-click on the machines this gym actually owns.
  */
-
-const THEME_OPTIONS: readonly ThemePreference[] = ['system', 'daylight', 'slate']
 
 const titleStyle: CSSProperties = { fontSize: 'var(--th-text-2xl)', margin: 0 }
 
@@ -201,7 +200,7 @@ export function buildCsv(bundle: ExportBundle, context: CsvContext): string {
 
 function fileSlug(name: string): string {
   const slug = normalizeText(name).replace(/[^\p{L}\p{N}]+/gu, '-').replace(/^-|-$/g, '')
-  return slug === '' ? 'trainhub' : slug
+  return slug === '' ? 'powerhouse' : slug
 }
 
 /**
@@ -230,8 +229,7 @@ function download(filename: string, content: string, mime: string): boolean {
 export function SettingsScreen() {
   const { t } = useTranslation()
   const locale = currentLocale()
-  const { theme, setTheme } = useTheme()
-  const { membership, user, isDemo, signOut } = useAuth()
+  const { membership, user, isDemo, signOut, setDemoPersona } = useAuth()
   const repoKind = useRepoKind()
 
   const gym = useGymProfile()
@@ -289,7 +287,7 @@ export function SettingsScreen() {
     }
 
     const stamp = new Date().toISOString().slice(0, 10)
-    const base = `trainhub-${fileSlug(gym.data?.name ?? '')}-${stamp}`
+    const base = `${fileSlug(gym.data?.name ?? '')}-${stamp}`
 
     if (format === 'json') {
       const file = `${base}.json`
@@ -412,39 +410,7 @@ export function SettingsScreen() {
         </Card>
       </Section>
 
-      <Section title={t('settings.appearance')}>
-        <Card>
-          <Segmented
-            label={t('settings.theme')}
-            value={theme}
-            options={THEME_OPTIONS.map((value) => ({
-              value,
-              label:
-                value === 'system'
-                  ? t('settings.themeSystem')
-                  : value === 'daylight'
-                    ? t('settings.themeDaylight')
-                    : t('settings.themeSlate'),
-            }))}
-            onChange={setTheme}
-          />
-        </Card>
-      </Section>
-
-      <Section title={t('settings.language')}>
-        <Card>
-          {/* ΕΛ, not GR: GR is a country code, and the language is what is being chosen. */}
-          <Segmented
-            label={t('settings.language')}
-            value={locale}
-            options={LOCALES.map((value) => ({
-              value,
-              label: value === 'el' ? t('language.elShort') : t('language.enShort'),
-            }))}
-            onChange={(next) => void setLocale(next)}
-          />
-        </Card>
-      </Section>
+      <Preferences />
 
       {/* What this install is, in the two facts a coach can act on: which backend holds their
           work, and whether anything is still waiting to reach it. */}
@@ -622,6 +588,18 @@ export function SettingsScreen() {
             </Button>
           </div>
         </Card>
+        {isDemo ? (
+          // The athlete's side, with no server: what an athlete sees once the owner sends a link.
+          <Card>
+            <div style={cardStack}>
+              <p style={mutedText}>{t('portal.demoAsAthleteHint')}</p>
+              <Button variant="secondary" icon="users" onClick={() => setDemoPersona('athlete')}>
+                {t('portal.demoAsAthlete')}
+              </Button>
+            </div>
+          </Card>
+        ) : null}
+        <AccountActions />
       </Section>
     </Screen>
   )
