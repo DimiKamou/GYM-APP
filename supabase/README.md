@@ -121,7 +121,13 @@ than recording a no-op — create the gym from the app first, then run it.
 
 ## 4. Auth: email OTP with a real sender
 
-TrainHub uses **email one-time codes**. No passwords: a shared gym password is
+> Since 012 the PWA also signs in with a **username and password** (the accounts
+> the Streamlit pilot creates), **Google**, **Microsoft**, and an **email and
+> password sign-up** for athletes. Their setup is in section 10. Email codes
+> stay as the recovery path for anyone with a real address, so everything below
+> still applies.
+
+The email one-time code was the original sign-in. A shared gym password is
 how the paper sheet's attribution problem gets recreated in software, and a
 per-trainer password is a thing trainers forget and reset from the front desk.
 
@@ -466,3 +472,92 @@ succeeds when it should not — so testing the *denials* is the only way to know
   the table owner re-arms the policy recursion that `app.my_gym()` exists to
   break, and every query in the app starts failing with "infinite recursion
   detected in policy".
+
+---
+
+## 10. Athlete accounts, Google / Microsoft, and account deletion (`012`)
+
+Paste `trainhub-αθλητες-στην-εφαρμογη.sql` from the repository root (it is
+`012_athlete_accounts.sql`, byte for byte; `tests/run.sh` checks). It can run
+twice, and split statement by statement, and ends in the same place.
+
+**An athlete is not a membership.** `app.my_gym()` is null for them, so all 44
+policies refuse them; their whole view of the database is two SECURITY DEFINER
+functions, `my_athlete()` and `my_athlete_portal()`, which name every column
+they return. Staff notes, session notes, block and set remarks, other athletes
+and anyone's phone number never leave the server. `tests/06_athlete_accounts_test.sql`
+asserts each of those.
+
+| function | who | what |
+| --- | --- | --- |
+| `create_athlete_invite(athlete, email?)` | owner | a single-use link secret, shown once; a new one cancels the old |
+| `athlete_access(athlete)` | any member | linked?, as which address, pending link expiry |
+| `revoke_athlete_access(athlete)` | owner | ends the link and any pending invite |
+| `redeem_athlete_invite(secret)` | the athlete | links this account to that athlete; refuses staff of that gym |
+| `my_athlete()` / `my_athlete_portal()` | the athlete | who they are / their sheet |
+| `delete_my_account_data()` | anyone | the `public` half of account deletion (below) |
+
+### Sign-in providers
+
+Authentication → Providers:
+
+- **Google** — create an OAuth client (type *Web application*) in Google Cloud
+  Console. Authorised redirect URI: `https://<ref>.supabase.co/auth/v1/callback`.
+- **Azure** (Microsoft: Outlook, Hotmail, work accounts) — register an app in
+  Microsoft Entra, *Accounts in any organizational directory and personal
+  Microsoft accounts*, same redirect URI. Leave the Azure tenant URL empty for
+  personal accounts.
+
+Then build the app with `VITE_AUTH_PROVIDERS=google,azure`. A provider that is
+not switched on here must not be in that list: its button leads to a raw JSON
+error page.
+
+Authentication → URL Configuration → Redirect URLs: add
+`https://<domain>/auth/callback` (and `http://localhost:5173/auth/callback`).
+The app uses the PKCE flow and exchanges the code on that route.
+
+The provider buttons are hidden in an iPhone home-screen app: there the redirect
+finishes in Safari, which does not share storage with the installed app. iPhone
+athletes sign in with email and password, or in Safari before adding to the
+home screen.
+
+### Email and password sign-up
+
+Authentication → Providers → Email: **Confirm email** on. Edit the *Confirm
+signup* template so it contains the code, not only the link:
+
+```html
+<h2>Καλώς ήρθες στο PowerHouse</h2>
+<p>Ο κωδικός επιβεβαίωσης: <strong>{{ .Token }}</strong></p>
+<p>Ή πάτησε: <a href="{{ .ConfirmationURL }}">επιβεβαίωση</a></p>
+```
+
+The app asks for that six-digit code right after sign-up, so confirming works
+even when the email is opened on another device.
+
+### Account deletion
+
+Google Play requires it for any app with sign-up. Two halves, in order:
+
+1. `delete_my_account_data()` runs **as the user**: a trainer's membership is
+   retired and its address scrubbed (the name stays on the sessions they
+   wrote), an athlete's link is retired, and an **owner is refused** until
+   ownership has been transferred.
+2. The `delete-account` Edge Function then deletes the `auth.users` row with
+   the service_role key — the only thing that key does.
+
+```bash
+supabase functions deploy delete-account          # JWT verification stays on
+supabase secrets set APP_ORIGIN=https://<domain>  # CORS: only the app may call it
+```
+
+Until it is deployed, the app's delete button says deletion is not available
+yet, and nothing is half-deleted.
+
+### Open sign-up and `bootstrap_gym()`
+
+With sign-ups on, anyone can create an account. It sees nothing — no
+membership, no athlete link — but it can call `bootstrap_gym()` and create an
+empty second gym, after which 006 and 011 refuse to run again. If that happens:
+`update public.gyms set deleted_at = now() where id = '<the stray gym>';`
+

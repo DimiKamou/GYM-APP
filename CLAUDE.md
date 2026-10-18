@@ -12,16 +12,26 @@ feature is.
 
 - **Supabase is the source of truth from commit one.** A persisted read cache plus a write outbox, not a
   replication engine. A full local-first sync layer was considered and rejected as the largest schedule risk.
-- **Email OTP, not Google OAuth.** An OAuth redirect from a standalone home-screen app returns to Safari and
-  leaves the installed app signed out. OTP also doubles as the lockout recovery path.
-- **Two roles**, `owner` and `trainer`. The four-role matrix was cut. Adding `manager` is one migration.
+- **Sign-in: password for trainers, Google / Microsoft / email sign-up for athletes, email code as
+  recovery.** Trainers keep the username + password the Streamlit pilot gave them (`src/auth/username.ts`
+  makes Streamlit's mapping). OAuth is PKCE to `/auth/callback` and is **hidden in an iOS home-screen
+  app**, where the redirect finishes in Safari and leaves the installed app signed out — the original
+  reason there was no OAuth. Android's Play Store build is a TWA and shares Chrome's storage, so it is fine.
+- **Two staff roles**, `owner` and `trainer`. The four-role matrix was cut. Adding `manager` is one migration.
+- **An athlete account is not a membership** (012). `app.my_gym()` is null for it, so all 44 policies refuse
+  it; it reads only through `my_athlete()` / `my_athlete_portal()`, which build every object column by
+  column. Never give athletes access by adding a role to `memberships` or a permissive policy to a table —
+  either opens every athlete's sheet and every staff note in the gym.
 - **Assignment is a filter, never a fence.** Any active member may log for any athlete in the gym. Fencing by
   assignment stops work when a coach covers a sick colleague, and the workaround is a shared login.
 - **Greek is the default locale.** English is the fallback.
 - **Daylight is the default theme, Slate is its dark pair.** Both are pure token files.
 - **Soft delete everywhere, undo instead of confirm.** No DELETE policy exists in the schema. Confirm dialogs
   survive only for removing an athlete or a trainer.
-- **No service worker until M5.** See README.
+- **The service worker ships** (Play Store build). A new build waits for a tap on the update banner, and
+  the button waits while the outbox holds writes. `sw.js` must stay `no-cache` in `firebase.json`.
+- **The brand is PowerHouse, for now.** It is `brand.name` in `src/i18n/`, the manifest, `index.html`
+  and the icons. Storage keys stay `trainhub.*` — renaming one signs everyone out and orphans the outbox.
 
 ## Traps
 
@@ -44,6 +54,13 @@ the whole app.
 
 **Wrap every `localStorage` / IndexedDB access in try/catch.** In private mode and locked-down browsers the
 accessor itself throws, not just the read.
+
+**The staff's free text never reaches an athlete.** `notes`, `sessions.notes`, `blocks.note` and
+`sets.note` are written for the next coach. `my_athlete_portal()` leaves them out by name, and the local
+repository's `portalOf()` nulls them. A new free-text column is staff-only until someone decides otherwise.
+
+**`.well-known/` must deploy.** Firebase's default `**/.*` ignore rule drops it, and without
+`assetlinks.json` the Play Store app shows a browser URL bar. It is removed from `firebase.json`; keep it out.
 
 **Notes are append-only.** There is no UPDATE policy on `notes.body`. That is what keeps them safe under
 last-write-wins — otherwise a trainer holding a stale athlete row republishes old notes over a colleague's.

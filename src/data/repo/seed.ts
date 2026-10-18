@@ -4,7 +4,7 @@
  * This is not test scaffolding — it is the product on day zero. Until a gym owner has a
  * Supabase project there is no server to talk to, and an app that cannot be opened cannot be
  * judged: a trainer deciding whether this beats their clipboard has to be able to hold a
- * populated one. So the local repo boots against a full three months of Iron Lab.
+ * populated one. So the local repo boots against a full three months of PowerHouse Gym.
  *
  * Three properties this seed has that the design prototype's did not:
  *
@@ -28,6 +28,7 @@
 import type {
   Appointment,
   Athlete,
+  AthleteIdentity,
   Block,
   Equipment,
   Exercise,
@@ -417,7 +418,7 @@ export function buildGym(today: LocalDate = localDateIn(SEED_TIMEZONE)): Gym {
   const founded = instantAt(shiftDays(today, -400), '09:00')
   return {
     id: SEED_IDS.gym,
-    name: 'Iron Lab',
+    name: 'PowerHouse Gym',
     timezone: SEED_TIMEZONE,
     displayUnit: 'kg',
     createdAt: founded,
@@ -963,6 +964,16 @@ export function buildSeed(options: SeedOptions = {}): SeedData {
  * Exposed separately from `buildSeed()` so `AuthProvider` can resolve an identity without
  * constructing three months of history it will never read.
  */
+/**
+ * The athlete "see it as the athlete" opens in the demo, before any link has been redeemed
+ * here: Νίκος, who has the longest history and therefore the charts worth looking at.
+ */
+export function demoAthleteIdentity(): AthleteIdentity {
+  const today = localDateIn(SEED_TIMEZONE)
+  const gym = buildGym(today)
+  return { gymId: gym.id, gymName: gym.name, athleteId: SEED_IDS.athletes.nikos, fullName: 'Νίκος Παπαδόπουλος' }
+}
+
 export function demoIdentity(): { userId: Uuid; membership: Membership; gym: Gym } {
   const today = localDateIn(SEED_TIMEZONE)
   const membership = buildMemberships(today)[0]

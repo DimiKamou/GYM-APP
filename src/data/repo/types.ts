@@ -19,6 +19,9 @@ import type {
   Appointment,
   AppointmentType,
   Athlete,
+  AthleteAccess,
+  AthleteIdentity,
+  AthletePortal,
   Briefing,
   Equipment,
   Exercise,
@@ -97,8 +100,12 @@ export interface ExerciseMuscleInput {
 
 export interface NewExerciseInput {
   id: Uuid
-  /** Greek is required; English is the courtesy. The prototype had this the other way round. */
-  nameEl: string
+  /**
+   * At least one of the two, as `exercises_has_a_name` demands. The gym's own catalogue (011)
+   * is English-only — one namespace for uniqueness, `name_el` NULL — so the forms send
+   * `nameEn` alone; the shared bilingual catalogue and older callers still send Greek.
+   */
+  nameEl?: string | null
   nameEn?: string | null
   category: ExerciseCategory
   equipment: Exercise['equipment']
@@ -160,6 +167,12 @@ export interface Repo {
   getSessionTree(gymId: Uuid, sessionId: Uuid): Promise<SessionTree | null>
 
   listExercises(gymId: Uuid): Promise<Exercise[]>
+  /**
+   * Exercises by id, deleted or merged or not. History reads with this: 011 retired half the
+   * gym's old list by `deleted_at`, and every session logged before it still points at those
+   * rows. The live catalogue cannot name them; their own ids can. Optional and probed for.
+   */
+  getExercisesByIds?(gymId: Uuid, ids: readonly Uuid[]): Promise<Exercise[]>
   /** The shared taxonomy plus this gym's own groups, in display order — never alphabetical. */
   listMuscleGroups(gymId: Uuid): Promise<MuscleGroup[]>
   /**
@@ -247,8 +260,48 @@ export interface Repo {
   revokeInvite(gymId: Uuid, inviteId: Uuid): Promise<WriteState>
   updateMember(gymId: Uuid, membershipId: Uuid, patch: Partial<Pick<Membership, 'displayName' | 'role' | 'status'>>): Promise<WriteState>
 
+  // ---- athlete accounts (012) ----
+  /**
+   * Optional and probed for, like `unarchiveExercise`: a repository without them hides the
+   * athlete-access card instead of offering a button that cannot work. Owner-only on the
+   * server — a trainer gets `failed`, and the screen says who can do it before they try.
+   */
+  createAthleteInvite?(gymId: Uuid, athleteId: Uuid, email?: string | null): Promise<{ state: WriteState; secret?: string }>
+  getAthleteAccess?(gymId: Uuid, athleteId: Uuid): Promise<AthleteAccess>
+  revokeAthleteAccess?(gymId: Uuid, athleteId: Uuid): Promise<WriteState>
+
   /** Exports everything this gym holds, for the owner to keep. */
   exportGym(gymId: Uuid): Promise<string>
   /** Local repo only — throws on Supabase, where the server owns the data. */
   resetDemoData?(): Promise<void>
+}
+
+/**
+ * The app ships before the SQL (CLAUDE.md): until 012 is pasted, PostgREST answers PGRST202 for
+ * every function it adds. A read that hits that throws an Error with this message — "this gym
+ * has no athlete accounts yet", not a failure to retry — and the screens say so in those words.
+ */
+export const ATHLETE_ACCOUNTS_MISSING = 'athlete-accounts-not-installed'
+
+/**
+ * The athlete's side of the account, kept off `Repo` for the reason `InviteRedeemer` is: every
+ * method there takes a gym id, and an athlete never holds one — the server answers from
+ * `auth.uid()` alone. Probed for with `athleteSideOf()`.
+ */
+export type AthleteRedeemOutcome = { ok: true; gymId: Uuid; athleteId: Uuid } | { ok: false; staff?: boolean }
+
+export interface AthleteSide {
+  /** `my_athlete()`: null for an account that is nobody's athlete. Throws when it cannot ask. */
+  getMyAthlete(): Promise<AthleteIdentity | null>
+  getAthletePortal(): Promise<AthletePortal | null>
+  redeemAthleteInvite(secret: string): Promise<AthleteRedeemOutcome>
+}
+
+export function athleteSideOf(repo: Repo): AthleteSide | null {
+  const candidate = repo as Repo & Partial<AthleteSide>
+  return typeof candidate.getAthletePortal === 'function' &&
+    typeof candidate.redeemAthleteInvite === 'function' &&
+    typeof candidate.getMyAthlete === 'function'
+    ? (candidate as AthleteSide)
+    : null
 }

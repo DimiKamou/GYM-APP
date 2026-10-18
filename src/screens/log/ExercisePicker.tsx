@@ -361,7 +361,6 @@ const filingPanel: CSSProperties = {
 export function ExercisePicker({ open, onClose, athleteId, locale, onSelect }: ExercisePickerProps) {
   const { t } = useTranslation()
   const [query, setQuery] = useState('')
-  const [nameEn, setNameEn] = useState('')
   /** Null means "the coach has not overridden it", so the chosen group's region can lead. */
   const [categoryOverride, setCategoryOverride] = useState<ExerciseCategory | null>(null)
   const [setKind, setSetKind] = useState<SetKind>('weight_reps')
@@ -437,7 +436,6 @@ export function ExercisePicker({ open, onClose, athleteId, locale, onSelect }: E
 
   function reset() {
     setQuery('')
-    setNameEn('')
     setCategoryOverride(null)
     setActiveGroupId(null)
     setCreateLinks(null)
@@ -457,8 +455,8 @@ export function ExercisePicker({ open, onClose, athleteId, locale, onSelect }: E
   }
 
   async function create() {
-    const nameEl = query.trim()
-    if (nameEl === '') return
+    const name = query.trim()
+    if (name === '') return
     const id = newId()
     // The id is minted here, so the block can point at it without waiting for the write —
     // which on the local repository is instant and on a queued write may be hours. The muscle
@@ -466,8 +464,8 @@ export function ExercisePicker({ open, onClose, athleteId, locale, onSelect }: E
     // to classify the movement at all.
     const state = await createExercise.mutateAsync({
       id,
-      nameEl,
-      nameEn: nameEn.trim() === '' ? null : nameEn.trim(),
+      // The gym's list is named in English (011); what the coach typed is that one name.
+      nameEn: name,
       category,
       equipment: 'other',
       defaultSetKind: setKind,
@@ -661,16 +659,10 @@ export function ExercisePicker({ open, onClose, athleteId, locale, onSelect }: E
               {t('picker.noMatches')} — {t('picker.addCustomHint')}
             </p>
 
-            {/* The Greek name is what the coach just typed, so it is already correct and is
-                not asked for again. English is the optional courtesy, never the required one. */}
-            <Field label={t('library.nameEl')} hint={t('picker.createHint')}>
+            {/* The name is what the coach just typed, so it is already there and is not asked
+                for again. */}
+            <Field label={t('library.name')} hint={t('picker.createHint')}>
               {({ id }) => <Input id={id} value={query} readOnly aria-readonly="true" />}
-            </Field>
-
-            <Field label={t('library.nameEn')}>
-              {({ id }) => (
-                <Input id={id} value={nameEn} onChange={(event) => setNameEn(event.target.value)} />
-              )}
             </Field>
 
             {/* The owner's actual request, answered without leaving the session: the movement

@@ -67,9 +67,19 @@ function identity(who: 0 | 1 = 0, overrides: Partial<AuthContextValue> = {}): Au
     missingEnv: [],
     resolvedOffline: false,
     isDemo: true,
+    athlete: null,
+    oauthProviders: [],
     error: null,
     signInWithOtp: async () => {},
     verifyOtp: async () => {},
+    signInWithPassword: async () => {},
+    signUpWithPassword: async () => ({ needsCode: false }),
+    signInWithProvider: async () => {},
+    completeOAuth: async () => {},
+    changePassword: async () => {},
+    deleteAccount: async () => {},
+    demoPersona: 'staff',
+    setDemoPersona: () => {},
     signOut: async () => {},
     reload: async () => {},
     ...overrides,
@@ -202,32 +212,26 @@ function sheet(): HTMLElement {
 // ---------------------------------------------------------------------------
 
 describe('the exercise library', () => {
-  it('refuses a new exercise without a Greek name, and stores the Greek one when given', async () => {
+  it('refuses a new exercise with no name, and stores it under the gym’s English-only list', async () => {
     const host = render(<LibraryScreen />)
     await settle()
 
     await click(buttonWithText(host, i18n.t('library.add')))
-    const form = sheet()
+    await click(buttonWithText(sheet(), i18n.t('library.createSubmit')))
 
-    // English only — exactly what the prototype accepted, leaving every trainer-added
-    // movement English-forever in a Greek UI with no edit path in the schema.
-    typeInto(fieldInput(form, i18n.t('library.nameEn')), 'Landmine press')
-    await click(buttonWithText(form, i18n.t('library.createSubmit')))
-
-    expect(textOf(sheet())).toContain(i18n.t('library.nameElRequired'))
+    expect(textOf(sheet())).toContain(i18n.t('library.nameRequired'))
     const afterRefusal = await repo.listExercises(SEED_IDS.gym)
     expect(afterRefusal.some((row) => row.gymId !== null)).toBe(false)
 
-    typeInto(fieldInput(sheet(), i18n.t('library.nameEl')), 'Πιέσεις Landmine')
+    typeInto(fieldInput(sheet(), i18n.t('library.name')), 'Landmine Press')
     await click(buttonWithText(sheet(), i18n.t('library.createSubmit')))
     await settle()
 
     const created = (await repo.listExercises(SEED_IDS.gym)).find((row) => row.gymId !== null)
-    expect(created).toBeTruthy()
-    expect(created?.nameEl).toBe('Πιέσεις Landmine')
-    expect(created?.nameEn).toBe('Landmine press')
-    // The whole point of the field: the Greek name is what the roster reads.
-    expect(textOf(host)).toContain('Πιέσεις Landmine')
+    expect(created?.nameEn).toBe('Landmine Press')
+    // One namespace, as in 011: no second, Greek name for the uniqueness index to check apart.
+    expect(created?.nameEl).toBeNull()
+    expect(textOf(host)).toContain('Landmine Press')
   })
 
   it('archives the gym’s own exercise and leaves the shared catalogue alone', async () => {
@@ -467,16 +471,83 @@ describe('the CSV export', () => {
 // ---------------------------------------------------------------------------
 
 describe('the sign-in screen', () => {
-  it('offers no OAuth button and no fake demo account', async () => {
-    const host = render(<AuthScreen />, identity(0, { isDemo: false, status: 'signed-out' }))
+  it('offers Google and Microsoft when the build lists them, and no fake demo account', async () => {
+    const host = render(
+      <AuthScreen />,
+      identity(0, { isDemo: false, status: 'signed-out', oauthProviders: ['google', 'azure'] }),
+    )
     await settle()
 
-    const text = textOf(host).toLowerCase()
-    expect(text).not.toContain('google')
-    expect(text).not.toContain('facebook')
-    // The reason it is codes and not OAuth, on the screen where someone looks for the button.
-    expect(textOf(host)).toContain(i18n.t('auth.otpOnly'))
-    expect(fieldInput(host, i18n.t('auth.emailLabel'))).toBeTruthy()
+    expect(textOf(host)).toContain(i18n.t('auth.continueWithGoogle'))
+    expect(textOf(host)).toContain(i18n.t('auth.continueWithMicrosoft'))
+    expect(textOf(host).toLowerCase()).not.toContain('facebook')
+    expect(fieldInput(host, i18n.t('auth.identifierLabel'))).toBeTruthy()
+  })
+
+  it('draws no provider button where the redirect cannot come back (an iOS home-screen app)', async () => {
+    // AuthProvider hands an empty list there; the screen must not invent one.
+    const host = render(<AuthScreen />, identity(0, { isDemo: false, status: 'signed-out', oauthProviders: [] }))
+    await settle()
+
+    expect(textOf(host).toLowerCase()).not.toContain('google')
+    expect(textOf(host).toLowerCase()).not.toContain('microsoft')
+  })
+
+  it('signs a trainer in with the username the Streamlit pilot gave them', async () => {
+    const tried: Array<[string, string]> = []
+    const host = render(
+      <AuthScreen />,
+      identity(0, {
+        isDemo: false,
+        status: 'signed-out',
+        signInWithPassword: async (identifier: string, password: string) => {
+          tried.push([identifier, password])
+        },
+      }),
+    )
+    await settle()
+
+    await submitForm(host)
+    expect(textOf(host)).toContain(i18n.t('auth.identifierRequired'))
+    expect(tried).toEqual([])
+
+    typeInto(fieldInput(host, i18n.t('auth.identifierLabel')), 'dimitris')
+    typeInto(fieldInput(host, i18n.t('auth.passwordLabel')), 'σωστός-κωδικός')
+    await submitForm(host)
+    await settle()
+    expect(tried).toEqual([['dimitris', 'σωστός-κωδικός']])
+  })
+
+  it('finishes an athlete sign-up with the code from the confirmation email', async () => {
+    const verified: Array<[string, string, string | undefined]> = []
+    const host = render(
+      <AuthScreen />,
+      identity(0, {
+        isDemo: false,
+        status: 'signed-out',
+        signUpWithPassword: async () => ({ needsCode: true }),
+        verifyOtp: async (email: string, token: string, kind?: 'email' | 'signup') => {
+          verified.push([email, token, kind])
+        },
+      }),
+    )
+    await settle()
+
+    await click(buttonWithText(host, i18n.t('auth.modeSignUp')))
+    typeInto(fieldInput(host, i18n.t('auth.yourName')), 'Ελένη Κ.')
+    typeInto(fieldInput(host, i18n.t('auth.emailLabel')), 'eleni@gmail.com')
+    typeInto(fieldInput(host, i18n.t('auth.passwordLabel')), 'short')
+    await submitForm(host)
+    expect(textOf(host)).toContain(i18n.t('auth.passwordTooShort', { min: 8 }))
+
+    typeInto(fieldInput(host, i18n.t('auth.passwordLabel')), 'long-enough-password')
+    await submitForm(host)
+    await settle()
+
+    typeInto(fieldInput(host, i18n.t('auth.codeLabel')), '123456')
+    await submitForm(host)
+    await settle()
+    expect(verified).toEqual([['eleni@gmail.com', '123456', 'signup']])
   })
 
   it('names a bad address instead of failing silently, then asks for the code', async () => {
@@ -493,6 +564,8 @@ describe('the sign-in screen', () => {
     )
     await settle()
 
+    // The email code is the recovery path, one tap away from the password form.
+    await click(buttonWithText(host, i18n.t('auth.useEmailCode')))
     typeInto(fieldInput(host, i18n.t('auth.emailLabel')), 'maria-at-ironlab')
     await submitForm(host)
     expect(textOf(host)).toContain(i18n.t('auth.emailInvalid'))

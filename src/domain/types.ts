@@ -1,5 +1,5 @@
 /**
- * TrainHub domain types.
+ * Domain types.
  *
  * These mirror `supabase/migrations/001_init.sql` exactly. When the schema changes,
  * this file changes in the same commit — it is the contract every other module imports.
@@ -344,4 +344,50 @@ export interface Briefing {
     authorName: string | null
     topLines: string[]
   } | null
+}
+
+// ---------------------------------------------------------------------------
+// Athlete accounts (012). An athlete is not a membership: no table policy admits them, and
+// everything they read comes through `my_athlete()` and `my_athlete_portal()`.
+// ---------------------------------------------------------------------------
+
+/** Who a signed-in athlete is. Enough to pick the panel and title it — `my_athlete()`. */
+export interface AthleteIdentity {
+  gymId: Uuid
+  gymName: string
+  athleteId: Uuid
+  fullName: string
+}
+
+/** One name the athlete's sheet prints: an author or the coach. Nothing else about staff. */
+export interface PortalStaff {
+  id: Uuid
+  displayName: string
+}
+
+/**
+ * Everything an athlete sees, from `my_athlete_portal()`. The free-text columns the staff
+ * write for each other — `notes`, `sessions.notes`, `blocks.note`, `sets.note` — never leave
+ * the server, so here they are always null rather than absent: the shared components that
+ * render these rows read the field either way.
+ */
+export interface AthletePortal {
+  gym: Pick<Gym, 'id' | 'name' | 'timezone' | 'displayUnit'>
+  athlete: Pick<Athlete, 'id' | 'gymId' | 'fullName' | 'coachMembershipId' | 'planPhase' | 'planFocus'>
+  staff: PortalStaff[]
+  sessions: Session[]
+  blocks: Block[]
+  sets: WorkoutSet[]
+  /** Every exercise a block names, deleted or merged or not: old sessions keep their names. */
+  exercises: Exercise[]
+}
+
+/** What the staff see about one athlete's account — `athlete_access()`. */
+export interface AthleteAccess {
+  linked: boolean
+  linkedAt: Timestamp | null
+  /** The address the athlete signs in with, which may not be `athletes.email`. */
+  email: string | null
+  /** Expiry of the one live, unredeemed link, if there is one. */
+  pendingExpires: Timestamp | null
 }

@@ -6,7 +6,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 import { i18n } from '@/i18n'
 import { Icon, ICON_NAMES } from '@/ui/Icon'
 import { Keypad } from '@/ui/Keypad'
-import { Sheet } from '@/ui/Sheet'
+import { afterSheetClosed, Sheet } from '@/ui/Sheet'
 import { SwipeRow } from '@/ui/SwipeRow'
 import { ToastProvider, useToast } from '@/ui/Toast'
 
@@ -300,6 +300,57 @@ describe('Sheet', () => {
     expect(document.querySelector('.th-sheet')).toBeNull()
     pressEscape()
     expect(onClose).not.toHaveBeenCalled()
+  })
+
+  it('closes on the back gesture instead of leaving the screen under it', () => {
+    const onClose = vi.fn()
+    render(
+      <Sheet open onClose={onClose} title="Επιλογή άσκησης">
+        <p>σώμα</p>
+      </Sheet>,
+    )
+
+    // Android's back is history.back(): the sheet owns the entry on top of the screen's.
+    expect((window.history.state as { thSheet?: string } | null)?.thSheet).toBeTruthy()
+    act(() => {
+      window.history.replaceState(null, '')
+      window.dispatchEvent(new PopStateEvent('popstate', { state: null }))
+    })
+    expect(onClose).toHaveBeenCalledTimes(1)
+  })
+
+  it('holds a close-and-navigate until the sheet’s own entry is off the stack', async () => {
+    // The earlier tests' sheets are still being popped off jsdom's history; let them land.
+    await act(async () => {
+      await new Promise((resolve) => setTimeout(resolve, 50))
+    })
+    const order: string[] = []
+    const host = render(
+      <Sheet open onClose={vi.fn()} title="Επεξεργασία">
+        <p>σώμα</p>
+      </Sheet>,
+    )
+    const mounted = root
+    if (!mounted) throw new Error('nothing mounted')
+
+    // What AthleteSheet's archive does: the parent closes the sheet and asks to navigate.
+    afterSheetClosed(() => order.push(`navigate on ${String((window.history.state as { thSheet?: string } | null)?.thSheet ?? 'page')}`))
+    act(() => {
+      mounted.render(
+        <I18nextProvider i18n={i18n}>
+          <Sheet open={false} onClose={vi.fn()} title="Επεξεργασία">
+            <p>σώμα</p>
+          </Sheet>
+        </I18nextProvider>,
+      )
+    })
+    // jsdom traverses history asynchronously, like a browser.
+    await act(async () => {
+      await new Promise((resolve) => setTimeout(resolve, 50))
+    })
+
+    expect(host).toBeTruthy()
+    expect(order).toEqual(['navigate on page'])
   })
 
   it('is a labelled modal dialog', () => {

@@ -21,9 +21,64 @@ import { Button } from '@/ui/Button'
  *    not, including a drag that STARTED inside and ended on the backdrop, which is why this
  *    keys off pointerdown's target rather than the click's.
  *  - **The safe-area inset**, on the sheet, because it is the thing at the bottom of the frame.
+ *  - **Android's back gesture.** In the installed app back is `history.back()`, and without an
+ *    entry of its own the sheet's PAGE is what back leaves — the Log screen under an open
+ *    exercise picker, mid-session. So an open sheet pushes one entry (same URL, router state
+ *    kept) and back pops it: the sheet closes, the screen stays.
  *
  * Motion is CSS (`.th-sheet` / `.th-sheet-backdrop`) and reduced motion is honoured there.
  */
+
+// ---------------------------------------------------------------------------
+// The history entries open sheets hold, app-wide
+// ---------------------------------------------------------------------------
+
+let openSheets = 0
+/** Entries of closed sheets that have been asked off the stack and are not off it yet. */
+const leaving = new Set<string>()
+let waiters: Array<() => void> = []
+let listening = false
+
+function currentToken(): string | undefined {
+  return (window.history.state as { thSheet?: string } | null)?.thSheet
+}
+
+function settle(): void {
+  if (openSheets > 0 || leaving.size > 0) return
+  const ready = waiters
+  waiters = []
+  for (const run of ready) run()
+}
+
+function watchPops(): void {
+  if (listening || typeof window === 'undefined') return
+  listening = true
+  // An entry is gone once it is not the current one. By token, not by count: the back
+  // gesture fires popstate too, and a counter would let it stand in for a pop still owed.
+  window.addEventListener('popstate', () => {
+    const now = currentToken()
+    for (const token of leaving) if (token !== now) leaving.delete(token)
+    settle()
+  })
+}
+
+/**
+ * Runs `fn` once every open sheet has closed AND its history entry is off the stack. For an
+ * action that closes a sheet and then navigates: navigating straight away pushes over — or,
+ * with `replace`, overwrites — the sheet's own entry, and back then returns to the page that
+ * was just left. After archiving an athlete, that page is the athlete who no longer exists.
+ */
+export function afterSheetClosed(fn: () => void): void {
+  waiters.push(fn)
+  // A task later, so a close requested in the same handler has rendered and cleaned up.
+  window.setTimeout(settle, 0)
+  // A webview that never delivers popstate must not strand the navigation.
+  window.setTimeout(() => {
+    if (!waiters.includes(fn)) return
+    waiters = waiters.filter((waiting) => waiting !== fn)
+    fn()
+  }, 600)
+}
 
 /** Anything that can hold focus. `:not([disabled])` because a disabled control is not a stop. */
 const FOCUSABLE =
@@ -67,6 +122,51 @@ export function Sheet({
       (el) => !el.hasAttribute('hidden') && el.getAttribute('aria-hidden') !== 'true',
     )
   }, [])
+
+  // Held in a ref so the history effect below runs once per opening. Re-running it on every
+  // new inline `onClose` would push a second entry each render.
+  const closeRef = useRef(onClose)
+  closeRef.current = onClose
+
+  useEffect(() => {
+    if (!open) return
+    watchPops()
+    openSheets += 1
+    const token = `${Date.now().toString(36)}.${Math.random().toString(36).slice(2)}`
+    let pushed = false
+    try {
+      // `...state` keeps React Router's `{usr, key, idx}`, so popping this entry is, to the
+      // router, a return to the location it is already on.
+      window.history.pushState({ ...(window.history.state ?? {}), thSheet: token }, '')
+      pushed = true
+    } catch {
+      // A webview that refuses pushState: back leaves the page, as it did before.
+    }
+    const onPop = () => {
+      if (currentToken() !== token) closeRef.current()
+    }
+    window.addEventListener('popstate', onPop)
+    return () => {
+      window.removeEventListener('popstate', onPop)
+      openSheets -= 1
+      if (!pushed) {
+        settle()
+        return
+      }
+      // Closed from inside the app, so the entry comes back off — after a task, and only if
+      // it is still on top. A button that closes the sheet AND navigates without
+      // `afterSheetClosed` has by then pushed its own entry, and popping would undo it.
+      leaving.add(token)
+      window.setTimeout(() => {
+        if (currentToken() === token) {
+          window.history.back()
+        } else {
+          leaving.delete(token)
+          settle()
+        }
+      }, 0)
+    }
+  }, [open])
 
   // Open: remember where focus was and move it in. Close: put it back.
   useEffect(() => {

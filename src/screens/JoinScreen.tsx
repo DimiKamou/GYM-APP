@@ -3,6 +3,12 @@ import { Link, useNavigate } from 'react-router-dom'
 import { useTranslation } from 'react-i18next'
 
 import { useAuth } from '@/auth/useAuth'
+import {
+  readInviteSecretFromHash,
+  readStash as readStashOf,
+  stripFragment,
+  writeStash as writeStashOf,
+} from '@/auth/inviteStash'
 import { useRedeemInvite, type RedeemOutcome } from '@/data/hooks'
 import { Button, Card, Field, Input, Screen, Spinner } from '@/ui'
 
@@ -31,65 +37,12 @@ import { Button, Card, Field, Input, Screen, Spinner } from '@/ui'
  */
 
 /**
- * Accepts `#invite=<secret>` and a bare `#<secret>`. Pure — no side effects — so React's
- * double-invoked render in StrictMode reads the same value twice instead of the second read
- * finding a fragment the first one already erased.
+ * The fragment and the stash live in `@/auth/inviteStash`, shared with the athlete's `/welcome`:
+ * same fragment, same strip-before-paint, same per-tab stash — different key, because the two
+ * secrets look identical and must never be offered to the other RPC.
  */
-function readInviteSecretFromHash(): string | null {
-  if (typeof window === 'undefined') return null
-  const raw = window.location.hash.replace(/^#/, '')
-  if (!raw) return null
-  const named = new URLSearchParams(raw).get('invite')
-  const secret = named ?? (raw.includes('=') ? null : decodeURIComponent(raw))
-  const trimmed = secret?.trim() ?? ''
-  return trimmed.length > 0 ? trimmed : null
-}
-
-function stripFragment(): void {
-  try {
-    const { pathname, search } = window.location
-    // Preserve whatever state is already on the entry. React Router keeps its own
-    // `{usr, key, idx}` bookkeeping there, and passing null erases it — after which
-    // its history has no index and back/forward stop behaving. We are here to remove
-    // the fragment, not the router's memory of how the user arrived.
-    window.history.replaceState(window.history.state, '', `${pathname}${search}`)
-  } catch {
-    // Some embedded webviews refuse replaceState. The invite still works; the URL is just
-    // uglier and the secret stays visible, which is why this is a fragment and not a query.
-  }
-}
-
-/**
- * Where the secret waits while the visitor signs in.
- *
- * `sessionStorage`, not `localStorage`: it is scoped to this tab and dies with it, so a gym
- * phone passed to the next coach is not still carrying a working invite. It is needed at all
- * because the fragment is stripped on arrival and the trip through `/login` — and the
- * `no-membership` redirect that follows it — cannot carry a fragment.
- *
- * Both accessors throw outright in private mode and under a "block all cookies" policy, so
- * both are guarded: losing the stash costs the visitor a second tap on the original link,
- * while an unguarded read would white-screen the only route they have into the app.
- */
-const STASH_KEY = 'trainhub.invite'
-
-function readStash(): string | null {
-  try {
-    const value = window.sessionStorage.getItem(STASH_KEY)
-    return value && value.trim() !== '' ? value : null
-  } catch {
-    return null
-  }
-}
-
-function writeStash(secret: string | null): void {
-  try {
-    if (secret === null) window.sessionStorage.removeItem(STASH_KEY)
-    else window.sessionStorage.setItem(STASH_KEY, secret)
-  } catch {
-    // Then the code lives only in this component's state, and a reload asks for the link again.
-  }
-}
+const readStash = () => readStashOf('trainer')
+const writeStash = (secret: string | null) => writeStashOf('trainer', secret)
 
 type Phase = 'idle' | 'joined' | 'already' | 'invalid'
 
@@ -118,7 +71,7 @@ const linkStyle: CSSProperties = {
 export function JoinScreen() {
   const { t } = useTranslation()
   const navigate = useNavigate()
-  const { status, membership, reload } = useAuth()
+  const { status, membership, reload, signOut, isDemo } = useAuth()
   const redeem = useRedeemInvite()
 
   // The fragment on a first arrival; the stash after the round trip through the login screen.
@@ -293,6 +246,17 @@ export function JoinScreen() {
           </Button>
         </>
       )}
+
+      {/* The account that lands here belonging nowhere is, more often than not now, an
+          athlete — or a phone signed in as the wrong person. Both need a way out. */}
+      {signedIn && !isDemo ? (
+        <Button variant="ghost" block icon="offline" onClick={() => void signOut()}>
+          {t('welcome.notYou')}
+        </Button>
+      ) : null}
+      <Link to="/welcome" style={linkStyle}>
+        {t('join.athleteInstead')}
+      </Link>
     </Screen>
   )
 }

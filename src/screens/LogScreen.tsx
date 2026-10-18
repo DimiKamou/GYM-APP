@@ -11,6 +11,7 @@ import {
   useBriefing,
   useDeleteBlock,
   useExercises,
+  useExercisesByIds,
   useFinishSession,
   useLastPerformance,
   useSessionTree,
@@ -276,9 +277,21 @@ function LogScreenBody() {
 
   useWakeLock(session?.status === 'active')
 
+  // An old session can name exercises the live catalogue has since retired; they are fetched
+  // by id so the block still says what was lifted.
+  const missingExerciseIds = useMemo(() => {
+    if (!exercises.data || !session) return []
+    const live = new Set(exercises.data.map((exercise) => exercise.id))
+    return [...new Set(session.blocks.map((block) => block.exerciseId))].filter((id) => !live.has(id))
+  }, [exercises.data, session])
+  const retiredExercises = useExercisesByIds(missingExerciseIds)
+
   const exerciseById = useMemo(
-    () => new Map((exercises.data ?? []).map((exercise) => [exercise.id, exercise])),
-    [exercises.data],
+    () =>
+      new Map(
+        [...(exercises.data ?? []), ...(retiredExercises.data ?? [])].map((exercise) => [exercise.id, exercise]),
+      ),
+    [exercises.data, retiredExercises.data],
   )
   const memberName = useMemo(
     () => new Map((team.data ?? []).map((member) => [member.id, member.displayName])),
