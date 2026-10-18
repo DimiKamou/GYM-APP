@@ -1,7 +1,11 @@
-# TrainHub
+# TrainHub — PowerHouse
 
-A web app that replaces the shared paper PT sheet at a gym. Installable from a URL — no app store,
-no iOS/Android split, one link for every trainer.
+A web app that replaces the shared paper PT sheet at a gym. Installable from a URL, and on Google Play
+as the same web app in a Trusted Web Activity (`android/README.md`) — no second codebase, no iOS/Android
+split. Branded **PowerHouse** for the gym it is built for.
+
+Two panels: the **staff** log and read the sheet; each **athlete**, invited by a link from the owner,
+reads their own sessions and progress — never the staff's notes, never anyone else's.
 
 ## What this actually is
 
@@ -25,12 +29,12 @@ The full reasoning, milestones and open decisions live in the build plan:
 | Build | Vite + React 18 + TypeScript (strict) |
 | Routing | React Router v7 |
 | Server | Supabase — Postgres, Auth, Row-Level Security. Region `eu-central-1` (Frankfurt) |
-| Auth | Email OTP. Deliberately **not** Google OAuth — see below |
+| Auth | Trainers: username + password (the Streamlit accounts). Athletes: Google, Microsoft or email sign-up. Email code as recovery |
 | Data | TanStack Query with a persisted read cache, plus an idempotent write outbox |
 | State | Zustand for ephemeral UI state only; server state belongs to Query |
 | i18n | i18next — **Greek is the default**, English is the fallback |
 | Charts | Hand-rolled inline SVG, as in the prototype. No chart library |
-| PWA | Static manifest now; service worker in M5 (see below) |
+| PWA | Static manifest + generated service worker; a new build waits for a tap (see below) |
 
 ## Four decisions that are hard to reverse
 
@@ -70,15 +74,15 @@ briefing**.
 Conflict model, in full: rows merge as a union by id. A genuine same-row clash resolves last-write-wins
 and writes a `session_events` row, so the losing value is always recoverable.
 
-## Why the service worker is not here yet
+## The service worker, and why it waits for a tap
 
-A service worker's job is to serve cached assets. During a live pilot that means serving a trainer the bug
-you fixed an hour ago while you stare at a green deploy. Being able to fix a fumble at 09:15 and have it
-live for the 09:30 client is the strongest argument for choosing the web at all, and a premature service
-worker takes it away.
-
-The **manifest** ships now — that is the entire no-app-store premise. `vite-plugin-pwa` is installed and
-gets wired in M5, once the code stops changing daily, with the waiting worker held until the outbox drains.
+It was held back during the pilot: a worker serves the trainer the bug you fixed an hour ago, and being
+able to fix a fumble at 09:15 and have it live for the 09:30 client is the strongest argument for the web.
+The Play Store build changed the trade — an installed app that opens to Chrome's offline page is broken —
+so it ships, with that objection answered: a new build is announced by a banner and applied by a tap, the
+button waits while the outbox holds writes, and the app checks for a new build every time it returns to
+the foreground. See `src/pwa/serviceWorker.ts`. Supabase reads are never cached by the worker; that is the
+persisted query cache's job.
 
 ## Running it
 
@@ -88,7 +92,7 @@ npm run dev
 ```
 
 That is the whole setup. **No Supabase project is required to run the app.** With no credentials
-configured it starts against a local IndexedDB repository seeded with a realistic gym — Iron Lab,
+configured it starts against a local IndexedDB repository seeded with a realistic gym — PowerHouse Gym,
 two trainers, five athletes, three months of sessions — signs you in as Δημήτρης, and works
 end to end. Settings says so plainly rather than implying the data is synced anywhere.
 
@@ -119,7 +123,7 @@ its schema and its 44 policies.
 
 | | |
 |---|---|
-| **`src/`** — the React PWA | Installs to a phone's home screen, reads the briefing with no signal, records a set in nine taps. Signs in with an emailed six-digit code. |
+| **`src/`** — the React PWA | Installs to a phone's home screen, reads the briefing with no signal, records a set in nine taps. Trainers sign in with the same username and password as in Streamlit; athletes with Google, Microsoft or an email sign-up. |
 | **`streamlit/`** — the Python pilot | Seven screens in ~4,000 lines. Signs in with a username and password, so a gym can start with three accounts and no mail server at all. No offline mode: with no signal it does not load. |
 
 The pilot exists because it puts a working app in front of trainers in an
@@ -152,8 +156,10 @@ Three things in that config are load-bearing:
 - **`index.html` is `no-cache`, `/assets/**` is immutable for a year.** The asset filenames are
   content-hashed, so they can be cached forever; the HTML that points at them cannot be, or a
   trainer keeps running last week's build until they clear Safari.
-- **No service worker is registered** (see above), so an uncached `index.html` really is the whole
-  update mechanism. That is deliberate until M5.
+- **`/sw.js` is `no-cache`.** It is how the installed app learns a new build exists; cached, the
+  app would serve last week's build until the cache expired.
+- **Dotfiles are not ignored**, so `/.well-known/assetlinks.json` deploys. Firebase's default ignore list
+  drops it, and the Play Store app then shows a browser URL bar.
 
 `VITE_SUPABASE_URL` and `VITE_SUPABASE_ANON_KEY` are read at *build* time and end up in the
 bundle. That is correct for an anon key — it is public by design and RLS is what protects the
@@ -182,13 +188,18 @@ what the single-file preview build uses.
 supabase/migrations/   001_init.sql — schema, triggers, RLS, apply_ops, redeem_invite
                        002_seed_catalogue.sql — the shared bilingual exercise catalogue
                        003_muscle_groups.sql — the muscle taxonomy and exercise↔muscle links
+                       012_athlete_accounts.sql — athlete links, the athlete's read, account deletion
+supabase/functions/    delete-account — the one place the service_role key is used (auth.users only)
 src/domain/            types (the contract), analytics, Greek text handling, parsing, formatting
 src/data/              supabase client, query client + persister, the outbox, id minting
-src/auth/              email-OTP auth, membership + gym resolution
+src/auth/              sign-in (password, Google/Microsoft, sign-up, email code), staff vs athlete resolution
 src/theme/             the token contract, ThemeProvider, the theme-parity test
 src/styles/            reset, shared tokens, themes/daylight.css, themes/slate.css
 src/i18n/              el (default) and en resources
-src/screens/           the nine screens
+src/screens/           the staff screens; me/ — the athlete panel; account/ — shared account controls
+src/pwa/               service worker registration and the update signal
+public/                manifest, icons, privacy.html, delete-account.html, .well-known/assetlinks.json
+android/               the Play Store runbook (Bubblewrap, asset links, listing, forms)
 tests/e2e/             smoke, a11y and tap-budget — the gates CI runs on every push
                        two-device.spec.ts — the M1 gate, needs a real Supabase project
 firebase.json          static hosting config; see Deploying
