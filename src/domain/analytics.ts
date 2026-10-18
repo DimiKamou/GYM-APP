@@ -37,7 +37,8 @@ export interface AnalyticsData {
   blocks: readonly Block[]
   sets: readonly WorkoutSet[]
   exercises: readonly Exercise[]
-  memberships?: readonly Membership[]
+  /** Only the name is read, so an athlete's sheet — which holds names and nothing else — fits. */
+  memberships?: readonly Pick<Membership, 'id' | 'displayName'>[]
   /**
    * The muscle axis. Optional, and absent for every caller that only wants volume or a
    * body-part share: `muscleGroupShare` is the only thing that reads it, and requiring it

@@ -20,11 +20,12 @@ import { sessionSets, sessionVolume } from '@/domain/analytics'
 import { formatVolume } from '@/domain/format'
 import { currentLocale } from '@/i18n'
 import type { Uuid } from '@/domain/types'
-import { Button, Card, EmptyState, Icon, Screen, Sheet, Spinner } from '@/ui'
+import { afterSheetClosed, Button, Card, EmptyState, Icon, Screen, Sheet, Spinner } from '@/ui'
 import { BriefingCard } from '@/screens/athlete/BriefingCard'
 import { HistoryList } from '@/screens/athlete/HistoryList'
 import { NoteComposer, NoteFeed } from '@/screens/athlete/NoteComposer'
 import { AthleteSheet } from '@/screens/athlete/AthleteSheet'
+import { AthleteAccessCard } from '@/screens/athlete/AthleteAccessCard'
 import { PrintSheet, type PrintVariant } from '@/screens/athlete/PrintSheet'
 import { ProgressSection } from '@/screens/progress/ProgressSection'
 import { todayIn } from '@/screens/calendar/WeekStrip'
@@ -325,11 +326,15 @@ export function AthleteDetailScreen() {
 
       <ProgressSection athleteId={athleteId} />
 
+      <AthleteAccessCard athlete={athlete.data ?? briefing.data.athlete} />
+
       <AthleteSheet
         open={editing}
         onClose={() => setEditing(false)}
         athlete={athlete.data}
-        onArchived={() => navigate('/athletes', { replace: true })}
+        // After the edit sheet's history entry is gone: a `replace` that landed on it would leave
+        // the archived athlete's page one back-swipe away.
+        onArchived={() => afterSheetClosed(() => navigate('/athletes', { replace: true }))}
       />
 
       <Sheet

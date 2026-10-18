@@ -23,6 +23,12 @@ import { TeamScreen } from '@/screens/TeamScreen'
 import { SettingsScreen } from '@/screens/SettingsScreen'
 import { AuthScreen } from '@/screens/AuthScreen'
 import { JoinScreen } from '@/screens/JoinScreen'
+import { AuthCallbackScreen } from '@/screens/AuthCallbackScreen'
+import { WelcomeScreen } from '@/screens/WelcomeScreen'
+import { AthleteHomeScreen } from '@/screens/me/AthleteHomeScreen'
+import { AthleteSessionScreen } from '@/screens/me/AthleteSessionScreen'
+import { AthleteAccountScreen } from '@/screens/me/AthleteAccountScreen'
+import { pendingInviteRoute } from '@/auth/inviteStash'
 
 /**
  * Routes.
@@ -31,10 +37,12 @@ import { JoinScreen } from '@/screens/JoinScreen'
  * log), which take the whole frame. That is the prototype's structure and it is the right one
  * — a coach mid-set should not be able to leave the log by mis-tapping a tab.
  *
- * `/login` and `/join` are public. Everything else is behind `RequireAuth`, which has a real
- * loading state: an already-signed-in trainer must never see the login screen flash while the
- * Supabase session is being restored from storage. That flash is not cosmetic — it teaches the
- * trainer that the app logs them out, and the next thing they do is share a login.
+ * `/login`, `/join`, `/welcome` and `/auth/callback` are public. The staff panel is behind
+ * `RequireAuth` and the athlete's (`/me`) behind `RequireAthlete`; each sends the other kind of
+ * account to its own panel, so neither has to know the other exists. Both have a real loading
+ * state: an already-signed-in person must never see the login screen flash while the Supabase
+ * session is being restored from storage. That flash is not cosmetic — it teaches people that
+ * the app logs them out, and the next thing they do is share a login.
  */
 
 /**
@@ -91,7 +99,8 @@ function RequireAuth() {
 
   if (status === 'loading') return <BootScreen />
   if (status === 'ready') return <Outlet />
-  if (status === 'no-membership') return <Navigate to="/join" replace />
+  if (status === 'athlete') return <Navigate to="/me" replace />
+  if (status === 'no-membership') return <Navigate to={pendingInviteRoute() ?? '/welcome'} replace />
 
   // `signed-out`, `unconfigured` and `error` all land on the login screen: it is the screen
   // that owns the missing-env notice and the retry.
@@ -101,14 +110,32 @@ function RequireAuth() {
 }
 
 /**
- * Keeps a signed-in trainer out of the login screen, including on a bookmarked `/login`.
- * Only `ready` redirects — `no-membership` and `error` have to be able to sit on this screen,
- * or they bounce between the two forever.
+ * The athlete's gate: the mirror of `RequireAuth`. A trainer who types `/me` is sent to the
+ * roster; an athlete never reaches a staff route, which could not read anything for them anyway.
+ */
+function RequireAthlete() {
+  const { status } = useAuth()
+  const location = useLocation()
+
+  if (status === 'loading') return <BootScreen />
+  if (status === 'athlete') return <Outlet />
+  if (status === 'ready') return <Navigate to="/athletes" replace />
+  if (status === 'no-membership') return <Navigate to={pendingInviteRoute() ?? '/welcome'} replace />
+  return <Navigate to="/login" replace state={{ from: `${location.pathname}${location.search}` }} />
+}
+
+/**
+ * Keeps a signed-in person out of the login screen, including on a bookmarked `/login`, and
+ * sends them where they belong: their panel, or the link they were holding when they signed in.
+ * `no-membership` goes to a public screen (`/welcome` or `/join`), never back here, so the two
+ * cannot bounce. `error` stays: this is the screen that owns the retry.
  */
 function RedirectWhenReady({ children }: { children: ReactNode }) {
   const { status } = useAuth()
   if (status === 'loading') return <BootScreen />
-  if (status === 'ready') return <Navigate to="/athletes" replace />
+  if (status === 'ready') return <Navigate to={pendingInviteRoute() ?? '/athletes'} replace />
+  if (status === 'athlete') return <Navigate to={pendingInviteRoute() ?? '/me'} replace />
+  if (status === 'no-membership') return <Navigate to={pendingInviteRoute() ?? '/welcome'} replace />
   return <>{children}</>
 }
 
@@ -233,10 +260,28 @@ export const routes: RouteObject[] = [
         children: [{ path: 'login', element: <AuthScreen /> }],
       },
       {
-        // `/join` is reachable signed-in or signed-out: the invite has to survive the round
-        // trip through the login screen, and redirecting it away would drop the fragment.
+        // `/join` and `/welcome` are reachable signed-in or signed-out: the invite has to
+        // survive the round trip through the login screen, and redirecting it away would drop
+        // the fragment. `/auth/callback` resolves the identity itself before routing anywhere.
         element: <FullScreenLayout />,
-        children: [{ path: 'join', element: <JoinScreen /> }],
+        children: [
+          { path: 'join', element: <JoinScreen /> },
+          { path: 'welcome', element: <WelcomeScreen /> },
+          { path: 'auth/callback', element: <AuthCallbackScreen /> },
+        ],
+      },
+      {
+        element: <RequireAthlete />,
+        children: [
+          {
+            element: <FullScreenLayout />,
+            children: [
+              { path: 'me', element: <AthleteHomeScreen /> },
+              { path: 'me/sessions/:sessionId', element: <AthleteSessionScreen /> },
+              { path: 'me/account', element: <AthleteAccountScreen /> },
+            ],
+          },
+        ],
       },
       {
         element: <RequireAuth />,

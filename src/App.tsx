@@ -8,6 +8,7 @@ import { AuthProvider } from '@/auth/AuthProvider'
 import { persistOptions, queryClient } from '@/data/queryClient'
 import { i18n } from '@/i18n'
 import { router } from '@/router'
+import { UpdateBanner } from '@/ui/UpdateBanner'
 
 /**
  * The provider stack, outermost first.
@@ -49,6 +50,7 @@ export function App() {
         <PersistQueryClientProvider client={queryClient} persistOptions={persistOptions}>
           <AuthProvider>
             <div style={frame}>
+              <UpdateBanner />
               <RouterProvider router={router} />
             </div>
           </AuthProvider>

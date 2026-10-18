@@ -37,6 +37,9 @@ import { briefingTopLines } from '@/data/repo/local'
 import type {
   Appointment,
   Athlete,
+  AthleteAccess,
+  AthleteIdentity,
+  AthletePortal,
   Block,
   Briefing,
   Equipment,
@@ -54,7 +57,10 @@ import type {
   Uuid,
   WorkoutSet,
 } from '@/domain/types'
+import { ATHLETE_ACCOUNTS_MISSING } from '@/data/repo/types'
 import type {
+  AthleteRedeemOutcome,
+  AthleteSide,
   ExerciseMuscleInput,
   NewAppointmentInput,
   NewExerciseInput,
@@ -314,6 +320,51 @@ function toInvite(row: Row): Invite {
   }
 }
 
+/**
+ * `my_athlete_portal()`'s payload. The rows come through the same mappers as every staff read,
+ * so a column the server leaves out (`notes`, `note`, `deleted_at` on a live row) lands as null
+ * exactly as it would from a select that never named it.
+ */
+export function toAthletePortal(raw: Row): AthletePortal {
+  const gym = (raw.gym ?? {}) as Row
+  const athlete = (raw.athlete ?? {}) as Row
+  const list = (key: string): Row[] => (Array.isArray(raw[key]) ? (raw[key] as Row[]) : [])
+  return {
+    gym: {
+      id: str(gym.id),
+      name: str(gym.name),
+      timezone: str(gym.timezone),
+      displayUnit: gym.display_unit === 'lb' ? 'lb' : 'kg',
+    },
+    athlete: {
+      id: str(athlete.id),
+      gymId: str(athlete.gym_id),
+      fullName: str(athlete.full_name),
+      coachMembershipId: strOrNull(athlete.coach_membership_id),
+      planPhase: strOrNull(athlete.plan_phase),
+      planFocus: strOrNull(athlete.plan_focus),
+    },
+    staff: list('staff').map((row) => ({ id: str(row.id), displayName: str(row.display_name) })),
+    sessions: list('sessions').map(toSession),
+    blocks: list('blocks').map(toBlock),
+    sets: list('sets').map(toSet),
+    exercises: list('exercises').map(toExercise),
+  }
+}
+
+function toAthleteAccess(raw: Row | null): AthleteAccess {
+  return {
+    linked: raw?.linked === true,
+    linkedAt: strOrNull(raw?.linked_at),
+    email: strOrNull(raw?.email),
+    pendingExpires: strOrNull(raw?.pending_expires),
+  }
+}
+
+function isMissingFunction(error: PostgrestError): boolean {
+  return error.code === 'PGRST202' || /could not find the function/i.test(error.message)
+}
+
 // ---------------------------------------------------------------------------
 // Query plumbing
 // ---------------------------------------------------------------------------
@@ -399,7 +450,7 @@ async function direct(run: () => Promise<{ error: PostgrestError | null }>): Pro
 
 // ---------------------------------------------------------------------------
 
-export function createSupabaseRepo(): Repo & InviteRedeemer {
+export function createSupabaseRepo(): Repo & InviteRedeemer & AthleteSide {
   async function liveSessions(gymId: Uuid, athleteId: Uuid, limit?: number): Promise<Session[]> {
     let query = supabase
       .from('sessions')
@@ -458,6 +509,24 @@ export function createSupabaseRepo(): Repo & InviteRedeemer {
     )
   }
 
+  async function exercisesByIds(ids: readonly Uuid[]): Promise<Exercise[]> {
+    if (ids.length === 0) return []
+    // No deleted filter, on purpose; RLS still limits it to the shared rows and this gym's.
+    return rows(await supabase.from('exercises').select(EXERCISE_COLS).in('id', ids as string[]), toExercise)
+  }
+
+  /**
+   * The live catalogue plus every exercise these blocks name that it no longer holds. 011
+   * retired the gym's old list by `deleted_at`; history keeps naming those rows, the way the
+   * Streamlit app and the backup export already did.
+   */
+  async function catalogueFor(gymId: Uuid, blocks: readonly { exerciseId: Uuid }[]): Promise<Exercise[]> {
+    const current = await catalogue(gymId)
+    const known = new Set(current.map((e) => e.id))
+    const missing = [...new Set(blocks.map((b) => b.exerciseId))].filter((id) => !known.has(id))
+    return missing.length === 0 ? current : [...current, ...(await exercisesByIds(missing))]
+  }
+
   async function taxonomy(gymId: Uuid): Promise<MuscleGroup[]> {
     // The shared taxonomy (`gym_id is null`) plus this gym's own groups, in one round-trip.
     return rows(
@@ -482,7 +551,7 @@ export function createSupabaseRepo(): Repo & InviteRedeemer {
     )
   }
 
-  const repo: Repo & InviteRedeemer = {
+  const repo: Repo & InviteRedeemer & AthleteSide = {
     kind: 'supabase',
 
     // ---- reads ----
@@ -575,7 +644,7 @@ export function createSupabaseRepo(): Repo & InviteRedeemer {
           localDate: last.localDate,
           title: last.title,
           authorName: nameOf(last.creditedTo ?? last.loggedBy),
-          topLines: briefingTopLines(blocks, sets, await catalogue(gymId)),
+          topLines: briefingTopLines(blocks, sets, await catalogueFor(gymId, blocks)),
         }
       }
 
@@ -617,7 +686,7 @@ export function createSupabaseRepo(): Repo & InviteRedeemer {
       const blocks = await blocksFor(gymId, sessions.map((s) => s.id))
       const [sets, exercises, muscleGroups, exerciseMuscles] = await Promise.all([
         setsFor(gymId, blocks.map((b) => b.id)),
-        catalogue(gymId),
+        catalogueFor(gymId, blocks),
         taxonomy(gymId),
         muscleLinks(gymId),
       ])
@@ -672,6 +741,10 @@ export function createSupabaseRepo(): Repo & InviteRedeemer {
       return (await catalogue(gymId))
         .filter((e) => e.mergedIntoId === null)
         .sort((a, b) => (a.nameEl ?? a.nameEn ?? '').localeCompare(b.nameEl ?? b.nameEn ?? '', 'el'))
+    },
+
+    async getExercisesByIds(_gymId, ids) {
+      return exercisesByIds(ids)
     },
 
     async listMuscleGroups(gymId) {
@@ -918,8 +991,9 @@ export function createSupabaseRepo(): Repo & InviteRedeemer {
     archiveAthlete: (gymId, athleteId) => enqueueDelete(gymId, 'athletes', athleteId),
 
     async createExercise(gymId, input: NewExerciseInput) {
-      const nameEl = input.nameEl.trim()
-      const nameEn = input.nameEn ?? null
+      const nameEl = input.nameEl?.trim() || null
+      const nameEn = input.nameEn?.trim() || null
+      if (!nameEl && !nameEn) return 'failed'
       // Checked here, against the catalogue the client already holds, because a queued write
       // cannot fail in front of the coach: `exercises_gym_el_uniq` (and its `_en_` twin) is
       // one name per gym among LIVE rows — archived and merged ones included, which the
@@ -1109,6 +1183,64 @@ export function createSupabaseRepo(): Repo & InviteRedeemer {
           alreadyMember: false,
         },
       }
+    },
+
+    // ---- athlete accounts (012) — all through functions; the tables have no policies ----
+
+    async createAthleteInvite(_gymId, athleteId, email) {
+      const address = (email ?? '').trim().toLowerCase()
+      const { data, error } = await supabase.rpc('create_athlete_invite', {
+        p_athlete: athleteId,
+        p_email: address === '' ? null : address,
+      })
+      if (error) return { state: 'failed' }
+      const secret = (data as { secret?: string } | null)?.secret
+      return secret ? { state: 'saved', secret } : { state: 'failed' }
+    },
+
+    async getAthleteAccess(_gymId, athleteId) {
+      const { data, error } = await supabase.rpc('athlete_access', { p_athlete: athleteId })
+      if (error) throw new Error(isMissingFunction(error) ? ATHLETE_ACCOUNTS_MISSING : error.message)
+      return toAthleteAccess((data ?? null) as Row | null)
+    },
+
+    async revokeAthleteAccess(_gymId, athleteId) {
+      const { error } = await supabase.rpc('revoke_athlete_access', { p_athlete: athleteId })
+      return error ? 'failed' : 'saved'
+    },
+
+    async getMyAthlete(): Promise<AthleteIdentity | null> {
+      const { data, error } = await supabase.rpc('my_athlete')
+      if (error) {
+        // Before 012 there are no athlete accounts, so "nobody's athlete" is the true answer.
+        if (isMissingFunction(error)) return null
+        throw new Error(error.message)
+      }
+      const row = (data ?? null) as Row | null
+      if (!row?.athlete_id) return null
+      return {
+        gymId: str(row.gym_id),
+        gymName: str(row.gym_name),
+        athleteId: str(row.athlete_id),
+        fullName: str(row.full_name),
+      }
+    },
+
+    async getAthletePortal() {
+      const { data, error } = await supabase.rpc('my_athlete_portal')
+      if (error) throw new Error(isMissingFunction(error) ? ATHLETE_ACCOUNTS_MISSING : error.message)
+      return data ? toAthletePortal(data as Row) : null
+    },
+
+    async redeemAthleteInvite(secret): Promise<AthleteRedeemOutcome> {
+      const { data, error } = await supabase.rpc('redeem_athlete_invite', { p_secret: secret.trim() })
+      // One failure for every cause, as with trainer invites — except a staff account, which
+      // is told so, because "invalid link" would send an owner who is testing the link to
+      // mint a new one and spend that too.
+      if (error) return { ok: false, staff: /staff accounts/i.test(error.message) }
+      const row = (data ?? null) as Row | null
+      if (!row?.athlete_id || !row.gym_id) return { ok: false }
+      return { ok: true, gymId: str(row.gym_id), athleteId: str(row.athlete_id) }
     },
 
     async updateMember(gymId, membershipId, patch) {

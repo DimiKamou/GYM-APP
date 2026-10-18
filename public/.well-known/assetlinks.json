@@ -1,0 +1,13 @@
+[
+  {
+    "relation": ["delegate_permission/common.handle_all_urls"],
+    "target": {
+      "namespace": "android_app",
+      "package_name": "gr.powerhouse.app",
+      "sha256_cert_fingerprints": [
+        "REPLACE:PLAY-APP-SIGNING-KEY-SHA256-FROM-PLAY-CONSOLE",
+        "REPLACE:UPLOAD-KEY-SHA256-FROM-BUBBLEWRAP-FINGERPRINT"
+      ]
+    }
+  }
+]
