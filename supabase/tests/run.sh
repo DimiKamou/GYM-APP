@@ -33,11 +33,13 @@ for _ in $(seq 1 30); do psql -h "$WORK/sock" -U trainhub -d postgres -c 'select
 # byte. The 006 copy drifted once: 006 learned to refuse an empty project and
 # to fold name collisions, and the copy the owner would paste learned neither.
 for pair in "006_adopt_catalogue.sql:trainhub-ασκησεις-δικες-μου.sql" \
+            "009_apply_op_taxonomy.sql:trainhub-μυικες-ομαδες-στο-pwa.sql" \
             "010_equipment_more.sql:trainhub-νεες-ασκησεις-1-οργανα.sql" \
             "011_powerhouse_catalogue.sql:trainhub-νεες-ασκησεις-2-καταλογος.sql" \
             "012_block_superset_group.sql:trainhub-super-set-και-μυικη-ομαδα.sql" \
             "013_programs_shares_small_bar.sql:trainhub-προγραμματα-κοινοποιηση-μικρη-μπαρα.sql" \
-            "014_share_period.sql:trainhub-κοινοποιηση-περιοδος.sql"; do
+            "014_share_period.sql:trainhub-κοινοποιηση-περιοδος.sql" \
+            "015_athlete_accounts.sql:trainhub-αθλητες-στην-εφαρμογη.sql"; do
   migration="${pair%%:*}"; copy="${pair##*:}"
   if ! cmp -s "$HERE/../migrations/$migration" "$HERE/../../$copy"; then
     echo "ΛΑΘΟΣ: το $copy δεν είναι ίδιο με το $migration — αντέγραψέ το ξανά"
