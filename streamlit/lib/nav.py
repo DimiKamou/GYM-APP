@@ -59,3 +59,65 @@ def _forget_stop_state() -> None:
     # A's sheet must not be accepted on athlete B's.
     st.session_state.pop(FINISHED_KEY, None)
     ui.clear_undo(LOG_NOTICE_KEY)
+
+
+# ---------------------------------------------------------------------------
+# Surviving the phone locking
+# ---------------------------------------------------------------------------
+#
+# A locked phone drops the websocket, and a long enough lock starts a NEW
+# browser session when it comes back: the sign-in survives (lib/auth.py keeps
+# it in a cookie), but st.session_state does not, so the athlete and the open
+# workout were gone and the coach landed on «Διάλεξε πρώτα αθλητή» in the
+# middle of a set. The page address survives everything, so the athlete and the
+# workout ride in it: ?a=<athlete>&w=<workout>.
+
+URL_ATHLETE = "a"
+URL_WORKOUT = "w"
+
+
+def remember(athlete_id: str | None, session_id: str | None = None) -> None:
+    """Write what is open into the address — only when it changed."""
+    params = st.query_params
+    for name, value in ((URL_ATHLETE, athlete_id), (URL_WORKOUT, session_id)):
+        if value:
+            if params.get(name) != str(value):
+                params[name] = str(value)
+        elif name in params:
+            del params[name]
+
+
+def recall(gym_id: str) -> None:
+    """After a fresh browser session, put back the athlete and workout the address names.
+
+    Read by id under the caller's own policies, so an address from another gym
+    names nothing here. Never overrides what this session already has open.
+    """
+    if isinstance(st.session_state.get(ATHLETE_KEY), dict):
+        return
+    athlete_id = st.query_params.get(URL_ATHLETE)
+    if not athlete_id:
+        return
+    from lib import db
+
+    try:
+        rows = (
+            db.client()
+            .table("athletes")
+            .select("id, full_name, plan_phase, plan_focus, coach_membership_id")
+            .eq("gym_id", gym_id)
+            .eq("id", str(athlete_id))
+            .is_("deleted_at", "null")
+            .limit(1)
+            .execute()
+            .data
+            or []
+        )
+    except Exception:
+        return
+    if not rows:
+        return
+    st.session_state[ATHLETE_KEY] = rows[0]
+    workout = st.query_params.get(URL_WORKOUT)
+    if workout and not st.session_state.get(SESSION_KEY):
+        st.session_state[SESSION_KEY] = str(workout)

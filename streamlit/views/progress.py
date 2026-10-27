@@ -27,7 +27,7 @@ from typing import Any
 
 import streamlit as st
 
-from lib import db, fmt, gym, recap
+from lib import db, fmt, gym, history, recap
 from lib.exercises import EQUIPMENT_LABELS, columns, implement_of
 
 _MAX_POINTS = 40
@@ -86,7 +86,7 @@ def _history(gym_id: str, athlete_id: str) -> dict[str, list[dict[str, Any]]]:
 
     sessions = (
         client.table("sessions")
-        .select("id, local_date, started_at, logged_by, credited_to, title")
+        .select("id, local_date, started_at, status, logged_by, credited_to, title, notes")
         .eq("gym_id", gym_id)
         .eq("athlete_id", athlete_id)
         .is_("deleted_at", "null")
@@ -105,7 +105,7 @@ def _history(gym_id: str, athlete_id: str) -> dict[str, list[dict[str, Any]]]:
     for chunk in _in_chunks(session_ids):
         blocks += (
             client.table("blocks")
-            .select("id, session_id, exercise_id, position, equipment")
+            .select("id, session_id, exercise_id, position, equipment, note")
             .eq("gym_id", gym_id)
             .in_("session_id", chunk)
             .is_("deleted_at", "null")
@@ -120,7 +120,7 @@ def _history(gym_id: str, athlete_id: str) -> dict[str, list[dict[str, Any]]]:
     for chunk in _in_chunks([b["id"] for b in blocks]):
         sets += (
             client.table("sets")
-            .select("id, block_id, position, kind, load_kg, reps, seconds, meters, done_at")
+            .select("id, block_id, position, kind, load_kg, reps, seconds, meters, done_at, note, created_by")
             .eq("gym_id", gym_id)
             .in_("block_id", chunk)
             .is_("deleted_at", "null")
@@ -548,13 +548,28 @@ def _period_section(
         ordered = sorted(worked.items(), key=lambda kv: (-kv[1], kv[0]))
         st.caption("Μυϊκές ομάδες: " + " · ".join(f"{name} {n} σετ" for name, n in ordered))
 
+    if not week:
+        st.markdown(
+            history.month_calendar(first.year, first.month, history.trained_days(data), today),
+            unsafe_allow_html=True,
+        )
+
     # In the order they happened: a week read Monday to Sunday is the programme.
-    for session in in_range:
-        with st.container(border=True):
-            st.markdown("**" + fmt.md(recap.workout_heading(session, names, today)) + "**")
-            own = [b for b in blocks if b.get("session_id") == session["id"]]
-            lines = recap.workout_lines(own, sets, by_id, groups)
-            st.markdown("\n".join(f"- {fmt.md(line)}" for line in lines))
+    for n, session in enumerate(in_range):
+        own = [b for b in blocks if b.get("session_id") == session["id"]]
+        own_ids = {b["id"] for b in own}
+        history.workout_box(
+            {
+                "session": session,
+                "blocks": own,
+                "sets": [r for r in _performed(sets) if r.get("block_id") in own_ids],
+                "exercises": by_id,
+                "groups": groups,
+            },
+            names,
+            today,
+            key=f"progress_box_{n}",
+        )
 
 
 def render() -> None:
