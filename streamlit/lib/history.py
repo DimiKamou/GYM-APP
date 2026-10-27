@@ -16,6 +16,7 @@ from typing import Any, Callable
 
 import streamlit as st
 
+from lib import blocks as block_columns
 from lib import db, fmt, recap
 from lib.exercises import columns, equipment_of
 
@@ -86,7 +87,8 @@ def _read(
         return []
 
     blocks = _in(
-        client, "blocks", "id, session_id, exercise_id, position, equipment, note",
+        client, "blocks",
+        block_columns.columns(gym_id, "id, session_id, exercise_id, position, equipment, note"),
         gym_id, "session_id", [str(row["id"]) for row in sessions],
     )
     if not blocks:
@@ -143,6 +145,7 @@ def _read(
     exercises = {str(r["id"]): r for r in found}
 
     groups: dict[str, str] = {}
+    names_of_groups: dict[str, str] = {}
     try:
         links = _in(client, "exercise_muscles", "exercise_id, muscle_group_id, role, deleted_at",
                     "", "exercise_id", sorted(exercises))
@@ -155,6 +158,7 @@ def _read(
             or []
         )
         groups = recap.primary_groups(links, named)
+        names_of_groups = recap.group_names(named)
     except Exception:
         # The group only prefixes each line; the workouts are already read.
         groups = {}
@@ -162,6 +166,7 @@ def _read(
     for workout in picked:
         workout["exercises"] = exercises
         workout["groups"] = groups
+        workout["group_names"] = names_of_groups
     return picked
 
 
@@ -236,7 +241,7 @@ def workout_box(
         if str(session.get("status") or "") == "active":
             heading += " · σε εξέλιξη"
         st.markdown("**" + fmt.md(heading) + "**")
-        lines = recap.workout_lines(blocks, sets, exercises, groups)
+        lines = recap.workout_lines(blocks, sets, exercises, groups, workout.get("group_names"))
         st.markdown("\n".join(f"- {fmt.md(line)}" for line in lines))
 
         with st.expander("Λεπτομέρειες"):

@@ -2594,6 +2594,128 @@ def test_progress_month_has_the_calendar() -> None:
 
 
 # ---------------------------------------------------------------------------
+# 012: a superset, and the muscle group an exercise counted toward.
+# ---------------------------------------------------------------------------
+
+def _fresh_workout_open() -> AppTest:
+    import streamlit as st
+
+    state.reset()
+    st.cache_data.clear()
+    _empty_open_workout()
+    return open_log()
+
+
+def test_an_exercise_in_one_group_takes_it_by_itself() -> None:
+    at = _fresh_workout_open()
+    _pick(at, "Incline Bench Press")
+    way_list(at).set_value("dumbbell").run()
+    check("its group is said, not asked", "Μυϊκή ομάδα: Στήθος" in texts(at), texts(at)[-500:])
+    check("nothing to choose", not [w for w in at.selectbox if w.label == "Για ποια μυϊκή ομάδα;"])
+    press(at, "log_add_-1")
+    block = state.rows("blocks", session_id=state.SESSION)[0]
+    check("and it is kept on the block", block.get("muscle_group_id") == state.CHEST, str(block))
+
+
+def test_an_exercise_in_two_groups_makes_the_coach_choose() -> None:
+    """«Πιέσεις σε μηχάνημα» is filed under chest and back: which was it for today?"""
+    at = _fresh_workout_open()
+    _pick(at, "Πιέσεις σε μηχάνημα")
+    ask = [w for w in at.selectbox if w.label == "Για ποια μυϊκή ομάδα;"]
+    check("the coach is asked", bool(ask), str([w.label for w in at.selectbox]))
+    check("with nothing chosen for them", bool(ask) and ask[0].value is None)
+    check("and «Προσθήκη» waits for the answer", button(at, "log_add_-1").disabled)
+    ask[0].set_value(state.BACK).run()
+    press(at, "log_add_-1")
+    block = state.rows("blocks", session_id=state.SESSION)[0]
+    check("the answer is kept on the block", block.get("muscle_group_id") == state.BACK, str(block))
+
+    # Chosen from the first list, the group is already said.
+    at = _fresh_workout_open()
+    at.selectbox(key="log_group").set_value(0).run()
+    name = [w for w in at.selectbox if w.label == "Άσκηση"][0]
+    name.set_value("Πιέσεις σε μηχάνημα").run()
+    check("picked under a group, nothing more is asked",
+          not [w for w in at.selectbox if w.label == "Για ποια μυϊκή ομάδα;"])
+
+
+def test_the_logged_group_is_the_one_history_counts() -> None:
+    from lib import recap
+
+    lines = recap.workout_lines(
+        [{"id": "x", "exercise_id": "e-mine", "position": 0, "equipment": "machine",
+          "muscle_group_id": state.BACK}],
+        [{"id": "y", "block_id": "x", "position": 0, "kind": "weight_reps", "load_kg": "50",
+          "reps": 10, "done_at": state.NOW}],
+        {"e-mine": {"id": "e-mine", "name_el": "Πιέσεις σε μηχάνημα", "equipment": "machine"}},
+        {"e-mine": "Στήθος"},
+        {state.BACK: "Πλάτη", state.CHEST: "Στήθος"},
+    )
+    check("the coach's group, not the primary", lines and lines[0].startswith("Πλάτη · "), str(lines))
+
+
+def test_a_superset_is_two_exercises_logged_as_one_set() -> None:
+    at = _fresh_workout_open()
+    at.radio(key="log_mode").set_value("superset").run()
+    raise_on_exception(at)
+    at.selectbox(key="log_ss_name_1").set_value("Πιέσεις Στήθους").run()
+    at.selectbox(key="log_ss_name_2").set_value("Κωπηλατική").run()
+    press(at, "log_add_superset")
+    added = sorted(state.rows("blocks", session_id=state.SESSION), key=lambda b: b["position"])
+    check("two blocks", len(added) == 2, str(added))
+    check("sharing one superset", len(added) == 2 and added[0].get("superset_id")
+          and added[0].get("superset_id") == added[1].get("superset_id"), str(added))
+    check("each on its own tool", [b.get("equipment") for b in added] == ["barbell", "dumbbell"], str(added))
+
+    body = "\n".join(_lines(at))
+    check("one card for both", "Super set · Πιέσεις Στήθους · Μπάρα + Κωπηλατική · Αλτήρες" in body, body[:600])
+    first, second = (str(b["id"]) for b in added)
+    at.text_input(key=f"log_ss_kg_{first}").set_value("60")
+    at.number_input(key=f"log_ss_reps_{first}").set_value(10)
+    at.text_input(key=f"log_ss_kg_{second}").set_value("22,5")
+    at.number_input(key=f"log_ss_reps_{second}").set_value(12)
+    button(at, f"log_ss_{first}").click().run()
+    raise_on_exception(at)
+    a = state.rows("sets", block_id=first)
+    b = state.rows("sets", block_id=second)
+    check("one press, a set of each", len(a) == 1 and len(b) == 1, f"{a} {b}")
+    check("with their own numbers",
+          a and str(a[0]["load_kg"]).startswith("60") and a[0]["reps"] == 10
+          and b and str(b[0]["load_kg"]).startswith("22.5") and b[0]["reps"] == 12, f"{a} {b}")
+    check("the card counts rounds", "· 1 γύροι" in texts(at) or "1 γύροι" in texts(at), texts(at)[:500])
+
+    from lib import recap
+    lines = recap.workout_lines(added, a + b, {r["id"]: r for r in state.STORE["exercises"]}, {})
+    check("history says which two went together",
+          len(lines) == 2 and all(line.startswith("Super set · ") for line in lines), str(lines))
+
+
+def test_before_012_the_picker_is_what_it_was() -> None:
+    """The app ships before the SQL: no superset, no question, and adding still works."""
+    import streamlit as st
+
+    try:
+        state.reset()
+        st.cache_data.clear()
+        _empty_open_workout()
+        # After reset(), which clears the fake's list of missing columns.
+        fake_supabase.MISSING_COLUMNS["blocks"] = {"superset_id", "muscle_group_id"}
+        at = open_log()
+        check("no superset choice yet", not [r for r in at.radio if r.label == "Τι προσθέτεις;"],
+              str([r.label for r in at.radio]))
+        _pick(at, "Πιέσεις σε μηχάνημα")
+        check("no group question with nowhere to keep the answer",
+              not [w for w in at.selectbox if w.label == "Για ποια μυϊκή ομάδα;"])
+        press(at, "log_add_-1")
+        check("and the exercise goes in", len(state.rows("blocks", session_id=state.SESSION)) == 1,
+              texts(at)[:400])
+        check("the workout still reads", "Πιέσεις σε μηχάνημα" in texts(at), texts(at)[:400])
+    finally:
+        fake_supabase.MISSING_COLUMNS.clear()
+        st.cache_data.clear()
+
+
+# ---------------------------------------------------------------------------
 
 def main() -> int:
     tests = [value for name, value in sorted(globals().items()) if name.startswith("test_")]
