@@ -99,26 +99,43 @@ def _run(count: int, row: dict[str, Any]) -> str:
     return f"{count} σετ"
 
 
-def sets_summary(rows: list[dict[str, Any]]) -> str:
-    """Performed sets as runs of identical ones, in the order they were done.
+def _single(row: dict[str, Any]) -> str:
+    """One set the way the set lines say it: «60×12» is kilos × reps."""
+    kind = row.get("kind")
+    load = fmt.decimal(row.get("load_kg"))
+    reps = fmt.integer(row.get("reps"))
+    if kind == "weight_reps":
+        if reps is not None and load is not None:
+            return f"{fmt.format_weight(load)}×{reps}"
+        if reps is not None:
+            return f"×{reps}"
+        if load is not None:
+            return _kg(load)
+        return fmt.EMPTY
+    if kind == "bodyweight":
+        if reps is None:
+            return fmt.EMPTY
+        if load is not None and load > 0:
+            return f"+{fmt.format_weight(load)}×{reps}"
+        return f"×{reps}"
+    # Time and distance read the same alone as in a run of one.
+    return _run(1, row).split("×", 1)[-1]
 
-    «3×12 · 60 kg» for straight sets, «2×12 · 60 kg, 1×8 · 70 kg» when the bar
-    went up. Runs, not totals: a pyramid summed into "3 σετ · 60–70 kg" loses
-    which weight went with which reps, and that is the number the coach loads.
+
+def sets_summary(rows: list[dict[str, Any]]) -> str:
+    """Performed sets, in the order they were done, the two ways the owner writes them.
+
+    All alike: «3×12 · 60 kg» — sets × reps, then the load. Not all alike, or a
+    single set: every set as kilos × reps, «60×12, 65×10, 70×8», because a
+    pyramid summed into "3 σετ · 60–70 kg" loses which weight went with which
+    reps, and that is the number the coach loads.
     """
     done = _ordered(performed(rows))
     if not done:
         return ""
-    parts: list[str] = []
-    count, current = 0, done[0]
-    for row in done:
-        if _identity(row) == _identity(current):
-            count += 1
-            continue
-        parts.append(_run(count, current))
-        count, current = 1, row
-    parts.append(_run(count, current))
-    return ", ".join(parts)
+    if len(done) > 1 and all(_identity(row) == _identity(done[0]) for row in done):
+        return _run(len(done), done[0])
+    return ", ".join(_single(row) for row in done)
 
 
 # ---------------------------------------------------------------------------

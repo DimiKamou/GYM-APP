@@ -27,11 +27,10 @@ from typing import Any
 
 import streamlit as st
 
-from lib import db, exercises, fmt, gym, nav, ui
+from lib import db, exercises, fmt, gym, history, nav, ui
 
 # Same count as the PWA's briefing card. Three lines is what a coach reads
 # standing up; the fourth is already scrolling.
-_TOP_LINES = 3
 
 _NOTICE = "athletes_notice"
 _QUERY = "athletes_query"
@@ -109,117 +108,6 @@ def _last_session(gym_id: str, athlete_id: str) -> dict[str, Any] | None:
     return rows[0] if rows else None
 
 
-@st.cache_data(ttl=30, show_spinner=False)
-def _top_lines(gym_id: str, session_id: str) -> list[str]:
-    """"Πιέσεις Στήθους · 72,5×5" — the top set of each of the session's first blocks."""
-    client = db.client()
-
-    blocks = (
-        client.table("blocks")
-        .select("id, exercise_id, position, equipment")
-        .eq("gym_id", gym_id)
-        .eq("session_id", session_id)
-        .is_("deleted_at", "null")
-        # (position, id), never position alone: two offline inserts can mint the
-        # same position and the id is the only tie-break both devices agree on.
-        .order("position")
-        .order("id")
-        .execute()
-        .data
-        or []
-    )
-    if not blocks:
-        return []
-
-    sets = (
-        client.table("sets")
-        .select("id, block_id, position, kind, load_kg, reps, seconds, meters, done_at")
-        .eq("gym_id", gym_id)
-        .in_("block_id", [block["id"] for block in blocks])
-        .is_("deleted_at", "null")
-        .order("position")
-        .order("id")
-        .execute()
-        .data
-        or []
-    )
-    # done_at null is a prescribed set, or one the coach was interrupted typing
-    # — never a performed one. The Πρόοδος screen already leaves them out; a
-    # briefing that counted them would name a top set nobody lifted.
-    sets = [row for row in sets if row.get("done_at")]
-    if not sets:
-        return []
-
-    exercise_ids = sorted({block["exercise_id"] for block in blocks if block.get("exercise_id")})
-    rows_of_catalogue: list[dict[str, Any]] = []
-    if exercise_ids:
-        rows_of_catalogue = (
-            client.table("exercises")
-            .select(exercises.columns(gym_id, "id, name_el, name_en, merged_into_id, equipment"))
-            .in_("id", exercise_ids)
-            .execute()
-            .data
-            or []
-        )
-    by_id = {row["id"]: row for row in rows_of_catalogue}
-
-    # A block written before a duplicate was folded in still points at the dead
-    # row (001_init.sql: "reads follow the arrow"), so without this second read
-    # one movement shows two names on one sheet. Only when a merge is actually
-    # in play, and one hop only — exercises_guard_merge() refuses a merge target
-    # that is itself merged.
-    merged = sorted(
-        {
-            row["merged_into_id"]
-            for row in rows_of_catalogue
-            if row.get("merged_into_id") and row["merged_into_id"] not in by_id
-        }
-    )
-    if merged:
-        for row in (
-            client.table("exercises")
-            .select(exercises.columns(gym_id, "id, name_el, name_en, merged_into_id, equipment"))
-            .in_("id", merged)
-            .execute()
-            .data
-            or []
-        ):
-            by_id[row["id"]] = row
-
-    by_block: dict[str, list[dict[str, Any]]] = {}
-    for row in sets:
-        by_block.setdefault(row["block_id"], []).append(row)
-
-    lines: list[str] = []
-    for block in blocks:
-        performed = by_block.get(block["id"]) or []
-        exercise = by_id.get(block.get("exercise_id") or "")
-        merged_into = (exercise or {}).get("merged_into_id")
-        if merged_into:
-            exercise = by_id.get(merged_into, exercise)
-        if not performed or exercise is None:
-            continue
-        # The block's kind is the majority of its sets, and the top set is picked
-        # within that one kind: a treadmill block and a bench block are not
-        # comparable, and a winner picked across kinds renders in the loser's unit.
-        kind = fmt.dominant_kind(performed)
-        top = fmt.top_set(performed, kind)
-        if top is None:
-            continue
-        # Greek first, English as the fallback, from the same helper the log screen
-        # uses — the two screens naming the same exercise differently is the seam.
-        # With the όργανο, the block's own before the exercise's default: since
-        # 008 one name spans several implements, and «Πιέσεις Στήθους · 80×8»
-        # read at the barbell for an athlete who pressed two 40s is the misread
-        # the column exists to prevent.
-        gear = exercises.equipment_of(exercise, str(block.get("equipment") or ""))
-        name = f"{fmt.exercise_name(exercise)} · {gear}" if gear else fmt.exercise_name(exercise)
-        lines.append(f"{name} · {fmt.format_set(top, kind)}")
-        if len(lines) == _TOP_LINES:
-            break
-    return lines
-
-
 # ---------------------------------------------------------------------------
 # Small view helpers
 # ---------------------------------------------------------------------------
@@ -284,7 +172,7 @@ def _reopen_session(gym_id: str, session: dict[str, Any]) -> None:
             st.rerun()
 
     _last_session.clear()
-    _top_lines.clear()
+    history.forget(gym_id, str((st.session_state.get("athlete") or {}).get("id") or ""))
     nav.open_workout(session_id)
     page = (st.session_state.get("pages") or {}).get("log")
     if page is None:
@@ -425,7 +313,12 @@ def _last_session_section(
     names: dict[str, str],
     today: date,
 ) -> None:
-    st.subheader("Τελευταία προπόνηση")
+    """The last three workouts, each a box that opens for its sets and comments.
+
+    What the coach covering a colleague reads first: what this athlete has been
+    doing, day by day, with who coached it.
+    """
+    st.subheader("Τελευταίες προπονήσεις")
 
     try:
         session = _last_session(gym_id, athlete_id)
@@ -438,45 +331,81 @@ def _last_session_section(
         st.info("Καμία προπόνηση ακόμα.")
         return
 
-    day = fmt.parse_local_date(session.get("local_date"))
-    header = _attribution(names, session.get("logged_by"), day, today)
-    title = (session.get("title") or "").strip()
-    if title:
-        header = f"{header} · {title}"
-    st.markdown(f"**{fmt.md(header)}**")
-
-    # Two different facts, and the schema keeps them apart for a reason: who
-    # typed it is immutable, who it is credited to is the editable half.
-    credited = session.get("credited_to")
-    if credited and credited != session.get("logged_by"):
-        st.caption(f"Χρεώνεται σε {fmt.md(fmt.author_of(names, credited))}")
-
+    # An open workout is the one thing on this sheet a coach may need to get
+    # back into — with or without a set in it yet.
     if (session.get("status") or "") == "active":
-        st.caption("Σε εξέλιξη.")
+        day = fmt.parse_local_date(session.get("local_date"))
+        st.caption(
+            "Σε εξέλιξη: "
+            + fmt.md(_attribution(names, session.get("logged_by"), day, today))
+        )
+        if st.button("Συνέχεια προπόνησης", key="athlete_edit_session", type="primary"):
+            _reopen_session(gym_id, session)
 
     try:
-        lines = _top_lines(gym_id, session["id"])
+        workouts = history.last_workouts(gym_id, athlete_id)
     except Exception as exc:
-        st.caption("Οι ασκήσεις της προπόνησης δεν φορτώθηκαν.")
+        st.caption("Οι προπονήσεις δεν φορτώθηκαν.")
         st.caption(str(exc))
         return
+    if not workouts:
+        st.caption("Καμία καταγεγραμμένη άσκηση ακόμα.")
+        return
 
-    if lines:
-        for line in lines:
-            st.markdown(f"- {fmt.md(line)}")
+    def _open(workout: dict[str, Any]):
+        row = workout["session"]
+        label = "Συνέχεια" if (row.get("status") or "") == "active" else "Άνοιγμα για αλλαγές"
+        return label, lambda: _reopen_session(gym_id, row)
+
+    history.boxes(workouts, names, today, key="athlete_recent", action=_open)
+
+
+_CALENDAR_KEY = "athlete_calendar"
+
+
+def _calendar_section(gym_id: str, athlete_id: str, today: date) -> None:
+    """A month at a glance, the days the athlete trained marked."""
+    from views import progress
+
+    try:
+        trained = history.trained_days(progress._history(gym_id, athlete_id))
+    except Exception:
+        return
+
+    stored = st.session_state.get(_CALENDAR_KEY)
+    if isinstance(stored, dict) and stored.get("athlete") == athlete_id:
+        year, month = stored["year"], stored["month"]
     else:
-        st.caption("Καμία καταγεγραμμένη άσκηση σε αυτή την προπόνηση.")
+        year, month = today.year, today.month
 
-    session_notes = (session.get("notes") or "").strip()
-    if session_notes:
-        st.caption(fmt.md(session_notes))
+    def _go(step: int) -> None:
+        y, m = year, month + step
+        if m == 0:
+            y, m = y - 1, 12
+        elif m == 13:
+            y, m = y + 1, 1
+        st.session_state[_CALENDAR_KEY] = {"athlete": athlete_id, "year": y, "month": m}
 
-    active = (session.get("status") or "") == "active"
-    if st.button(
-        "Συνέχεια" if active else "Επεξεργασία / διαγραφή",
-        key="athlete_edit_session",
-    ):
-        _reopen_session(gym_id, session)
+    st.subheader("Ημερολόγιο")
+    row = st.container(horizontal=True, vertical_alignment="center", wrap=False)
+    if row.button("‹", key="athlete_cal_back", width=48):
+        _go(-1)
+        st.rerun()
+    from lib import recap
+
+    row.markdown(
+        f"**{recap.MONTHS_FULL_EL[month - 1]} {year}**", width="stretch", text_alignment="center"
+    )
+    if row.button("›", key="athlete_cal_forward", width=48,
+                  disabled=(year, month) >= (today.year, today.month)):
+        _go(1)
+        st.rerun()
+    st.markdown(history.month_calendar(year, month, trained, today), unsafe_allow_html=True)
+    count = sum(1 for d in trained if d.year == year and d.month == month)
+    st.caption(
+        "Καμία προπόνηση αυτόν τον μήνα." if not count
+        else ("1 προπόνηση" if count == 1 else f"{count} προπονήσεις") + " αυτόν τον μήνα."
+    )
 
 
 def _history_section(notes: list[dict[str, Any]], names: dict[str, str], tz: Any, today: date) -> None:
@@ -779,10 +708,11 @@ def _athlete_sheet(gym_id: str, selected: dict[str, Any]) -> None:
     st.divider()
     _pinned_section(notes, names, tz, today)
 
-    _last_session_section(gym_id, athlete_id, names, today)
-
     if st.button("Νέα προπόνηση", key="athlete_new_session", type="primary"):
         _start_session(current)
+
+    _last_session_section(gym_id, athlete_id, names, today)
+    _calendar_section(gym_id, athlete_id, today)
 
     st.divider()
     _history_section(notes, names, tz, today)
@@ -802,10 +732,13 @@ def render() -> None:
 
     ui.flush_notice(_NOTICE)
 
+    nav.recall(gym_id)
     selected = st.session_state.get("athlete")
     if isinstance(selected, dict) and selected.get("id"):
+        nav.remember(str(selected["id"]), st.session_state.get(nav.SESSION_KEY))
         _athlete_sheet(gym_id, selected)
     else:
+        nav.remember(None)
         # A malformed value is dropped rather than carried: navigation state is
         # written by four different screens.
         st.session_state.pop("athlete", None)

@@ -282,8 +282,9 @@ def test_last_time_does_not_read_one_implement_under_another() -> None:
     at = open_log()
 
     body = texts(at)
+    last_lines = [line for line in body.splitlines() if "Τελευταία φορά" in line or "Πρώτη φορά" in line]
     check("today's barbell block does not quote the dumbbell numbers",
-          "40×10" not in body, body[:400])
+          not any("40×10" in line for line in last_lines), str(last_lines))
     check("it quotes nothing, because this is the first barbell press",
           "Πρώτη φορά" in body, body[:400])
 
@@ -307,8 +308,10 @@ def test_last_time_does_not_read_one_implement_under_another() -> None:
     at = open_log()
     body = texts(at)
     check("the barbell history is quoted with its day and author",
-          "Τελευταία φορά: 77,5×5 · 25 Αυγ · Δημήτρης" in body, body[:600])
-    check("and the dumbbell numbers still are not", "40×10" not in body, body[:600])
+          "Τελευταία φορά: **77,5×5** · 25 Αυγ · Δημήτρης" in body, body[:600])
+    last_lines = [line for line in body.splitlines() if "Τελευταία φορά" in line]
+    check("and the dumbbell numbers still are not", not any("40×10" in line for line in last_lines),
+          str(last_lines))
 
 
 def test_an_empty_block_does_not_hide_last_time() -> None:
@@ -357,13 +360,13 @@ def test_an_empty_block_does_not_hide_last_time() -> None:
     history_and_a_newer_empty_block(deleted_set=False)
     body = texts(open_log())
     check("an empty newer block falls back to the last real bench",
-          "Τελευταία φορά: 77,5×5 · 25 Αυγ · Δημήτρης" in body, body[:600])
+          "Τελευταία φορά: **77,5×5** · 25 Αυγ · Δημήτρης" in body, body[:600])
     check("and does not call it the first time", "Πρώτη φορά" not in body, body[:600])
 
     history_and_a_newer_empty_block(deleted_set=True)
     body = texts(open_log())
     check("a newer block whose only set was deleted falls back too",
-          "Τελευταία φορά: 77,5×5 · 25 Αυγ · Δημήτρης" in body, body[:600])
+          "Τελευταία φορά: **77,5×5** · 25 Αυγ · Δημήτρης" in body, body[:600])
     check("and the deleted set is not quoted", "90×3" not in body, body[:600])
 
     # On this database a hang is a count. Looking further back must cost one
@@ -393,7 +396,7 @@ def test_an_empty_block_does_not_hide_last_time() -> None:
     one_empty, _ = sets_reads_to_open(0)
     many_empty, body = sets_reads_to_open(20)
     check("twenty abandoned workouts still fall back to the last real bench",
-          "Τελευταία φορά: 77,5×5 · 25 Αυγ · Δημήτρης" in body, body[:600])
+          "Τελευταία φορά: **77,5×5** · 25 Αυγ · Δημήτρης" in body, body[:600])
     check(f"and cost the same sets reads as one ({many_empty} vs {one_empty})",
           many_empty == one_empty, " ".join(fake_supabase.ROUND_TRIPS))
 
@@ -570,7 +573,7 @@ def test_the_repeat_button_repeats_the_implement_too() -> None:
     body = texts(at)
     check("the card is headed with it", "Κωπηλατική · Kettlebell" in body, body[:500])
     check("and last week's numbers are quoted, on the same implement",
-          "Τελευταία φορά: 24×12 · 25 Αυγ · Δημήτρης" in body, body[:800])
+          "Τελευταία φορά: **24×12** · 25 Αυγ · Δημήτρης" in body, body[:800])
 
 
 def test_logging_a_set_reads_a_greek_decimal() -> None:
@@ -2040,22 +2043,22 @@ def test_recap_lines_say_sets_reps_and_load() -> None:
     check("straight sets", recap.sets_summary([row(i, "60.00", 12) for i in range(3)]) == "3×12 · 60 kg",
           recap.sets_summary([row(i, "60.00", 12) for i in range(3)]))
     got = recap.sets_summary([row(0, "60", 12), row(1, "60", 12), row(2, "70", 8)])
-    check("the bar going up stays as runs, in order", got == "2×12 · 60 kg, 1×8 · 70 kg", got)
+    check("the bar going up lists every set, kilos × reps", got == "60×12, 60×12, 70×8", got)
     got = recap.sets_summary([row(2, "70", 8), row(0, "60", 12), row(1, "60", 12)])
-    check("ordered by position, not by how they arrived", got == "2×12 · 60 kg, 1×8 · 70 kg", got)
+    check("ordered by position, not by how they arrived", got == "60×12, 60×12, 70×8", got)
     got = recap.sets_summary([row(0, "72.50", 10), row(1, "72.5", 10)])
     check("a Greek decimal comma, and 72,50 is 72,5", got == "2×10 · 72,5 kg", got)
     got = recap.sets_summary([row(0, "60", 12), row(1, "200", 1, done=False)])
-    check("a prescribed set nobody lifted is not in it", got == "1×12 · 60 kg", got)
+    check("a prescribed set nobody lifted is not in it", got == "60×12", got)
     check("nothing done is an empty string", recap.sets_summary([row(0, "60", 12, done=False)]) == "")
     got = recap.sets_summary([row(i, None, 10, kind="bodyweight") for i in range(3)])
     check("bodyweight is just sets × reps", got == "3×10", got)
     got = recap.sets_summary([row(0, "10", 8, kind="bodyweight")])
-    check("a belt is added load", got == "1×8 · +10 kg", got)
+    check("a belt is added load", got == "+10×8", got)
     got = recap.sets_summary([row(i, None, None, kind="duration", seconds=45) for i in range(2)])
     check("a plank is time", got == "2×45 δευτ.", got)
     got = recap.sets_summary([row(0, None, None, kind="distance", meters="5000")])
-    check("a run is distance", got == "1×5,0 χλμ", got)
+    check("a run is distance", got == "5,0 χλμ", got)
     got = recap.sets_summary([row(0, "0", 10, kind="bodyweight"), row(1, None, 10, kind="bodyweight"),
                               row(2, "0.00", 10, kind="bodyweight")])
     check("sets that read the same are one run, whatever the columns hold", got == "3×10", got)
@@ -2112,9 +2115,9 @@ def test_recap_names_the_folded_movement_and_its_credited_coach() -> None:
     lines = [line.replace("\u00a0", " ") for line in
              recap.workout_lines(blocks, sets, by_id, {"e-bar": "Στήθος", state.CHOICE: "Στήθος"})]
     check("a block naming the folded duplicate reads as the movement it became",
-          lines[0] == "Στήθος · Πιέσεις Στήθους · Μπάρα · 1×8 · 80 kg", str(lines))
+          lines[0] == "Στήθος · Πιέσεις Στήθους · Μπάρα · 80×8", str(lines))
     check("a choice of tools that was never made prints no tool",
-          lines[1] == "Στήθος · Incline Bench Press · 1×10 · 30 kg", str(lines))
+          lines[1] == "Στήθος · Incline Bench Press · 30×10", str(lines))
     check("an exercise with nothing done is left out", len(lines) == 2, str(lines))
 
     names = {state.OWNER: "Δημήτρης", state.TRAINER: "Γιώργος"}
@@ -2152,13 +2155,12 @@ def test_the_log_opens_with_the_last_three_workouts() -> None:
     })
 
     at = open_log()
-    labels = [e.label for e in at.expander]
-    check("the section names how many", "Οι 3 τελευταίες προπονήσεις" in labels, str(labels))
-    recap_box = [e for e in at.expander if e.label == "Οι 3 τελευταίες προπονήσεις"]
-    check("and is open while the workout is empty",
-          bool(recap_box) and recap_box[0].proto.expanded, str(labels))
-
     lines = _lines(at)
+    check("the section names how many, always on screen",
+          "**Οι 3 τελευταίες προπονήσεις**" in lines, str(lines[:6]))
+    check("each workout opens for its details",
+          [e.label for e in at.expander].count("Λεπτομέρειες") == 3, str([e.label for e in at.expander]))
+
     headings = [line for line in lines if line.startswith("**") and " · " in line]
     order = [h for h in headings if any(d in h for d in ("28 Αυγ", "25 Αυγ", "20 Αυγ", "18 Αυγ", "29 Αυγ"))]
     check("the three are newest first, each with its day and coach",
@@ -2169,14 +2171,14 @@ def test_the_log_opens_with_the_last_three_workouts() -> None:
           not any("29 Αυγ" in h for h in headings), str(headings))
     body = "\n".join(lines)
     check("the line the owner asked for",
-          "- Στήθος · Incline Bench Press · Μπάρα · 3×12 · 60 kg, 1×8 · 70 kg" in body, body[:900])
+          "- Στήθος · Incline Bench Press · Μπάρα · 60×12, 60×12, 60×12, 70×8" in body, body[:900])
     check("every exercise of that workout, in order",
           "- Πλάτη · Κωπηλατική · Αλτήρες · 3×10 · 40 kg" in body, body[:900])
     check("bodyweight work as sets × reps", "- Πλάτη · Έλξεις · Σωματικό βάρος · 3×8" in body, body[:900])
     check("the set nobody lifted is not in it", "200" not in body, body[:900])
 
 
-def test_the_recap_folds_away_once_the_workout_has_an_exercise() -> None:
+def test_the_recap_stays_on_top_once_the_workout_has_an_exercise() -> None:
     state.reset()
     state.STORE["sets"].append({
         "id": "s-b0", "gym_id": state.GYM, "block_id": "b0", "position": 0,
@@ -2185,9 +2187,11 @@ def test_the_recap_folds_away_once_the_workout_has_an_exercise() -> None:
         "deleted_at": None,
     })
     at = open_log()
-    box = [e for e in at.expander if e.label == "Η προηγούμενη προπόνηση"]
-    check("one past workout is named in the singular", bool(box), str([e.label for e in at.expander]))
-    check("and it is folded: the set forms come first now", bool(box) and not box[0].proto.expanded)
+    lines = _lines(at)
+    check("one past workout is named in the singular", "**Η προηγούμενη προπόνηση**" in lines, str(lines[:6]))
+    check("and it is still on screen with an exercise in today's workout",
+          "- Πλάτη · Κωπηλατική · Αλτήρες · 35×12" in lines[3:6] or any(
+              "Κωπηλατική · Αλτήρες · 35×12" in line for line in lines), str(lines[:8]))
 
     # And logging a set does not read the history again: nothing before this
     # workout changed.
@@ -2225,8 +2229,7 @@ def test_a_workout_reopened_from_long_ago_still_gets_its_three() -> None:
     for n in range(14):
         _past_workout(f"after{n}", f"2026-09-{n + 2:02d}", [("e-db", "dumbbell", [("40.00", 10, True)])])
     at = open_log(session_id=state.LAST_SESSION)
-    labels = [e.label for e in at.expander]
-    check("the three before it", "Οι 3 τελευταίες προπονήσεις" in labels, str(labels))
+    check("the three before it", "**Οι 3 τελευταίες προπονήσεις**" in _lines(at), str(_lines(at)[:5]))
     body = "\n".join(_lines(at))
     check("and none after it", "Σεπ" not in body.split("Σε εξέλιξη")[-1].replace("Σε εξέλιξη", ""),
           body[:600])
@@ -2265,15 +2268,15 @@ def test_the_recap_survives_its_lookups_failing() -> None:
     fake_supabase.FAIL_ONCE[:] = []
     body = "\n".join(_lines(at))
     check("a failed muscle-group read keeps the workouts, without the group",
-          "- Κωπηλατική · Αλτήρες · 1×12 · 35 kg" in body, body[:600])
+          "- Κωπηλατική · Αλτήρες · 35×12" in body, body[:600])
 
     st.cache_data.clear()
     fake_supabase.FAIL_ONCE[:] = ["select:exercises"]
     at = open_log()
     fake_supabase.FAIL_ONCE[:] = []
-    labels = [e.label for e in at.expander]
-    check("a failed catalogue read shows no recap of nameless numbers",
-          "Η προηγούμενη προπόνηση" not in labels, str(labels))
+    body = "\n".join(_lines(at))
+    check("a failed catalogue read still names the workouts: they read their own names",
+          "Κωπηλατική · Αλτήρες · 35×12" in body, body[:600])
 
 
 def test_no_past_workout_no_section() -> None:
@@ -2298,9 +2301,9 @@ def test_progress_opens_on_the_last_week_the_athlete_trained() -> None:
     at = open_screen(PROGRESS_DRIVER)
     body = _progress_texts(at)
     check("the week of the latest workout", "#### 31 Αυγ – 6 Σεπ" in body, body[:400])
-    check("with that workout, its day and its coach", "**Τρίτη 1 Σεπ · Δημήτρης**" in body, body[:600])
+    check("with that workout, its day and its coach", "**Τρίτη 1 Σεπ · Δημήτρης · σε εξέλιξη**" in body, body[:600])
     check("and its exercise in the owner's words",
-          "- Στήθος · Πιέσεις Στήθους · Μπάρα · 1×8 · 80 kg" in body, body[:600])
+          "- Στήθος · Πιέσεις Στήθους · Μπάρα · 80×8" in body, body[:600])
     check("not the week before's", "Κωπηλατική" not in body, body[:600])
     check("the way back to this week is there",
           any(b.key == "progress_now" for b in at.button), str([b.key for b in at.button]))
@@ -2453,6 +2456,141 @@ def test_progress_starts_each_athlete_on_their_own_latest_week() -> None:
     check("the next one on his own, not on the week left open",
           "#### 13–19 Ιουλ" in body and "**Τετάρτη 15 Ιουλ · Γιώργος**" in body, body[:500])
     check("in his own numbers", "- Στήθος · Πιέσεις Στήθους · Μπάρα · 3×12 · 40 kg" in body, body[:500])
+
+
+# ---------------------------------------------------------------------------
+# The owner's list of 27 Οκτ: edit a set, fold what is done, survive the
+# phone locking, the athlete's last workouts and calendar.
+# ---------------------------------------------------------------------------
+
+def test_a_set_can_be_changed_where_it_stands() -> None:
+    """62,5×10, not 60×12 — without deleting the set and typing it again."""
+    state.reset()
+    at = open_log()
+    press(at, f"log_fix_{state.BLOCK}")
+    press(at, f"log_edit_set_btn_{state.SET}")
+    at.text_input(key=f"log_edit_kg_{state.SET}").set_value("82,5")
+    at.number_input(key=f"log_edit_reps_{state.SET}").set_value(6)
+    at.text_input(key=f"log_edit_note_{state.SET}").set_value("πιο βαθιά")
+    button(at, f"log_edit_set_{state.SET}").click().run()
+    raise_on_exception(at)
+    row = state.rows("sets", id=state.SET)
+    check("the same set, changed", bool(row) and str(row[0]["load_kg"]) in ("82.5", "82.50")
+          and row[0]["reps"] == 6 and row[0]["note"] == "πιο βαθιά", str(row))
+    check("and still one set, not a deleted one and a new one",
+          len(state.rows("sets", block_id=state.BLOCK)) == 1, str(state.rows("sets", block_id=state.BLOCK)))
+    check("the card says so", "82,5×6" in texts(at), texts(at)[:500])
+
+    press(at, f"log_edit_set_btn_{state.SET}")
+    at.text_input(key=f"log_edit_kg_{state.SET}").set_value("πολλά")
+    button(at, f"log_edit_set_{state.SET}").click().run()
+    raise_on_exception(at)
+    check("an unreadable weight is refused, not written",
+          str(state.rows("sets", id=state.SET)[0]["load_kg"]) in ("82.5", "82.50")
+          and "Τα κιλά δεν διαβάζονται" in texts(at), texts(at)[:500])
+
+
+def test_a_finished_exercise_folds_and_stays_folded() -> None:
+    state.reset()
+    state.STORE["blocks"].append({
+        "id": "b2", "gym_id": state.GYM, "session_id": state.SESSION, "exercise_id": "e-db",
+        "position": 1, "note": None, "equipment": "dumbbell", "deleted_at": None,
+    })
+    at = open_log()
+    keys = {w.key for w in at.text_input}
+    check("moving on to the next exercise folds the last one",
+          f"log_kg_{state.BLOCK}" not in keys and "log_kg_b2" in keys, str(sorted(k for k in keys if k)))
+    press(at, f"log_fold_{state.BLOCK}")
+    check("it opens when the coach opens it", f"log_kg_{state.BLOCK}" in {w.key for w in at.text_input})
+    press(at, f"log_done_{state.BLOCK}")
+    check("«✓ Τέλος άσκησης» folds it again",
+          f"log_kg_{state.BLOCK}" not in {w.key for w in at.text_input})
+    at.run()
+    check("and it stays folded", f"log_kg_{state.BLOCK}" not in {w.key for w in at.text_input})
+
+
+def test_a_locked_phone_comes_back_to_the_same_workout() -> None:
+    """A new browser session after a long lock: no athlete in memory, only the address."""
+    state.reset()
+    at = open_log()
+    check("the open workout is written into the address",
+          at.query_params.get("a") == [state.ATHLETE] or at.query_params.get("a") == state.ATHLETE,
+          str(dict(at.query_params)))
+
+    fresh = AppTest.from_file(DRIVER, default_timeout=60)
+    fresh.session_state[db.ACCESS_KEY] = "fake-access"
+    fresh.session_state[db.REFRESH_KEY] = "fake-refresh"
+    fresh.session_state[db.USER_ID_KEY] = state.USER_ID
+    fresh.session_state["_auth_expires_at"] = 9e12
+    fresh.query_params["a"] = state.ATHLETE
+    fresh.query_params["w"] = state.SESSION
+    fresh.run()
+    raise_on_exception(fresh)
+    body = texts(fresh)
+    check("the coach is back in the same athlete's workout",
+          "Δημήτρης Καμουτσής" in body and "Σε εξέλιξη" in body, body[:300])
+    check("the same workout, not a new one", fresh.session_state["session_id"] == state.SESSION
+          and len(state.rows("sessions", athlete_id=state.ATHLETE)) == 2,
+          str(fresh.session_state["session_id"]))
+    check("with its sets", "80×8" in body, body[:400])
+
+    press(fresh, "log_finish")
+    check("a finished workout leaves the address, so a reconnect cannot reopen it",
+          "w" not in dict(fresh.query_params), str(dict(fresh.query_params)))
+
+
+def test_the_athlete_sheet_shows_the_last_three_and_a_calendar() -> None:
+    state.reset()
+    _past_workout("p18", "2026-08-18", [("e-bar", "barbell", [("70.00", 10, True)])])
+    _past_workout("p20", "2026-08-20", [(state.CHOICE, "barbell",
+                                         [("60.00", 12, True), ("65.00", 10, True), ("70.00", 8, True)])],
+                  coach=state.TRAINER)
+    _past_workout("p22", "2026-08-22", [("e-db", "dumbbell", [("40.00", 10, True)] * 3)])
+    at = open_athlete()
+    body = "\n".join(_lines(at))
+    check("the newest three, each a box with its day and coach",
+          "**Τρίτη 1 Σεπ · Δημήτρης · σε εξέλιξη**" in body and "**Σάββατο 22 Αυγ · Δημήτρης**" in body
+          and "**Πέμπτη 20 Αυγ · Γιώργος**" in body and "18 Αυγ" not in body, body[:900])
+    check("a pyramid set by set", "Incline Bench Press · Μπάρα · 60×12, 65×10, 70×8" in body, body[:900])
+    check("each opens for details", [e.label for e in at.expander].count("Λεπτομέρειες") == 3,
+          str([e.label for e in at.expander]))
+    check("and can be opened to correct it",
+          any(b.key == "athlete_recent_1_action" for b in at.button), str([b.key for b in at.button]))
+
+    html = "\n".join(str(m.value) for m in at.markdown if "th-cal" in str(m.value))
+    check("a calendar is drawn", "<table" in html, html[:200])
+    press(at, "athlete_cal_back")
+    html = "\n".join(str(m.value) for m in at.markdown if "th-cal" in str(m.value))
+    # Step back to August 2026 whatever month the tests run in.
+    for _ in range(36):
+        if "Αύγουστος 2026" in texts(at):
+            break
+        press(at, "athlete_cal_back")
+    html = "\n".join(str(m.value) for m in at.markdown if "th-cal" in str(m.value))
+    for day in (18, 20, 22):
+        check(f"{day} Αυγ is marked", f'class="done"><span>{day}</span>' in html, html[:300])
+    check("a day without a workout is not", 'class="done"><span>19</span>' not in html)
+    check("and the month says how many", "3 προπονήσεις αυτόν τον μήνα." in texts(at), texts(at)[-400:])
+
+
+def test_last_time_shows_the_whole_day_in_bold() -> None:
+    """«Τελευταία φορά: 60×12, 65×10, 70×8», the numbers the coach loads, in bold."""
+    state.reset()
+    state.rows("blocks", id=state.BLOCK)[0]["equipment"] = "barbell"
+    _past_workout("p25b", "2026-08-27", [("e-bar", "barbell",
+                                          [("60.00", 12, True), ("65.00", 10, True), ("70.00", 8, True)])])
+    at = open_log()
+    check("every set of last time, bold, with its day and coach",
+          "Τελευταία φορά: **60×12, 65×10, 70×8** · 27 Αυγ · Δημήτρης" in texts(at), texts(at)[:600])
+
+
+def test_progress_month_has_the_calendar() -> None:
+    state.reset()
+    at = open_screen(PROGRESS_DRIVER)
+    at.radio(key="progress_period").set_value("month").run()
+    html = "\n".join(str(m.value) for m in at.markdown if "th-cal" in str(m.value))
+    check("the month view draws its calendar, 1 Σεπ marked",
+          'class="done"><span>1</span>' in html, html[:300])
 
 
 # ---------------------------------------------------------------------------

@@ -41,7 +41,7 @@ from typing import Any
 
 import streamlit as st
 
-from lib import db, exercises, fmt, gym, nav, recap, ui
+from lib import db, exercises, fmt, gym, history, nav, recap, ui
 
 # How far back the "last time" lookup reads. It is a window, not the whole
 # history, because the session ids go into a PostgREST `in.(…)` filter and a URL
@@ -56,11 +56,6 @@ _HISTORY_SESSIONS = 60
 # offered.
 _RECENT_SESSIONS = 3
 
-# The workouts summarised above the log: the last three that had a set done in
-# them. Read from a few more than three, because a workout opened and left empty
-# is skipped rather than shown as a blank.
-_RECAP_WORKOUTS = 3
-_RECAP_LOOKBACK = 12
 
 # numeric(6,2) on sets.load_kg and numeric(9,2) on sets.meters are the hard
 # limits; these are the sane-input limits, so a slipped keyboard says so in Greek
@@ -382,7 +377,7 @@ def _last_performance(
         for start in range(0, len(block_ids), _HISTORY_SESSIONS):
             performed = (
                 client.table("sets")
-                .select("block_id, kind, load_kg, reps, seconds, meters")
+                .select("id, block_id, position, kind, load_kg, reps, seconds, meters, done_at")
                 .eq("gym_id", gym_id)
                 .in_("block_id", block_ids[start : start + _HISTORY_SESSIONS])
                 .is_("deleted_at", "null")
@@ -410,6 +405,8 @@ def _last_performance(
         session = history[rank]
         return {
             "set": top,
+            # Every set of that day, for «Τελευταία φορά: 60×12, 65×10, 70×8».
+            "sets": rows,
             "kind": kind,
             "day": fmt.parse_local_date(session.get("local_date")),
             # sessionAuthorId() in src/domain/analytics.ts: the credit, falling
@@ -444,101 +441,6 @@ def _last_performance(
                     result[key] = found
                     break
     return result
-
-
-# Long: nothing typed into the open workout changes the ones before it, and at
-# 120 s the entry ran out during an ordinary rest, so most sets paid four reads
-# for a section that had not changed.
-@st.cache_data(ttl=1800, show_spinner=False)
-def _recent_workouts(
-    gym_id: str,
-    athlete_id: str,
-    current_session: tuple[str, str, str],
-) -> list[dict[str, Any]]:
-    """The athlete's last three workouts before this one that had a set done.
-
-    Three queries — sessions, their blocks, their sets — and cached, so a set
-    logged in the open workout costs nothing here: what happened BEFORE this
-    workout is not changed by anything typed into it. `current_session` is
-    (local_date, started_at, id) as for _last_performance, and only sessions
-    strictly before it count, so a workout reopened from last week does not
-    summarise the ones after it.
-    """
-    client = db.client()
-    query = (
-        client.table("sessions")
-        .select("id, local_date, started_at, logged_by, credited_to, title")
-        .eq("gym_id", gym_id)
-        .eq("athlete_id", athlete_id)
-        .is_("deleted_at", "null")
-    )
-    # Bounded at the open workout's day BEFORE the limit: a workout reopened
-    # from a month ago otherwise spent the whole window on the sessions after it
-    # and summarised none of the ones before.
-    if current_session[0]:
-        query = query.lte("local_date", current_session[0])
-    sessions = (
-        query.order("local_date", desc=True)
-        .order("started_at", desc=True)
-        .order("id", desc=True)
-        .limit(_RECAP_LOOKBACK + 1)
-        .execute()
-        .data
-        or []
-    )
-    current_key = _session_order(*current_session)
-    earlier = [
-        row
-        for row in sessions
-        if str(row.get("id")) != current_session[2]
-        and _session_order(row.get("local_date"), row.get("started_at"), row.get("id")) < current_key
-    ][:_RECAP_LOOKBACK]
-    if not earlier:
-        return []
-
-    blocks = (
-        client.table("blocks")
-        .select("id, session_id, exercise_id, position, equipment")
-        .eq("gym_id", gym_id)
-        .in_("session_id", [str(row["id"]) for row in earlier])
-        .is_("deleted_at", "null")
-        .execute()
-        .data
-        or []
-    )
-    if not blocks:
-        return []
-
-    block_ids = [str(block["id"]) for block in blocks]
-    sets: list[dict[str, Any]] = []
-    for start in range(0, len(block_ids), _HISTORY_SESSIONS):
-        sets += (
-            client.table("sets")
-            .select("id, block_id, position, kind, load_kg, reps, seconds, meters, done_at")
-            .eq("gym_id", gym_id)
-            .in_("block_id", block_ids[start : start + _HISTORY_SESSIONS])
-            .is_("deleted_at", "null")
-            .execute()
-            .data
-            or []
-        )
-    done = recap.performed(sets)
-    session_of_block = {str(block["id"]): str(block.get("session_id")) for block in blocks}
-
-    workouts: list[dict[str, Any]] = []
-    for row in earlier:
-        session_id = str(row["id"])
-        own_sets = [s for s in done if session_of_block.get(str(s.get("block_id"))) == session_id]
-        if not own_sets:
-            continue
-        workouts.append({
-            "session": row,
-            "blocks": [b for b in blocks if str(b.get("session_id")) == session_id],
-            "sets": own_sets,
-        })
-        if len(workouts) == _RECAP_WORKOUTS:
-            break
-    return workouts
 
 
 @st.cache_data(ttl=600, show_spinner=False)
@@ -1261,11 +1163,14 @@ def _last_time_line(
     last year, or who was standing there when it happened.
     """
     if not entry:
-        return "Πρώτη φορά σε αυτή την άσκηση."
-    performed = fmt.format_set(entry["set"], entry["kind"])
+        return "Πρώτη φορά σε αυτή την άσκηση\\."
+    # The whole of that day, not only its best set: «60×12, 65×10, 70×8» is
+    # the programme the coach is repeating or building on. In bold, because it
+    # is the number they load the bar with.
+    performed = recap.sets_summary(entry.get("sets") or []) or fmt.format_set(entry["set"], entry["kind"])
     when = fmt.format_day(entry["day"], today) if entry.get("day") else fmt.EMPTY
     who = fmt.author_of(names, entry.get("author"))
-    return f"Τελευταία φορά: {performed} · {when} · {who}"
+    return f"Τελευταία φορά: **{fmt.md(performed)}** · {fmt.md(when)} · {fmt.md(who)}"
 
 
 def _is_double_tap(signature: tuple[Any, ...]) -> bool:
@@ -1310,23 +1215,27 @@ def _set_line(
 _OPEN_BLOCKS = "log_open_blocks"
 
 
-def _is_open(block_id: str) -> bool:
-    """Whether this exercise is unfolded. Open unless the coach folded it.
+def _is_open(block_id: str, default: bool = True) -> bool:
+    """Whether this exercise is unfolded: the coach's choice, else `default`.
 
-    Remembered per block for the browser session, so a workout with six
-    exercises can be folded down to the one in front of the coach and stay that
-    way while they work through it.
+    The default folds a finished exercise — one with sets that is no longer the
+    newest — so moving on to the next exercise puts the last one away by
+    itself, and it stays folded until the coach opens it. A default rather than
+    a remembered fold, so it survives the phone locking and the browser
+    session starting again.
     """
-    folded = st.session_state.get(_OPEN_BLOCKS)
-    return block_id not in folded if isinstance(folded, set) else True
+    chosen = st.session_state.get(_OPEN_BLOCKS)
+    if isinstance(chosen, dict) and block_id in chosen:
+        return bool(chosen[block_id])
+    return default
 
 
 def _fold(block_id: str, closed: bool) -> None:
-    folded = st.session_state.get(_OPEN_BLOCKS)
-    if not isinstance(folded, set):
-        folded = set()
-    folded.discard(block_id) if not closed else folded.add(block_id)
-    st.session_state[_OPEN_BLOCKS] = folded
+    chosen = st.session_state.get(_OPEN_BLOCKS)
+    if not isinstance(chosen, dict):
+        chosen = {}
+    chosen[block_id] = not closed
+    st.session_state[_OPEN_BLOCKS] = chosen
 
 
 def _save_block_note(gym_id: str, block_id: str, note: str) -> int:
@@ -1399,7 +1308,7 @@ def _block_edit(
     # another.
     open_key = f"log_fix_open_{block_id}"
     if st.button(
-        "Κλείσιμο διόρθωσης" if st.session_state.get(open_key) else "Διόρθωση / σχόλιο",
+        "Κλείσιμο διόρθωσης" if st.session_state.get(open_key) else "Αλλαγή σετ / σχόλιο",
         key=f"log_fix_{block_id}",
     ):
         st.session_state[open_key] = not st.session_state.get(open_key)
@@ -1409,9 +1318,18 @@ def _block_edit(
         _block_note_form(gym_id, session_id, block_id, block_note)
         for number, row in enumerate(rows, 1):
             set_id = str(row["id"])
-            body, button = st.columns([3, 1])
-            body.markdown(f"{number}. {_set_line(row, kind, names, session_author)}")
-            if button.button("Διαγραφή", key=f"log_del_set_{set_id}"):
+            st.markdown(f"{number}. {_set_line(row, kind, names, session_author)}")
+            actions = st.container(horizontal=True)
+            editing_key = f"log_edit_open_{set_id}"
+            if actions.button(
+                "Κλείσιμο" if st.session_state.get(editing_key) else "Αλλαγή",
+                key=f"log_edit_set_btn_{set_id}",
+            ):
+                st.session_state[editing_key] = not st.session_state.get(editing_key)
+                st.rerun()
+            if st.session_state.get(editing_key):
+                _edit_set_form(gym_id, session_id, row, kind)
+            if actions.button("Διαγραφή", key=f"log_del_set_{set_id}"):
                 try:
                     removed = _soft_delete(gym_id, "sets", [set_id])
                 except Exception as exc:
@@ -1440,6 +1358,89 @@ def _block_edit(
             set_ids = [str(row["id"]) for row in rows]
             _remove_block(gym_id, session_id, athlete_id, block_id, set_ids, label)
             st.rerun()
+
+
+def _update_set(gym_id: str, set_id: str, values: dict[str, Any]) -> int:
+    rows = (
+        db.client()
+        .table("sets")
+        .update(values)
+        .eq("gym_id", gym_id)
+        .eq("id", set_id)
+        .execute()
+        .data
+        or []
+    )
+    return len(rows)
+
+
+def _edit_set_form(gym_id: str, session_id: str, row: dict[str, Any], kind: str) -> None:
+    """Change a set where it stands: «60×12» was 62,5×10, without deleting it.
+
+    The same rules as the entry form — a comma is a decimal point, nothing past
+    the sane limits — and the set keeps its place, its time and its author.
+    """
+    set_id = str(row["id"])
+    with st.form(f"log_edit_set_{set_id}"):
+        values: dict[str, Any] = {}
+        problem = ""
+        if kind == "duration":
+            before = fmt.integer(row.get("seconds")) or 0
+            minutes = st.number_input("λεπτά", min_value=0, max_value=1440, step=1,
+                                      value=before // 60, key=f"log_edit_min_{set_id}")
+            seconds = st.number_input("δευτερόλεπτα", min_value=0, max_value=59, step=5,
+                                      value=before % 60, key=f"log_edit_sec_{set_id}")
+            total = int(minutes) * 60 + int(seconds)
+            if not 1 <= total <= _MAX_SECONDS:
+                problem = "Γράψε πόση ώρα κράτησε."
+            values["seconds"] = total
+        elif kind == "distance":
+            text = st.text_input("μέτρα", value=fmt.weight_input_default(row.get("meters")),
+                                 key=f"log_edit_m_{set_id}")
+            meters = fmt.decimal(text)
+            if meters is None or not 0 < meters <= _MAX_METERS:
+                problem = "Γράψε την απόσταση σε μέτρα — π.χ. 2000."
+            else:
+                values["meters"] = round(meters, 2)
+        else:
+            label = "επιπλέον κιλά" if kind == "bodyweight" else "κιλά"
+            text = st.text_input(label, value=fmt.weight_input_default(row.get("load_kg")),
+                                 key=f"log_edit_kg_{set_id}")
+            reps = st.number_input("επαναλήψεις", min_value=0, max_value=1000, step=1,
+                                   value=fmt.integer(row.get("reps")) or 0, key=f"log_edit_reps_{set_id}")
+            typed = (text or "").strip()
+            load = fmt.decimal(typed) if typed else None
+            if typed and (load is None or load < 0 or load > _MAX_KG):
+                problem = "Τα κιλά δεν διαβάζονται — π.χ. 72,5."
+            elif kind != "bodyweight" and load is None:
+                problem = "Γράψε τα κιλά — π.χ. 72,5."
+            elif int(reps) < 1:
+                problem = "Γράψε τουλάχιστον μία επανάληψη."
+            values["reps"] = int(reps)
+            values["load_kg"] = None if load is None else round(load, 2)
+        note = st.text_input("Σχόλιο", value=str(row.get("note") or ""), max_chars=500,
+                             key=f"log_edit_note_{set_id}")
+        values["note"] = (note or "").strip() or None
+        saved = st.form_submit_button("Αποθήκευση αλλαγής", type="primary")
+
+    if not saved:
+        return
+    if problem:
+        st.error(problem)
+        return
+    try:
+        touched = _update_set(gym_id, set_id, values)
+    except Exception as exc:
+        st.error("Το σετ δεν άλλαξε.")
+        st.caption(str(exc))
+        return
+    if not touched:
+        st.error("Το σετ δεν άλλαξε. Δοκίμασε ξανά.")
+        return
+    st.session_state.pop(f"log_edit_open_{set_id}", None)
+    _clear_workout_caches(gym_id, session_id)
+    ui.notice(_NOTICE, "ok", f"Άλλαξε σε {fmt.format_set(dict(row, **values), kind)}.")
+    st.rerun()
 
 
 def _remove_block(
@@ -1516,6 +1517,7 @@ def _block_card(
     names: dict[str, str],
     session_author: Any,
     today: date,
+    newest: bool = True,
 ) -> None:
     block_id = str(block["id"])
 
@@ -1553,7 +1555,7 @@ def _block_card(
     # expander never tells the script whether it is open, so the coach's choice
     # could not be remembered — and it would forbid the correction panel from
     # living inside it.
-    open_now = _is_open(block_id)
+    open_now = _is_open(block_id, default=newest or not rows)
     with st.container(border=True):
         title_col, fold_col = st.columns([5, 1], vertical_alignment="center")
         title_col.markdown(f"**{fmt.md(heading)}**")
@@ -1568,7 +1570,7 @@ def _block_card(
         if not open_now:
             return
 
-        st.caption(fmt.md(_last_time_line(last, names, today)))
+        st.markdown(_last_time_line(last, names, today))
 
         note = (block.get("note") or "").strip()
         if note:
@@ -1579,6 +1581,9 @@ def _block_card(
             for number, row in enumerate(rows, 1):
                 lines.append(f"{number}. {_set_line(row, kind, names, session_author)}")
             st.markdown("\n".join(lines))
+            if st.button("✓ Τέλος άσκησης", key=f"log_done_{block_id}"):
+                _fold(block_id, closed=True)
+                st.rerun()
         else:
             st.caption(f"Κανένα σετ ακόμα · {_KIND_LABELS.get(kind, kind)}")
 
@@ -2344,49 +2349,33 @@ def _recap(
     gym_id: str,
     athlete_id: str,
     session: dict[str, Any],
-    catalogue: dict[str, dict[str, Any]],
     names: dict[str, str],
     today: date,
-    started: bool,
 ) -> None:
-    """The last three workouts, above the log: what this athlete has been doing.
+    """The last three workouts, always at the top: what this athlete has been doing.
 
-    Open while the workout is still empty, which is when the coach reads it to
-    decide what today is; folded once an exercise is in, so it stops pushing the
-    set forms down the phone.
+    Always open — the owner asked for them to be on screen whenever a workout
+    is, not behind a tap. Each is a box with its lines and a «Λεπτομέρειες»
+    fold for every set and comment.
     """
-    current_session = (
+    before = (
         str(session.get("local_date") or ""),
         str(session.get("started_at") or ""),
         str(session["id"]),
     )
-    if not catalogue:
-        # The catalogue read failed (the screen already says so). Every line
-        # would be «—» beside a number: no name to load a bar from.
-        return
     try:
-        workouts = _recent_workouts(gym_id, athlete_id, current_session)
+        workouts = history.last_workouts(gym_id, athlete_id, before)
     except Exception:
         # Like «Τελευταία φορά»: the nicest thing on the screen and the least
         # essential — losing it must not stop the coach logging.
         return
     if not workouts:
         return
-    try:
-        groups = recap.primary_groups(_exercise_muscles(gym_id), _muscle_groups(gym_id))
-    except Exception:
-        # The muscle group only prefixes each line; the workouts are already read.
-        groups = {}
-
-    count = len(workouts)
-    label = "Η προηγούμενη προπόνηση" if count == 1 else f"Οι {count} τελευταίες προπονήσεις"
-    with st.expander(label, expanded=not started):
-        for workout in workouts:
-            st.markdown(
-                "**" + fmt.md(recap.workout_heading(workout["session"], names, today)) + "**"
-            )
-            lines = recap.workout_lines(workout["blocks"], workout["sets"], catalogue, groups)
-            st.markdown("\n".join(f"- {fmt.md(line)}" for line in lines))
+    st.markdown(
+        "**Η προηγούμενη προπόνηση**" if len(workouts) == 1
+        else f"**Οι {len(workouts)} τελευταίες προπονήσεις**"
+    )
+    history.boxes(workouts, names, today, key="log_recap")
 
 
 def _workout(gym_id: str, athlete: dict[str, Any], session: dict[str, Any]) -> None:
@@ -2501,10 +2490,11 @@ def _workout(gym_id: str, athlete: dict[str, Any], session: dict[str, Any]) -> N
             names,
             session.get("logged_by"),
             today,
+            newest=block is blocks[-1],
         )
 
     with recap_slot:
-        _recap(gym_id, athlete_id, session, catalogue, names, today, bool(blocks))
+        _recap(gym_id, athlete_id, session, names, today)
 
     _picker(
         gym_id,
@@ -2543,11 +2533,15 @@ def _workout(gym_id: str, athlete: dict[str, Any], session: dict[str, Any]) -> N
             return
         st.session_state.pop("session_id", None)
         st.session_state[_FINISHED] = {"session_id": session_id, "athlete_id": athlete_id}
+        # A finished workout must not be what a reconnect reopens — or worse,
+        # a fresh empty one started in its place.
+        nav.remember(None)
         # A finished workout is the moment Πρόοδος has something new to show,
         # and it keeps the history it read for five minutes.
         from views import progress
 
         progress._history.clear(gym_id, athlete_id)
+        history.forget(gym_id, athlete_id)
         # A pending «Αναίρεση» would otherwise be drawn over «ολοκληρώθηκε» and
         # silently change the summary under the coach.
         ui.clear_undo(_NOTICE)
@@ -2564,6 +2558,7 @@ def render() -> None:
         st.info("Ο λογαριασμός σου δεν ανήκει ακόμη σε γυμναστήριο.")
         return
 
+    nav.recall(gym_id)
     athlete = st.session_state.get("athlete")
     if not isinstance(athlete, dict) or not athlete.get("id"):
         # Navigation state is written by four different screens, so a malformed
@@ -2601,4 +2596,5 @@ def render() -> None:
     if session is None:
         return
 
+    nav.remember(athlete_id, str(session["id"]))
     _workout(gym_id, athlete, session)
