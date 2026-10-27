@@ -1318,7 +1318,7 @@ def _block_edit(
     # another.
     open_key = f"log_fix_open_{block_id}"
     if st.button(
-        "Κλείσιμο διόρθωσης" if st.session_state.get(open_key) else "Αλλαγή σετ / σχόλιο",
+        "Κλείσιμο" if st.session_state.get(open_key) else "Σχόλιο / αφαίρεση άσκησης",
         key=f"log_fix_{block_id}",
     ):
         st.session_state[open_key] = not st.session_state.get(open_key)
@@ -1326,37 +1326,6 @@ def _block_edit(
 
     if st.session_state.get(open_key):
         _block_note_form(gym_id, session_id, block_id, block_note)
-        for number, row in enumerate(rows, 1):
-            set_id = str(row["id"])
-            st.markdown(f"{number}. {_set_line(row, kind, names, session_author)}")
-            actions = st.container(horizontal=True)
-            editing_key = f"log_edit_open_{set_id}"
-            if actions.button(
-                "Κλείσιμο" if st.session_state.get(editing_key) else "Αλλαγή",
-                key=f"log_edit_set_btn_{set_id}",
-            ):
-                st.session_state[editing_key] = not st.session_state.get(editing_key)
-                st.rerun()
-            if st.session_state.get(editing_key):
-                _edit_set_form(gym_id, session_id, row, kind)
-            if actions.button("Διαγραφή", key=f"log_del_set_{set_id}"):
-                try:
-                    removed = _soft_delete(gym_id, "sets", [set_id])
-                except Exception as exc:
-                    ui.notice(_NOTICE, "error", f"Το σετ δεν διαγράφηκε: {exc}")
-                    st.rerun()
-                if not removed:
-                    ui.notice(_NOTICE, "error", "Το σετ δεν διαγράφηκε. Δοκίμασε ξανά.")
-                    st.rerun()
-                _clear_workout_caches(gym_id, session_id)
-                ui.undoable(
-                    _NOTICE,
-                    f"Διαγράφηκε: {fmt.format_set(row, kind)}",
-                    {"table": "sets", "ids": [set_id], "session_id": session_id},
-                    scope=athlete_id,
-                )
-                st.rerun()
-
         if rows:
             st.divider()
         st.caption(
@@ -1368,6 +1337,50 @@ def _block_edit(
             set_ids = [str(row["id"]) for row in rows]
             _remove_block(gym_id, session_id, athlete_id, block_id, set_ids, label)
             st.rerun()
+
+
+def _set_rows(
+    gym_id: str,
+    session_id: str,
+    athlete_id: str,
+    rows: list[dict[str, Any]],
+    kind: str,
+    names: dict[str, str],
+    session_author: Any,
+) -> None:
+    """Each logged set on its own row, with ✏️ and ✕ beside it.
+
+    Right on the set, not behind a correction panel: the coach asked to fix
+    «60×12» where they read it. ✕ is a stamped deleted_at with «Αναίρεση»
+    waiting at the top, so it asks nothing.
+    """
+    for number, row in enumerate(rows, 1):
+        set_id = str(row["id"])
+        line = st.container(horizontal=True, vertical_alignment="center", wrap=False, gap="large")
+        line.markdown(f"{number}. {_set_line(row, kind, names, session_author)}", width="stretch")
+        editing_key = f"log_edit_open_{set_id}"
+        if line.button("✏️", key=f"log_edit_set_btn_{set_id}", width=44):
+            st.session_state[editing_key] = not st.session_state.get(editing_key)
+            st.rerun()
+        if line.button("✕", key=f"log_del_set_{set_id}", width=44):
+            try:
+                removed = _soft_delete(gym_id, "sets", [set_id])
+            except Exception as exc:
+                ui.notice(_NOTICE, "error", f"Το σετ δεν διαγράφηκε: {exc}")
+                st.rerun()
+            if not removed:
+                ui.notice(_NOTICE, "error", "Το σετ δεν διαγράφηκε. Δοκίμασε ξανά.")
+                st.rerun()
+            _clear_workout_caches(gym_id, session_id)
+            ui.undoable(
+                _NOTICE,
+                f"Διαγράφηκε: {fmt.format_set(row, kind)}",
+                {"table": "sets", "ids": [set_id], "session_id": session_id},
+                scope=athlete_id,
+            )
+            st.rerun()
+        if st.session_state.get(editing_key):
+            _edit_set_form(gym_id, session_id, row, kind)
 
 
 def _update_set(gym_id: str, set_id: str, values: dict[str, Any]) -> int:
@@ -1587,10 +1600,7 @@ def _block_card(
             st.info(fmt.md(note))
 
         if rows:
-            lines = []
-            for number, row in enumerate(rows, 1):
-                lines.append(f"{number}. {_set_line(row, kind, names, session_author)}")
-            st.markdown("\n".join(lines))
+            _set_rows(gym_id, session_id, athlete_id, rows, kind, names, session_author)
             if st.button("✓ Τέλος άσκησης", key=f"log_done_{block_id}"):
                 _fold(block_id, closed=True)
                 st.rerun()
@@ -2005,9 +2015,7 @@ def _superset_card(
             st.markdown(f"**{fmt.md(labels[i])}**")
             st.markdown(_last_time_line(lasts[i], names, today))
             if rows:
-                st.markdown("\n".join(
-                    f"{n}. {_set_line(row, kinds[i], names, session_author)}" for n, row in enumerate(rows, 1)
-                ))
+                _set_rows(gym_id, session_id, athlete_id, rows, kinds[i], names, session_author)
             _block_edit(gym_id, session_id, athlete_id, str(block["id"]), resolved[i], rows, kinds[i],
                         names, session_author, str(block.get("note") or ""), labels[i])
 

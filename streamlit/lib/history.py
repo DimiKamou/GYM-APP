@@ -223,6 +223,7 @@ def workout_box(
     today: date,
     key: str,
     action: tuple[str, Callable[[], None]] | None = None,
+    folded_details: bool = True,
 ) -> None:
     """One past workout: always its summary, and a fold with everything else.
 
@@ -244,7 +245,7 @@ def workout_box(
         lines = recap.workout_lines(blocks, sets, exercises, groups, workout.get("group_names"))
         st.markdown("\n".join(f"- {fmt.md(line)}" for line in lines))
 
-        with st.expander("Λεπτομέρειες"):
+        with (st.expander("Λεπτομέρειες") if folded_details else st.container()):
             by_block: dict[str, list[dict[str, Any]]] = {}
             for row in sets:
                 by_block.setdefault(str(row.get("block_id")), []).append(row)
@@ -287,8 +288,20 @@ def boxes(
     key: str,
     action: Callable[[dict[str, Any]], tuple[str, Callable[[], None]] | None] | None = None,
 ) -> None:
+    """The workouts as small boxes on one row, each popping up with everything in it.
+
+    Three stacked boxes pushed the set forms a screen down on a phone; three
+    small ones side by side cost one row, and the one the coach wants opens.
+    """
+    row = st.container(horizontal=True, wrap=True, gap="small")
     for n, workout in enumerate(workouts):
-        workout_box(workout, names, today, f"{key}_{n}", action(workout) if action else None)
+        session = workout["session"]
+        day = fmt.parse_local_date(session.get("local_date"))
+        # Only the day fits three to a phone's row; who and what are one tap away.
+        label = fmt.format_day(day, today) if day else fmt.EMPTY
+        with row.popover(label, key=f"{key}_{n}_pop", width="stretch"):
+            workout_box(workout, names, today, f"{key}_{n}", action(workout) if action else None,
+                        folded_details=False)
 
 
 # ---------------------------------------------------------------------------
