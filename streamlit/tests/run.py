@@ -2158,8 +2158,8 @@ def test_the_log_opens_with_the_last_three_workouts() -> None:
     lines = _lines(at)
     check("the section names how many, always on screen",
           "**Οι 3 τελευταίες προπονήσεις**" in lines, str(lines[:6]))
-    check("each workout opens for its details",
-          [e.label for e in at.expander].count("Λεπτομέρειες") == 3, str([e.label for e in at.expander]))
+    check("each workout is a small box that pops up", len(at.get("popover")) == 3,
+          str(len(at.get("popover"))))
 
     headings = [line for line in lines if line.startswith("**") and " · " in line]
     order = [h for h in headings if any(d in h for d in ("28 Αυγ", "25 Αυγ", "20 Αυγ", "18 Αυγ", "29 Αυγ"))]
@@ -2552,8 +2552,7 @@ def test_the_athlete_sheet_shows_the_last_three_and_a_calendar() -> None:
           "**Τρίτη 1 Σεπ · Δημήτρης · σε εξέλιξη**" in body and "**Σάββατο 22 Αυγ · Δημήτρης**" in body
           and "**Πέμπτη 20 Αυγ · Γιώργος**" in body and "18 Αυγ" not in body, body[:900])
     check("a pyramid set by set", "Incline Bench Press · Μπάρα · 60×12, 65×10, 70×8" in body, body[:900])
-    check("each opens for details", [e.label for e in at.expander].count("Λεπτομέρειες") == 3,
-          str([e.label for e in at.expander]))
+    check("each is a small box that pops up", len(at.get("popover")) == 3, str(len(at.get("popover"))))
     check("and can be opened to correct it",
           any(b.key == "athlete_recent_1_action" for b in at.button), str([b.key for b in at.button]))
 
@@ -2591,6 +2590,18 @@ def test_progress_month_has_the_calendar() -> None:
     html = "\n".join(str(m.value) for m in at.markdown if "th-cal" in str(m.value))
     check("the month view draws its calendar, 1 Σεπ marked",
           'class="done"><span>1</span>' in html, html[:300])
+
+
+def test_each_set_has_its_pencil_and_cross() -> None:
+    """✏️ and ✕ beside the set, without opening any panel first."""
+    state.reset()
+    at = open_log()
+    keys = {b.key for b in at.button}
+    check("both are beside the set", f"log_edit_set_btn_{state.SET}" in keys and f"log_del_set_{state.SET}" in keys,
+          str(sorted(k for k in keys if k)))
+    press(at, f"log_del_set_{state.SET}")
+    check("✕ takes the set away, undoably", not state.rows("sets", id=state.SET)
+          and "Αναίρεση" in str([b.label for b in at.button]), str([b.label for b in at.button]))
 
 
 # ---------------------------------------------------------------------------
