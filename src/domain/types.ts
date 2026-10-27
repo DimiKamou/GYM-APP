@@ -231,6 +231,10 @@ export interface Block extends Auditable {
    * `blockEquipment`, never by hand: it is also the implement the matched history was done with.
    */
   equipment: Equipment | null
+  /** Shared by the two blocks of a superset (012). Absent or null: an ordinary exercise. */
+  supersetId?: Uuid | null
+  /** The muscle group this exercise counted toward today (012). Absent or null: its primary. */
+  muscleGroupId?: Uuid | null
 }
 
 export interface WorkoutSet extends Auditable {

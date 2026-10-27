@@ -142,6 +142,11 @@ def sets_summary(rows: list[dict[str, Any]]) -> str:
 # Workouts
 # ---------------------------------------------------------------------------
 
+def group_names(groups: list[dict[str, Any]]) -> dict[str, str]:
+    """Muscle group id -> its name («Στήθος»)."""
+    return {str(g["id"]): str(g.get("name_el") or g.get("name_en") or "") for g in groups if g.get("id")}
+
+
 def primary_groups(
     links: list[dict[str, Any]], groups: list[dict[str, Any]]
 ) -> dict[str, str]:
@@ -188,13 +193,20 @@ def workout_lines(
     sets: list[dict[str, Any]],
     exercises_by_id: dict[str, dict[str, Any]],
     groups_by_exercise: dict[str, str],
+    group_names: dict[str, str] | None = None,
 ) -> list[str]:
     """One line per exercise of one workout that had a set done, in workout order.
 
     A block still naming a folded duplicate is named after the row it was folded
     into: reads follow the merge arrow, one hop (exercises_guard_merge() refuses
-    a chain).
+    a chain). The group is the one the coach logged it for (012), else the
+    exercise's primary; the two halves of a superset say «Super set ·».
     """
+    paired: dict[str, int] = {}
+    for block in blocks:
+        key = str(block.get("superset_id") or "")
+        if key:
+            paired[key] = paired.get(key, 0) + 1
     by_block: dict[str, list[dict[str, Any]]] = {}
     for row in sets:
         by_block.setdefault(str(row.get("block_id") or ""), []).append(row)
@@ -207,8 +219,12 @@ def workout_lines(
         if target and target in exercises_by_id:
             exercise = exercises_by_id[target]
         exercise_id = str((exercise or {}).get("id") or raw_id)
-        group = groups_by_exercise.get(exercise_id) or groups_by_exercise.get(raw_id, "")
+        group = (group_names or {}).get(str(block.get("muscle_group_id") or ""), "") or (
+            groups_by_exercise.get(exercise_id) or groups_by_exercise.get(raw_id, "")
+        )
         line = block_line(exercise, block, by_block.get(str(block.get("id") or ""), []), group)
+        if line and paired.get(str(block.get("superset_id") or ""), 0) >= 2:
+            line = f"Super set · {line}"
         if line:
             lines.append(line)
     return lines

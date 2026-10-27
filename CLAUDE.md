@@ -105,7 +105,7 @@ one namespace for uniqueness); `name_el` is NULL on the gym's catalogue.
 **The app ships before the SQL.** Streamlit Cloud redeploys on merge; the owner
 pastes migrations by hand later. A select naming a column the database does not
 have yet is refused outright (42703), so a read of a new column goes through a
-probe (`exercises.has_tool_lists`) until the paste has happened. The files at
+probe (`exercises.has_tool_lists`, `blocks.has_012`) until the paste has happened. The files at
 the repository root are the paste copies; `supabase/tests/run.sh` fails if they
 differ from their migration by a byte. A migration without a paste copy is never
 run: 005, 007 and 008 had none, the gym's database never got 008, and every

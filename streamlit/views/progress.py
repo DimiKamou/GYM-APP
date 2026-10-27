@@ -27,6 +27,7 @@ from typing import Any
 
 import streamlit as st
 
+from lib import blocks as block_columns
 from lib import db, fmt, gym, history, recap
 from lib.exercises import EQUIPMENT_LABELS, columns, implement_of
 
@@ -105,7 +106,7 @@ def _history(gym_id: str, athlete_id: str) -> dict[str, list[dict[str, Any]]]:
     for chunk in _in_chunks(session_ids):
         blocks += (
             client.table("blocks")
-            .select("id, session_id, exercise_id, position, equipment, note")
+            .select(block_columns.columns(gym_id, "id, session_id, exercise_id, position, equipment, note"))
             .eq("gym_id", gym_id)
             .in_("session_id", chunk)
             .is_("deleted_at", "null")
@@ -179,7 +180,7 @@ def _history(gym_id: str, athlete_id: str) -> dict[str, list[dict[str, Any]]]:
 
     groups = (
         client.table("muscle_groups")
-        .select("id, name_el, position")
+        .select("id, name_el, name_en, position")
         .is_("deleted_at", "null")
         .order("position")
         .execute()
@@ -536,12 +537,17 @@ def _period_section(
 
     by_id = {e["id"]: e for e in data["exercises"]}
     groups = recap.primary_groups(data["links"], data["groups"])
+    names_of_groups = recap.group_names(data["groups"])
     canonical = _canonical(data["exercises"])
     worked: dict[str, int] = {}
     by_block = {b["id"]: b for b in blocks}
     for row in _performed(sets):
-        raw_id = (by_block.get(row.get("block_id") or "") or {}).get("exercise_id") or ""
-        group = groups.get(canonical.get(raw_id, raw_id)) or groups.get(raw_id)
+        block = by_block.get(row.get("block_id") or "") or {}
+        raw_id = block.get("exercise_id") or ""
+        # The group the coach logged it for (012), else the exercise's primary.
+        group = names_of_groups.get(str(block.get("muscle_group_id") or "")) or (
+            groups.get(canonical.get(raw_id, raw_id)) or groups.get(raw_id)
+        )
         if group:
             worked[group] = worked.get(group, 0) + 1
     if worked:
@@ -565,6 +571,7 @@ def _period_section(
                 "sets": [r for r in _performed(sets) if r.get("block_id") in own_ids],
                 "exercises": by_id,
                 "groups": groups,
+                "group_names": names_of_groups,
             },
             names,
             today,

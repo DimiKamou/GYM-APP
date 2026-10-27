@@ -34,7 +34,8 @@ for _ in $(seq 1 30); do psql -h "$WORK/sock" -U trainhub -d postgres -c 'select
 # to fold name collisions, and the copy the owner would paste learned neither.
 for pair in "006_adopt_catalogue.sql:trainhub-ασκησεις-δικες-μου.sql" \
             "010_equipment_more.sql:trainhub-νεες-ασκησεις-1-οργανα.sql" \
-            "011_powerhouse_catalogue.sql:trainhub-νεες-ασκησεις-2-καταλογος.sql"; do
+            "011_powerhouse_catalogue.sql:trainhub-νεες-ασκησεις-2-καταλογος.sql" \
+            "012_block_superset_group.sql:trainhub-super-set-και-μυικη-ομαδα.sql"; do
   migration="${pair%%:*}"; copy="${pair##*:}"
   if ! cmp -s "$HERE/../migrations/$migration" "$HERE/../../$copy"; then
     echo "ΛΑΘΟΣ: το $copy δεν είναι ίδιο με το $migration — αντέγραψέ το ξανά"

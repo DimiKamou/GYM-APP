@@ -36,11 +36,13 @@ about who actually typed it.
 from __future__ import annotations
 
 import time
+import uuid
 from datetime import date, datetime, timezone
 from typing import Any
 
 import streamlit as st
 
+from lib import blocks as block_columns
 from lib import db, exercises, fmt, gym, history, nav, recap, ui
 
 # How far back the "last time" lookup reads. It is a window, not the whole
@@ -205,7 +207,7 @@ def _blocks(gym_id: str, session_id: str) -> list[dict[str, Any]]:
     return (
         db.client()
         .table("blocks")
-        .select("id, exercise_id, position, note, equipment")
+        .select(block_columns.columns(gym_id, "id, exercise_id, position, note, equipment"))
         .eq("gym_id", gym_id)
         .eq("session_id", session_id)
         .is_("deleted_at", "null")
@@ -721,6 +723,8 @@ def _add_block(
     exercise_id: str,
     position: int,
     equipment: str = "",
+    superset_id: str = "",
+    muscle_group_id: str = "",
 ) -> None:
     """Put one exercise in the workout, with the implement it is being done on.
 
@@ -736,6 +740,12 @@ def _add_block(
     }
     if equipment:
         payload["equipment"] = equipment
+    # Only on a database that has run 012; before it the columns do not exist
+    # and the insert would be refused whole.
+    if superset_id and block_columns.ready(gym_id):
+        payload["superset_id"] = superset_id
+    if muscle_group_id and block_columns.ready(gym_id):
+        payload["muscle_group_id"] = muscle_group_id
     db.client().table("blocks").insert(payload).execute()
 
 
@@ -1672,6 +1682,21 @@ def _picker(
             return
 
         by_id = {str(row["id"]): row for row in rows}
+
+        # Before the set: one exercise, or two back to back as one set. Only
+        # once 012 has a place to keep the pair.
+        if block_columns.ready(gym_id):
+            mode = st.radio(
+                "Τι προσθέτεις;",
+                options=["single", "superset"],
+                format_func=lambda m: "Σετ" if m == "single" else "Super set (2 ασκήσεις)",
+                horizontal=True,
+                key="log_mode",
+            )
+            if mode == "superset":
+                _superset_picker(gym_id, session_id, athlete_id, next_position, rows, by_id)
+                return
+
         _repeat_buttons(gym_id, session_id, athlete_id, next_position, by_id, on_screen)
 
         # --- 1. μυϊκή ομάδα ------------------------------------------------
@@ -1719,7 +1744,7 @@ def _picker(
         # says the feature was never built.
         _ways_and_add(
             gym_id, session_id, athlete_id, next_position, by_id, group_index,
-            name or "", by_name.get(name or "", []),
+            name or "", by_name.get(name or "", []), group_id,
         )
 
         if group_id:
@@ -1738,6 +1763,7 @@ def _ways_and_add(
     group_index: int,
     name: str,
     variants: list[dict[str, Any]],
+    group_id: str | None = None,
 ) -> None:
     """The third list — «Τρόπος άσκησης» — and the button that commits all three.
 
@@ -1793,18 +1819,258 @@ def _ways_and_add(
         # the answer independent of any state an older version left behind.
         chosen = options[0]
 
+    group_choice, needs_group = _group_for(gym_id, exercise, group_id, waiting)
+
     if st.button(
         "Προσθήκη άσκησης",
         key=f"log_add_{group_index}",
         type="primary",
-        disabled=waiting,
+        disabled=waiting or needs_group,
     ):
         if not chosen or exercise is None:
             st.error("Διάλεξε τρόπο εκτέλεσης — με τι γίνεται η άσκηση.")
             return
         _put_in_workout(
-            gym_id, session_id, athlete_id, str(exercise["id"]), next_position, by_id, str(chosen)
+            gym_id, session_id, athlete_id, str(exercise["id"]), next_position, by_id, str(chosen),
+            muscle_group_id=group_choice or "",
         )
+
+
+def _exercise_groups(gym_id: str, exercise_id: str) -> list[tuple[str, str]]:
+    """[(group id, name), …] an exercise is filed under, primary first."""
+    names = {str(g["id"]): (g.get("name_el") or g.get("name_en") or fmt.EMPTY) for g in _muscle_groups(gym_id)}
+    links = [
+        m for m in _exercise_muscles(gym_id)
+        if str(m.get("exercise_id")) == exercise_id and str(m.get("muscle_group_id")) in names
+    ]
+    links.sort(key=lambda m: (m.get("role") != "primary", names[str(m["muscle_group_id"])]))
+    seen: list[tuple[str, str]] = []
+    for link in links:
+        group = str(link["muscle_group_id"])
+        if group not in [g for g, _ in seen]:
+            seen.append((group, names[group]))
+    return seen
+
+
+def _group_for(
+    gym_id: str,
+    exercise: dict[str, Any] | None,
+    group_id: str | None,
+    waiting: bool,
+) -> tuple[str | None, bool]:
+    """The muscle group this exercise counts toward today, and whether the coach still owes it.
+
+    Picked from the first list: that one. Filed under one group: that one, said
+    on screen so the coach sees it. Filed under several — Bench Press under
+    chest, triceps and shoulders — and searched by name: the coach chooses, and
+    «Προσθήκη» waits, because only they know what today's set was for. Before
+    012 there is nowhere to keep the answer, so nothing is asked.
+    """
+    if waiting or exercise is None:
+        return None, False
+    if group_id:
+        return group_id, False
+    filed = _exercise_groups(gym_id, str(exercise["id"]))
+    if not filed:
+        return None, False
+    if len(filed) == 1:
+        st.caption(f"Μυϊκή ομάδα: {fmt.md(filed[0][1])}")
+        return filed[0][0], False
+    if not block_columns.ready(gym_id):
+        st.caption(f"Μυϊκή ομάδα: {fmt.md(filed[0][1])}")
+        return None, False
+    picked = st.selectbox(
+        "Για ποια μυϊκή ομάδα;",
+        options=[g for g, _ in filed],
+        format_func=lambda g: dict(filed)[g],
+        index=None,
+        placeholder="Διάλεξε μυϊκή ομάδα",
+        key=f"log_mg_{exercise['id']}",
+        help="Η άσκηση δουλεύει περισσότερες από μία ομάδες — για ποια μετράει σήμερα;",
+    )
+    if not picked:
+        st.caption("Διάλεξε για ποια μυϊκή ομάδα μετράει η άσκηση σήμερα.")
+        return None, True
+    return str(picked), False
+
+
+def _superset_picker(
+    gym_id: str,
+    session_id: str,
+    athlete_id: str,
+    next_position: int,
+    rows: list[dict[str, Any]],
+    by_id: dict[str, dict[str, Any]],
+) -> None:
+    """Two exercises that will be logged together, a round at a time."""
+    by_name: dict[str, list[dict[str, Any]]] = {}
+    for row in sorted(rows, key=lambda row: fmt.fold(fmt.exercise_name(row))):
+        by_name.setdefault(fmt.exercise_name(row), []).append(row)
+
+    picked: list[tuple[dict[str, Any], str] | None] = []
+    for n in (1, 2):
+        name = st.selectbox(
+            f"{n}η άσκηση",
+            options=list(by_name),
+            index=None,
+            placeholder="Γράψε ή διάλεξε — π.χ. bench",
+            key=f"log_ss_name_{n}",
+        )
+        exercise = (by_name.get(name or "") or [None])[0]
+        allowed = exercises.options_of(exercise)
+        if exercise is None:
+            picked.append(None)
+            continue
+        if allowed is None:
+            options = list(exercises.tool_labels(gym_id))
+            own = str(exercise.get("equipment") or "")
+            index = options.index(own) if own in options else None
+        else:
+            options, index = allowed, (0 if len(allowed) == 1 else None)
+        tool = st.selectbox(
+            f"Τρόπος {n}ης",
+            options=options,
+            format_func=lambda key: exercises.EQUIPMENT_LABELS.get(key, key),
+            index=index,
+            placeholder="Διάλεξε όργανο",
+            key=f"log_ss_way_{n}_{fmt.fold(name or '')}",
+            disabled=allowed is not None and len(allowed) == 1,
+        )
+        if allowed is not None and len(allowed) == 1:
+            tool = allowed[0]
+        picked.append((exercise, str(tool)) if tool else None)
+
+    ready = all(picked) and picked[0][0]["id"] != picked[1][0]["id"]  # type: ignore[index]
+    if st.button("Προσθήκη super set", key="log_add_superset", type="primary", disabled=not ready):
+        pair = str(uuid.uuid4())
+        try:
+            for offset, (exercise, tool) in enumerate(picked):  # type: ignore[misc]
+                _add_block(gym_id, session_id, str(exercise["id"]), next_position + offset, tool,
+                           superset_id=pair)
+        except Exception as exc:
+            ui.notice(_NOTICE, "error", f"Το super set δεν προστέθηκε: {exc}")
+            st.rerun()
+        _clear_workout_caches(gym_id, session_id)
+        _forget_recent(gym_id, athlete_id)
+        ui.notice(_NOTICE, "ok", "Μπήκε super set: " + " + ".join(
+            _labelled(exercise, tool) for exercise, tool in picked  # type: ignore[misc]
+        ))
+        st.rerun()
+
+
+def _superset_card(
+    gym_id: str,
+    session_id: str,
+    athlete_id: str,
+    pair: list[dict[str, Any]],
+    resolved: list[dict[str, Any] | None],
+    sets_of: dict[str, list[dict[str, Any]]],
+    lasts: list[dict[str, Any] | None],
+    names: dict[str, str],
+    session_author: Any,
+    today: date,
+    newest: bool,
+) -> None:
+    """Two exercises, one card, one form: a round is a set of each.
+
+    Kilos and reps for both, one press, two sets written — the way a superset
+    is actually done, without switching cards between the two halves.
+    """
+    first_id = str(pair[0]["id"])
+    kinds = [_kind_of(sets_of.get(str(b["id"]), []), resolved[i], str(b.get("equipment") or ""))
+             for i, b in enumerate(pair)]
+    if resolved[0] is None or resolved[1] is None or not all(k in ("weight_reps", "bodyweight") for k in kinds):
+        # Time or distance in a pair: each half keeps its own form.
+        for i, block in enumerate(pair):
+            _block_card(gym_id, session_id, athlete_id, block, resolved[i], sets_of.get(str(block["id"]), []),
+                        lasts[i], names, session_author, today, newest=newest)
+        return
+
+    labels = [_labelled(resolved[i], str(b.get("equipment") or "")) for i, b in enumerate(pair)]
+    rounds = min(len(sets_of.get(str(b["id"]), [])) for b in pair)
+    any_sets = any(sets_of.get(str(b["id"])) for b in pair)
+    open_now = _is_open(first_id, default=newest or not any_sets)
+    with st.container(border=True):
+        title_col, fold_col = st.columns([5, 1], vertical_alignment="center")
+        heading = "Super set · " + " + ".join(labels) + (f" · {rounds} γύροι" if rounds else "")
+        title_col.markdown(f"**{fmt.md(heading)}**")
+        if fold_col.button("▾" if open_now else "▸", key=f"log_fold_{first_id}"):
+            _fold(first_id, closed=open_now)
+            st.rerun()
+        if not open_now:
+            return
+
+        for i, block in enumerate(pair):
+            rows = sets_of.get(str(block["id"]), [])
+            st.markdown(f"**{fmt.md(labels[i])}**")
+            st.markdown(_last_time_line(lasts[i], names, today))
+            if rows:
+                st.markdown("\n".join(
+                    f"{n}. {_set_line(row, kinds[i], names, session_author)}" for n, row in enumerate(rows, 1)
+                ))
+            _block_edit(gym_id, session_id, athlete_id, str(block["id"]), resolved[i], rows, kinds[i],
+                        names, session_author, str(block.get("note") or ""), labels[i])
+
+        if any_sets and st.button("✓ Τέλος super set", key=f"log_done_{first_id}"):
+            _fold(first_id, closed=True)
+            st.rerun()
+
+        with st.form(f"log_ss_{first_id}", clear_on_submit=True):
+            values: list[dict[str, Any]] = []
+            problems: list[str] = []
+            for i, block in enumerate(pair):
+                block_id = str(block["id"])
+                prev = (sets_of.get(block_id) or [{}])[-1]
+                kg_col, reps_col = st.columns(2)
+                with kg_col:
+                    text = st.text_input(
+                        f"{labels[i]} · {'επιπλέον κιλά' if kinds[i] == 'bodyweight' else 'κιλά'}",
+                        value=fmt.weight_input_default(prev.get("load_kg")),
+                        key=f"log_ss_kg_{block_id}",
+                    )
+                with reps_col:
+                    reps = st.number_input("επαναλήψεις", min_value=0, max_value=1000, step=1,
+                                           value=fmt.integer(prev.get("reps")) or 0,
+                                           key=f"log_ss_reps_{block_id}")
+                typed = (text or "").strip()
+                load = fmt.decimal(typed) if typed else None
+                if typed and (load is None or load < 0 or load > _MAX_KG):
+                    problems.append(f"{labels[i]}: τα κιλά δεν διαβάζονται — π.χ. 72,5.")
+                elif kinds[i] == "weight_reps" and load is None:
+                    problems.append(f"{labels[i]}: γράψε τα κιλά.")
+                elif int(reps) < 1:
+                    problems.append(f"{labels[i]}: γράψε τουλάχιστον μία επανάληψη.")
+                entry: dict[str, Any] = {"reps": int(reps)}
+                if load is not None:
+                    entry["load_kg"] = round(load, 2)
+                values.append(entry)
+            times = _repeat_input(first_id)
+            submitted = st.form_submit_button("Καταχώρηση γύρου", type="primary")
+
+    if not submitted:
+        return
+    if problems:
+        st.error(" ".join(problems))
+        return
+    signature = (first_id, "superset", times, tuple(tuple(sorted(v.items())) for v in values))
+    if _is_double_tap(signature):
+        ui.notice(_NOTICE, "ok", "Ο γύρος είχε ήδη καταχωρηθεί.")
+        st.rerun()
+    try:
+        with st.spinner("Καταχώρηση…"):
+            for i, block in enumerate(pair):
+                rows = sets_of.get(str(block["id"]), [])
+                _add_set(gym_id, str(block["id"]), kinds[i], _next_position(rows), values[i], times)
+    except Exception as exc:
+        st.session_state.pop(_LAST_WRITE_KEY, None)
+        st.error("Ο γύρος δεν καταχωρήθηκε ολόκληρος. Έλεγξε τα σετ πριν ξαναδοκιμάσεις.")
+        st.caption(str(exc))
+        _clear_workout_caches(gym_id, session_id)
+        return
+    _clear_workout_caches(gym_id, session_id)
+    ui.notice(_NOTICE, "ok", "Super set · " + " + ".join(
+        fmt.format_set(values[i], kinds[i]) for i in range(2)) + (f" × {times}" if times > 1 else ""))
+    st.rerun()
 
 
 def _put_in_workout(
@@ -1815,10 +2081,12 @@ def _put_in_workout(
     next_position: int,
     by_id: dict[str, dict[str, Any]],
     equipment: str = "",
+    muscle_group_id: str = "",
 ) -> None:
     """One exercise into the open workout, on the implement it is being done on."""
     try:
-        _add_block(gym_id, session_id, exercise_id, next_position, equipment)
+        _add_block(gym_id, session_id, exercise_id, next_position, equipment,
+                   muscle_group_id=muscle_group_id)
     except Exception as exc:
         ui.notice(_NOTICE, "error", f"Η άσκηση δεν προστέθηκε: {exc}")
         st.rerun()
@@ -2472,8 +2740,30 @@ def _workout(gym_id: str, athlete: dict[str, Any], session: dict[str, Any]) -> N
     if not blocks:
         st.info("Καμία άσκηση ακόμα. Πρόσθεσε την πρώτη από το «Προσθήκη άσκησης».")
 
+    def last_of(block: dict[str, Any]) -> dict[str, Any] | None:
+        exercise_id = str(block.get("exercise_id") or "")
+        return last.get((
+            canonical.get(exercise_id, exercise_id),
+            exercises.implement_of(catalogue.get(exercise_id), str(block.get("equipment") or "")),
+        ))
+
+    pairs = block_columns.pairs(blocks)
+    drawn: set[str] = set()
     for block in blocks:
         exercise_id = str(block.get("exercise_id") or "")
+        pair_key = str(block.get("superset_id") or "")
+        if pair_key in pairs:
+            if pair_key in drawn:
+                continue
+            drawn.add(pair_key)
+            pair = pairs[pair_key][:2]
+            _superset_card(
+                gym_id, session_id, athlete_id, pair,
+                [_resolve_exercise(gym_id, catalogue, canonical, str(b.get("exercise_id") or "")) for b in pair],
+                by_block, [last_of(b) for b in pair], names, session.get("logged_by"), today,
+                newest=pair[-1] is blocks[-1],
+            )
+            continue
         _block_card(
             gym_id,
             session_id,
@@ -2481,12 +2771,7 @@ def _workout(gym_id: str, athlete: dict[str, Any], session: dict[str, Any]) -> N
             block,
             _resolve_exercise(gym_id, catalogue, canonical, exercise_id),
             by_block.get(str(block["id"]), []),
-            last.get((
-                canonical.get(exercise_id, exercise_id),
-                exercises.implement_of(
-                    catalogue.get(exercise_id), str(block.get("equipment") or "")
-                ),
-            )),
+            last_of(block),
             names,
             session.get("logged_by"),
             today,
