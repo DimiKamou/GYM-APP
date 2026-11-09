@@ -39,7 +39,14 @@ EQUIPMENT_LABELS: dict[str, str] = {
     "bosu": "Bosu",
     "cardio": "Cardio",
     "other": "Άλλο",
+    "small_barbell": "Μικρή μπάρα",
 }
+
+# Every tool but the small bar (013). The small bar is never a tool of its own
+# in the catalogue: it is offered beside «Μπάρα» wherever a bar is, once the
+# database knows the value (offered_tools), and a list written before 013 must
+# not carry a value that database would refuse.
+BASE_TOOLS: tuple[str, ...] = tuple(key for key in EQUIPMENT_LABELS if key != "small_barbell")
 EQUIPMENT_CHOICES: dict[str, str] = {label: value for value, label in EQUIPMENT_LABELS.items()}
 
 # The nine tools public.equipment had before 010. Offering one of the 010 tools
@@ -108,7 +115,7 @@ def columns(gym_id: str, base: str) -> str:
 def tool_labels(gym_id: str) -> dict[str, str]:
     """The tools a form may offer on this database right now."""
     if tools_ready(gym_id):
-        return dict(EQUIPMENT_LABELS)
+        return {value: EQUIPMENT_LABELS[value] for value in BASE_TOOLS}
     return {value: EQUIPMENT_LABELS[value] for value in _TOOLS_BEFORE_010}
 
 
@@ -145,6 +152,7 @@ KIND_CHOICES: dict[str, str] = {label: value for value, label in KIND_LABELS.ite
 # selectable, because a gym does dumbbell carries for distance.
 KIND_FOR_EQUIPMENT: dict[str, str] = {
     "barbell": "weight_reps",
+    "small_barbell": "weight_reps",
     "ez_bar": "weight_reps",
     "trap_bar": "weight_reps",
     "dumbbell": "weight_reps",
@@ -192,6 +200,32 @@ def options_of(exercise: dict[str, Any] | None) -> list[str] | None:
     return list(dict.fromkeys(known)) or None
 
 
+def with_small_bar(gym_id: str, tools: list[str]) -> list[str]:
+    """`tools`, with «Μικρή μπάρα» right after «Μπάρα» once 013 has run."""
+    if "barbell" not in tools or "small_barbell" in tools:
+        return tools
+    from lib import programs  # programs reaches this module through views
+
+    if not programs.ready(gym_id):
+        return tools
+    at = tools.index("barbell") + 1
+    return tools[:at] + ["small_barbell"] + tools[at:]
+
+
+def offered_tools(gym_id: str, exercise: dict[str, Any] | None) -> list[str]:
+    """What a form may offer for this exercise: its own list, else every tool, its own first."""
+    allowed = options_of(exercise)
+    if allowed is None:
+        tools = list(tool_labels(gym_id))
+        own = str((exercise or {}).get("equipment") or "")
+        if own in tools:
+            tools.remove(own)
+            tools.insert(0, own)
+    else:
+        tools = list(allowed)
+    return with_small_bar(gym_id, tools)
+
+
 def is_choice(exercise: dict[str, Any] | None) -> bool:
     """True when the coach must say which tool, because the exercise allows several."""
     allowed = options_of(exercise)
@@ -223,7 +257,7 @@ def tools_label(exercise: dict[str, Any] | None) -> str:
     allowed = options_of(exercise)
     if allowed is None:
         return EQUIPMENT_LABELS.get(str((exercise or {}).get("equipment") or ""), "")
-    if len(allowed) == len(EQUIPMENT_LABELS):
+    if set(BASE_TOOLS) <= set(allowed):
         return "Όποιο όργανο, κάθε φορά"
     return " / ".join(EQUIPMENT_LABELS[value] for value in allowed)
 
@@ -252,9 +286,9 @@ def stored_tools(tools: list[str]) -> tuple[str, list[str]]:
     stored as every tool, with the neutral 'other' as the column the schema
     requires; implement_of() never prints that fallback for a choice.
     """
-    chosen = [tool for tool in dict.fromkeys(tools) if tool in EQUIPMENT_LABELS]
+    chosen = [tool for tool in dict.fromkeys(tools) if tool in BASE_TOOLS]
     if not chosen:
-        return "other", list(EQUIPMENT_LABELS)
+        return "other", list(BASE_TOOLS)
     return chosen[0], chosen
 
 

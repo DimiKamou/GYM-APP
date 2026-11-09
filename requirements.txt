@@ -7,3 +7,4 @@
 streamlit==1.62.0
 supabase==2.31.0
 extra-streamlit-components==0.1.80
+segno==1.6.6

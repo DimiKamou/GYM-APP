@@ -167,6 +167,12 @@ def stamp(table: str, row: dict[str, Any], event: str = "insert") -> None:
     them makes every new workout render as "άγνωστο μέλος · —", and every note
     the same.
     """
+    if table == "athlete_shares" and event == "insert":
+        # The token is the table's primary key, minted by gen_random_uuid().
+        import uuid
+
+        row.setdefault("token", str(uuid.uuid4()))
+        row.setdefault("revoked_at", None)
     if table == "sessions":
         if event == "insert":
             row.setdefault("status", "active")
@@ -231,6 +237,7 @@ def reset() -> None:
     fake_supabase.reset_round_trips()
     fake_supabase.FAIL_ONCE.clear()
     fake_supabase.MISSING_COLUMNS.clear()
+    fake_supabase.MISSING_TABLES.clear()
     fake_supabase.REFRESH_CALLS.clear()
     fake_supabase.SIGN_OUT_CALLS.clear()
     # Streamlit's caches outlive an AppTest run — they belong to the process,

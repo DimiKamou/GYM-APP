@@ -97,6 +97,7 @@ describe('every implement the schema can hold has a label', () => {
     bosu: 0,
     box: 0,
     equalizer: 0,
+    small_barbell: 0,
     other: 0,
   } satisfies Record<Equipment, 0>).sort()
 

@@ -27,7 +27,7 @@ from typing import Any
 
 import streamlit as st
 
-from lib import db, exercises, fmt, gym, history, nav, ui
+from lib import db, fmt, gym, history, nav, programs, share, ui
 
 # Same count as the PWA's briefing card. Three lines is what a coach reads
 # standing up; the fourth is already scrolling.
@@ -361,6 +361,120 @@ def _last_session_section(
 
 
 _CALENDAR_KEY = "athlete_calendar"
+
+
+def _program_section(gym_id: str, athlete: dict[str, Any]) -> None:
+    """Which programme the athlete follows and what comes next; the owner assigns it.
+
+    «Δικό του αντίγραφο» copies a template for this athlete alone, so their
+    kilos change on the copy and the template the rest of the gym follows does
+    not. A brand-new programme is written in Προγράμματα.
+    """
+    if not programs.ready(gym_id):
+        return
+    athlete_id = str(athlete["id"])
+    try:
+        row = programs.assignment(gym_id, athlete_id)
+        found = programs.programs(gym_id)
+    except Exception:
+        return
+    current = next((p for p in found if row and str(p["id"]) == str(row["program_id"])), None)
+    owner = db.is_owner()
+    if not current and not owner:
+        return
+
+    st.subheader("Πρόγραμμα")
+    if current and row:
+        order = programs.sequence_of(row)
+        step = programs.next_step(gym_id, athlete_id, row) if order else 0
+        upcoming = programs.day_label(programs.day_at(current, order[step]), order[step]) if order else ""
+        st.markdown(f"📋 **{fmt.md(str(current.get('name') or ''))}** · σειρά {'-'.join(map(str, order))}")
+        if upcoming:
+            st.caption(f"Επόμενη: {upcoming}")
+    elif owner:
+        st.caption("Δεν ακολουθεί πρόγραμμα.")
+    if not owner:
+        return
+
+    mine = [p for p in found if not p.get("athlete_id") or str(p.get("athlete_id")) == athlete_id]
+    with st.expander("Ανάθεση προγράμματος" if not current else "Αλλαγή προγράμματος"):
+        if not mine:
+            st.caption("Δεν υπάρχει πρόγραμμα ακόμα — φτιάξε ένα στα Προγράμματα.")
+            return
+        picked = st.selectbox(
+            "Πρόγραμμα", options=[str(p["id"]) for p in mine],
+            format_func=lambda pid: next(str(p.get("name") or "") for p in mine if str(p["id"]) == pid),
+            index=next((i for i, p in enumerate(mine) if current and p["id"] == current["id"]), 0),
+            key=f"athlete_prog_pick_{athlete_id}",
+        )
+        program = next(p for p in mine if str(p["id"]) == picked)
+        positions = [fmt.integer(d.get("position")) or 0 for d in program.get("days", [])]
+        st.caption(" · ".join(programs.day_label(d) for d in program.get("days", [])) or "Χωρίς μέρες ακόμα.")
+        order_text = st.text_input(
+            "Σειρά ημερών", value="-".join(map(str, positions)),
+            help="Π.χ. 1-2-3, ή 1-2-1-3. Μετά την τελευταία ξαναρχίζει από την αρχή.",
+            key=f"athlete_prog_order_{athlete_id}_{picked}",
+        )
+        copy = st.checkbox(
+            "Δικό του αντίγραφο (για να αλλάξεις κιλά μόνο σε αυτόν)",
+            value=False, disabled=bool(program.get("athlete_id")),
+            key=f"athlete_prog_copy_{athlete_id}",
+        )
+        if st.button("Ανάθεση", key=f"athlete_prog_assign_{athlete_id}", type="primary"):
+            try:
+                order = programs.parse_sequence(order_text, positions)
+                program_id = (
+                    programs.copy_for_athlete(gym_id, program, athlete_id, str(athlete.get("full_name") or ""))
+                    if copy and not program.get("athlete_id") else str(program["id"])
+                )
+                programs.assign(gym_id, athlete_id, program_id, order)
+            except Exception as exc:
+                st.error(str(exc))
+            else:
+                ui.notice(_NOTICE, "ok", "Το πρόγραμμα ανατέθηκε." + (
+                    " Άλλαξε τα κιλά του στα Προγράμματα." if copy else ""))
+                st.rerun()
+        if current and row and st.button("Τέλος προγράμματος", key=f"athlete_prog_end_{athlete_id}"):
+            programs.unassign(gym_id, str(row["id"]))
+            ui.notice(_NOTICE, "ok", "Ο αθλητής δεν ακολουθεί πια πρόγραμμα.")
+            st.rerun()
+
+
+def _share_section(gym_id: str, athlete: dict[str, Any]) -> None:
+    """A read-only link to the athlete's progress: QR on screen, or by mail."""
+    if not programs.ready(gym_id):
+        return
+    athlete_id = str(athlete["id"])
+    name = str(athlete.get("full_name") or "")
+    with st.expander("📤 Κοινοποίηση προόδου"):
+        try:
+            live = share.active(gym_id, athlete_id)
+        except Exception as exc:
+            st.caption(f"Ο σύνδεσμος δεν διαβάστηκε: {exc}")
+            return
+        if not live:
+            st.caption("Ένας σύνδεσμος που δείχνει τις προπονήσεις και την πρόοδο, χωρίς σύνδεση. "
+                       "Τον ακυρώνεις όποτε θέλεις.")
+            if st.button("Δημιουργία συνδέσμου", key=f"athlete_share_new_{athlete_id}", type="primary"):
+                try:
+                    share.create(gym_id, athlete_id)
+                except Exception as exc:
+                    st.error(str(exc))
+                else:
+                    st.rerun()
+            return
+        url = share.link(str(live["token"]))
+        try:
+            st.image(share.qr_png(url), width=220, caption="Σκάναρε με την κάμερα του κινητού")
+        except Exception:
+            pass
+        st.code(url, language=None)
+        row = st.container(horizontal=True)
+        row.link_button("✉️ Αποστολή με email", share.mail_link(url, name))
+        if row.button("Ακύρωση συνδέσμου", key=f"athlete_share_revoke_{athlete_id}"):
+            share.revoke(gym_id, str(live["token"]))
+            ui.notice(_NOTICE, "ok", "Ο σύνδεσμος ακυρώθηκε· όποιος τον έχει δεν βλέπει πια τίποτα.")
+            st.rerun()
 
 
 def _calendar_section(gym_id: str, athlete_id: str, names: dict[str, str], today: date) -> None:
@@ -711,8 +825,10 @@ def _athlete_sheet(gym_id: str, selected: dict[str, Any]) -> None:
     if st.button("Νέα προπόνηση", key="athlete_new_session", type="primary"):
         _start_session(current)
 
+    _program_section(gym_id, current)
     _last_session_section(gym_id, athlete_id, names, today)
     _calendar_section(gym_id, athlete_id, names, today)
+    _share_section(gym_id, current)
 
     st.divider()
     _history_section(notes, names, tz, today)

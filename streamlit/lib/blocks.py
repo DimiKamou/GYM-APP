@@ -46,8 +46,11 @@ def ready(gym_id: str) -> bool:
 
 
 def columns(gym_id: str, base: str) -> str:
-    """`base`, plus the superset and group columns once the database has them."""
-    return f"{base}, {NEW_COLUMNS}" if ready(gym_id) else base
+    """`base`, plus the superset and group columns, and 013's programme item, once they exist."""
+    from lib import programs  # programs imports this module
+
+    out = f"{base}, {NEW_COLUMNS}" if ready(gym_id) else base
+    return f"{out}, program_item_id" if programs.ready(gym_id) else out
 
 
 def pairs(blocks: list[dict[str, Any]]) -> dict[str, list[dict[str, Any]]]:

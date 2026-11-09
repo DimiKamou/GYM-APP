@@ -43,7 +43,7 @@ from typing import Any
 import streamlit as st
 
 from lib import blocks as block_columns
-from lib import db, exercises, fmt, gym, history, nav, recap, ui
+from lib import db, exercises, fmt, gym, history, nav, programs, recap, ui
 
 # How far back the "last time" lookup reads. It is a window, not the whole
 # history, because the session ids go into a PostgREST `in.(…)` filter and a URL
@@ -942,6 +942,17 @@ def _kind_of(
 _MEASURES = {"reps": "Επαναλήψεις", "time": "Χρόνος"}
 
 
+def _target_of(gym_id: str, block: dict[str, Any]) -> dict[str, Any] | None:
+    """The programme prescription this block came from, if it came from one."""
+    item_id = str(block.get("program_item_id") or "")
+    if not item_id:
+        return None
+    try:
+        return programs.items_by_id(gym_id, (item_id,)).get(item_id)
+    except Exception:
+        return None
+
+
 def _measured_in(block_id: str, rows: list[dict[str, Any]], kind: str) -> str:
     """The kind the coach chose for this block, while it is still theirs to choose.
 
@@ -1033,7 +1044,7 @@ def _note_input(block_id: str) -> str:
 
 
 def _set_form(
-    block_id: str, kind: str, previous: dict[str, Any] | None
+    block_id: str, kind: str, previous: dict[str, Any] | None, small_bar: bool = False
 ) -> tuple[dict[str, Any], int] | None:
     """Draw one block's entry form; return (columns to write, how many), or None.
 
@@ -1179,7 +1190,7 @@ def _set_form(
         )
         with kg_col:
             load_text = st.text_input(
-                "κιλά",
+                "κιλά δίσκων" if small_bar else "κιλά",
                 value=fmt.weight_input_default(prev.get("load_kg")),
                 placeholder="72,5",
                 key=f"log_kg_{block_id}",
@@ -1622,7 +1633,11 @@ def _block_card(
                 st.rerun()
         return
 
-    kind = _measured_in(block_id, rows, _kind_of(rows, exercise, str(block.get("equipment") or "")))
+    target = _target_of(gym_id, block)
+    kind = _kind_of(rows, exercise, str(block.get("equipment") or ""))
+    if not rows and target and target.get("seconds"):
+        kind = "duration"
+    kind = _measured_in(block_id, rows, kind)
 
     # With the όργανο, exactly as the picker offered it. Reading back «Πιέσεις
     # Στήθους · 40×10» without knowing it was dumbbells is how a coach loads
@@ -1656,6 +1671,8 @@ def _block_card(
             return
 
         st.markdown(_last_time_line(last, names, today))
+        if target:
+            st.markdown(f"Στόχος: **{fmt.md(programs.target_text(target))}**")
 
         note = (block.get("note") or "").strip()
         if note:
@@ -1676,7 +1693,11 @@ def _block_card(
             session_author, str(block.get("note") or ""), label,
         )
 
-        entry = _set_form(block_id, kind, rows[-1] if rows else None)
+        # The first set starts on the prescription; every one after it on the
+        # set before, as always.
+        # On the small bar the coach counts the plates, not the bar.
+        entry = _set_form(block_id, kind, rows[-1] if rows else target,
+                          small_bar=str(block.get("equipment") or "") == "small_barbell")
         if entry is None:
             return
         values, times = entry
@@ -1862,16 +1883,20 @@ def _ways_and_add(
 
     allowed = exercises.options_of(exercise)
     if allowed is None:
-        options = list(exercises.tool_labels(gym_id))
+        options = exercises.with_small_bar(gym_id, list(exercises.tool_labels(gym_id)))
         own = str((exercise or {}).get("equipment") or "")
         index = options.index(own) if own in options else None
         locked = False
         help_text = "Άλλαξέ το αν σήμερα γίνεται με άλλο όργανο — 40 κιλά με αλτήρες δεν είναι 80 με μπάρα."
+    elif allowed == ["barbell"] and exercises.with_small_bar(gym_id, allowed) != allowed:
+        # A bar exercise: the Olympic bar unless the coach says the small one.
+        options, index, locked = exercises.with_small_bar(gym_id, allowed), 0, False
+        help_text = "Μπάρα ή μικρή μπάρα — τα κιλά της μικρής δεν είναι κιλά της μεγάλης."
     elif len(allowed) == 1:
         options, index, locked = allowed, 0, True
         help_text = "Το όργανο το λέει το όνομα της άσκησης."
     else:
-        options, index, locked = allowed, None, False
+        options, index, locked = exercises.with_small_bar(gym_id, allowed), None, False
         help_text = "Με τι γίνεται σήμερα — 40 κιλά με αλτήρες δεν είναι 80 με μπάρα."
 
     chosen = st.selectbox(
@@ -2018,11 +2043,12 @@ def _superset_picker(
                 st.caption(f"Μυϊκή ομάδα: {fmt.md(filed[0][1])}")
         groups.append(group_id)
         if allowed is None:
-            options = list(exercises.tool_labels(gym_id))
+            options = exercises.with_small_bar(gym_id, list(exercises.tool_labels(gym_id)))
             own = str(exercise.get("equipment") or "")
             index = options.index(own) if own in options else None
         else:
-            options, index = allowed, (0 if len(allowed) == 1 else None)
+            options = exercises.with_small_bar(gym_id, allowed)
+            index = 0 if len(allowed) == 1 else None
         tool = st.selectbox(
             f"Τρόπος {n}ης",
             options=options,
@@ -2030,10 +2056,10 @@ def _superset_picker(
             index=index,
             placeholder="Διάλεξε όργανο",
             key=f"log_ss_way_{n}_{fmt.fold(name or '')}",
-            disabled=allowed is not None and len(allowed) == 1,
+            disabled=allowed is not None and len(options) == 1,
         )
-        if allowed is not None and len(allowed) == 1:
-            tool = allowed[0]
+        if allowed is not None and len(options) == 1:
+            tool = options[0]
         picked.append((exercise, str(tool)) if tool else None)
 
     ready = all(picked) and picked[0][0]["id"] != picked[1][0]["id"]  # type: ignore[index]
@@ -2740,6 +2766,64 @@ def _recap(
     history.boxes(workouts, names, today, key="log_recap")
 
 
+def _program_offer(gym_id: str, athlete_id: str, session: dict[str, Any]) -> bool:
+    """On an empty workout: the athlete's programme, its next day, one tap to fill it.
+
+    The next day is preselected, not imposed — the coach can pick another day
+    of the order or ignore the card and add exercises as always. Returns True
+    when a programme was offered.
+    """
+    if not programs.ready(gym_id):
+        return False
+    try:
+        row = programs.assignment(gym_id, athlete_id)
+        program = programs.program_by_id(gym_id, str(row["program_id"])) if row else None
+        order = programs.sequence_of(row)
+        step = programs.next_step(gym_id, athlete_id, row) if row and order else 0
+    except Exception:
+        return False
+    if not row or not program or not order:
+        return False
+
+    session_id = str(session["id"])
+    catalogue = {str(e["id"]): e for e in _catalogue(gym_id)}
+    with st.container(border=True):
+        st.markdown(f"**📋 {fmt.md(str(program.get('name') or ''))}**")
+        st.caption("Σειρά ημερών: " + "-".join(str(n) for n in order))
+        chosen = st.selectbox(
+            "Ποια μέρα του προγράμματος;",
+            options=list(range(len(order))),
+            index=step,
+            format_func=lambda i: f"{programs.day_label(programs.day_at(program, order[i]), order[i])}"
+            + (" — η επόμενη" if i == step else ""),
+            key=f"log_prog_step_{session_id}",
+        )
+        day = programs.day_at(program, order[int(chosen)])
+        items = (day or {}).get("items") or []
+        if items:
+            st.markdown("\n".join(
+                f"- {fmt.md(_labelled(catalogue.get(str(i.get('exercise_id'))) or {}, str(i.get('equipment') or '')))}"
+                f" · {fmt.md(programs.target_text(i))}"
+                for i in items
+            ))
+        else:
+            st.caption("Αυτή η μέρα δεν έχει ασκήσεις ακόμα.")
+        if st.button("Ξεκίνα με το πρόγραμμα", key="log_prog_start", type="primary", disabled=not items):
+            try:
+                count = programs.start_day(
+                    gym_id, session_id, row, int(chosen), day or {},
+                    title="" if session.get("title") else programs.day_label(day, order[int(chosen)]),
+                )
+            except Exception as exc:
+                ui.notice(_NOTICE, "error", f"Το πρόγραμμα δεν μπήκε: {exc}")
+                st.rerun()
+            _clear_workout_caches(gym_id, session_id)
+            _forget_recent(gym_id, athlete_id)
+            ui.notice(_NOTICE, "ok", f"Μπήκαν {count} ασκήσεις από το πρόγραμμα.")
+            st.rerun()
+    return True
+
+
 def _workout(gym_id: str, athlete: dict[str, Any], session: dict[str, Any]) -> None:
     athlete_id = str(athlete["id"])
     session_id = str(session["id"])
@@ -2832,7 +2916,11 @@ def _workout(gym_id: str, athlete: dict[str, Any], session: dict[str, Any]) -> N
     recap_slot = st.container()
 
     if not blocks:
-        st.info("Καμία άσκηση ακόμα. Πρόσθεσε την πρώτη από το «Προσθήκη άσκησης».")
+        offered = _program_offer(gym_id, athlete_id, session)
+        st.info(
+            "Καμία άσκηση ακόμα. " + ("Ξεκίνα με το πρόγραμμα ή πρόσθεσε" if offered else "Πρόσθεσε")
+            + " από το «Προσθήκη άσκησης»."
+        )
 
     def last_of(block: dict[str, Any]) -> dict[str, Any] | None:
         exercise_id = str(block.get("exercise_id") or "")

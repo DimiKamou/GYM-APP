@@ -93,6 +93,7 @@ const EQUIPMENT: readonly Equipment[] = [
   'bosu',
   'box',
   'equalizer',
+  'small_barbell',
   'other',
 ]
 

@@ -105,12 +105,22 @@ one namespace for uniqueness); `name_el` is NULL on the gym's catalogue.
 **The app ships before the SQL.** Streamlit Cloud redeploys on merge; the owner
 pastes migrations by hand later. A select naming a column the database does not
 have yet is refused outright (42703), so a read of a new column goes through a
-probe (`exercises.has_tool_lists`, `blocks.has_012`) until the paste has happened. The files at
+probe (`exercises.has_tool_lists`, `blocks.has_012`, `programs.has_013`) until the paste has happened. The files at
 the repository root are the paste copies; `supabase/tests/run.sh` fails if they
 differ from their migration by a byte. A migration without a paste copy is never
 run: 005, 007 and 008 had none, the gym's database never got 008, and every
 screen that reads `blocks.equipment` was refused until a catch-up paste
 (`trainhub-προηγουμενες-αλλαγες.sql`).
+
+**The one door for anon is `shared_progress(token)`.** A shared progress link
+(`?share=<token>`, drawn in `app.py` before the gate) reads through that SECURITY
+DEFINER function and nothing else; no table has an anon grant or policy. Widen
+what it returns and you widen what a forwarded link shows to anyone who has it.
+
+**The small bar is offered, never stored as an exercise's tool.** `small_barbell`
+(013) appears beside «Μπάρα» via `exercises.with_small_bar()` once 013 has run;
+`exercises.BASE_TOOLS` is every other tool, and is what a tool list is written
+from, so a database before 013 is never sent a value it would refuse.
 
 **The SQL editor may split a paste.** Supabase ran 011 one statement at a time,
 each in a session of its own: the temp table one statement created was gone by
