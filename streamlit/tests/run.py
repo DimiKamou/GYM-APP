@@ -50,6 +50,8 @@ ATHLETES_DRIVER = str(HERE / "_drive_athletes.py")
 LIBRARY_DRIVER = str(HERE / "_drive_library.py")
 CALENDAR_DRIVER = str(HERE / "_drive_calendar.py")
 PROGRESS_DRIVER = str(HERE / "_drive_progress.py")
+PROGRAMS_DRIVER = str(HERE / "_drive_programs.py")
+SHARED_DRIVER = str(HERE / "_drive_shared.py")
 
 _failures: list[str] = []
 _passes = 0
@@ -1660,8 +1662,8 @@ def test_a_choice_of_tools_is_the_coachs_to_make() -> None:
     state.reset()
     at = _pick(open_log(), "Incline Bench Press")
     ways = way_list(at)
-    check("only the exercise's own tools are offered",
-          list(ways.options) == ["Μπάρα", "Αλτήρες", "Smith"], str(ways.options))
+    check("only the exercise's own tools are offered, the small bar beside the bar",
+          list(ways.options) == ["Μπάρα", "Μικρή μπάρα", "Αλτήρες", "Smith"], str(ways.options))
     check("none of them preselected", ways.value is None, str(ways.value))
     check("and the list is open", ways.disabled is False)
 
@@ -1788,7 +1790,7 @@ def test_the_options_helpers_read_what_postgrest_sends() -> None:
     check("the block's own answer always wins",
           exercises.implement_of({"equipment": "barbell", "equipment_options": ["barbell", "dumbbell"]}, "dumbbell") == "dumbbell")
     check("no tools chosen is every tool, with the neutral column",
-          exercises.stored_tools([]) == ("other", list(exercises.EQUIPMENT_LABELS)))
+          exercises.stored_tools([]) == ("other", list(exercises.BASE_TOOLS)))
     check("the two tables agree on which tools are the body",
           exercises.BODYWEIGHT_TOOLS
           == {tool for tool, kind in exercises.KIND_FOR_EQUIPMENT.items() if kind == "bodyweight"},
@@ -1810,6 +1812,9 @@ def test_the_app_keeps_working_until_the_sql_is_run() -> None:
 
     state.reset()
     fake_supabase.MISSING_COLUMNS["exercises"] = {"equipment_options"}
+    # A database before 011 is before 013 as well: no small bar either.
+    fake_supabase.MISSING_TABLES.update({"athlete_programs", "programs", "program_days",
+                                         "program_items", "athlete_shares"})
     for row in state.STORE["exercises"]:
         row.pop("equipment_options", None)
 
@@ -1867,6 +1872,7 @@ def test_the_app_keeps_working_until_the_sql_is_run() -> None:
 
     # The SQL runs; within the probe's minute the new behaviour is on.
     fake_supabase.MISSING_COLUMNS.clear()
+    fake_supabase.MISSING_TABLES.clear()
     exercises.has_tool_lists.clear()
     check("the column is seen once it exists", exercises.has_tool_lists(state.GYM) is True)
 
@@ -2811,6 +2817,166 @@ def test_before_012_the_picker_is_what_it_was() -> None:
 
 
 # ---------------------------------------------------------------------------
+
+# ---------------------------------------------------------------------------
+# 013: programmes, a shared link, the small bar.
+# ---------------------------------------------------------------------------
+
+def _seed_programme(order=(1, 2)) -> tuple[str, str, str]:
+    """A two-day template with one exercise a day, assigned to the athlete. (program, item1, assignment)."""
+    from lib import programs
+
+    program = programs.create_program(state.GYM, "Πρόγραμμα Α")
+    for name, exercise, kg in (("Στήθος", "e-bar", "60"), ("Πλάτη", "e-db", None)):
+        programs.add_day(state.GYM, programs.program_by_id(state.GYM, program), name)
+        day = programs.program_by_id(state.GYM, program)["days"][-1]
+        programs.add_item(state.GYM, day, {"exercise_id": exercise, "equipment": "barbell" if kg else "dumbbell",
+                                           "sets": 3, "reps": 12, "load_kg": kg})
+    item = programs.program_by_id(state.GYM, program)["days"][0]["items"][0]["id"]
+    programs.assign(state.GYM, state.STORE["athletes"][0]["id"], program, list(order))
+    assignment = programs.assignment(state.GYM, state.STORE["athletes"][0]["id"])["id"]
+    return program, item, assignment
+
+
+def test_the_owner_writes_a_programme() -> None:
+    state.reset()
+    at = open_screen(PROGRAMS_DRIVER)
+    form_name = [w for w in at.text_input if w.label == "Νέο πρόγραμμα"][0]
+    form_name.set_value("Όγκος")
+    button(at, "prog_new").click().run()
+    raise_on_exception(at)
+    made = state.rows("programs")
+    check("a programme with its first day", len(made) == 1 and len(state.rows("program_days")) == 1,
+          f"{made} {state.rows('program_days')}")
+    day = state.rows("program_days")[0]["id"]
+    at.selectbox(key=f"prog_name_{day}_-1").set_value("Πιέσεις Στήθους").run()
+    raise_on_exception(at)
+    tool = at.selectbox(key=f"prog_tool_{day}_{__import__('lib.fmt', fromlist=['fold']).fold('Πιέσεις Στήθους')}")
+    check("the small bar is offered beside the bar", "small_barbell" in tool.options or "Μικρή μπάρα" in tool.options,
+          str(tool.options))
+    tool.set_value("small_barbell").run()
+    at.text_input(key=f"prog_kg_{day}").set_value("30")
+    button(at, f"prog_item_{day}").click().run()
+    raise_on_exception(at)
+    items = state.rows("program_items")
+    check("the exercise is in the day, with what is prescribed",
+          len(items) == 1 and items[0]["sets"] == 3 and items[0]["reps"] == 12
+          and str(items[0]["load_kg"]).startswith("30") and items[0]["equipment"] == "small_barbell", str(items))
+    check("and the day reads it the coach's way", "Μικρή μπάρα · 3×12 · 30 kg" in "\n".join(_lines(at)),
+          "\n".join(_lines(at))[:800])
+
+
+def test_a_trainer_reads_programmes_but_gets_no_forms() -> None:
+    state.reset()
+    _seed_programme()
+    at = open_screen(PROGRAMS_DRIVER, **{db.ME_KEY: dict(state.STORE["memberships"][1]),
+                                         db.ME_READ_AT_KEY: time.monotonic()})
+    check("no «Νέο πρόγραμμα» for a trainer", not [w for w in at.text_input if w.label == "Νέο πρόγραμμα"])
+    check("but the programme is there", "Πρόγραμμα Α" in str([e.label for e in at.expander]),
+          str([e.label for e in at.expander]))
+
+
+def test_an_empty_workout_offers_the_next_day_of_the_programme() -> None:
+    _fresh_workout_open()
+    program, item, assignment = _seed_programme()
+    at = open_log()
+    check("the programme is offered", "Πρόγραμμα Α" in texts(at), texts(at)[:500])
+    step = at.selectbox(key=f"log_prog_step_{state.SESSION}")
+    check("day 1 first", step.value == 0, str(step.value))
+    press(at, "log_prog_start")
+    blocks = state.rows("blocks", session_id=state.SESSION)
+    check("its exercises go in, each from its item", len(blocks) == 1 and blocks[0].get("program_item_id") == item,
+          str(blocks))
+    session = state.rows("sessions", id=state.SESSION)[0]
+    check("the workout remembers the step", session.get("athlete_program_id") == assignment
+          and session.get("program_step") == 0, str(session))
+    body = "\n".join(_lines(at))
+    check("the card shows the target", "Στόχος: **3×12 · 60 kg**" in body, body[:900])
+    block = str(blocks[0]["id"])
+    check("and the first set starts on it", at.text_input(key=f"log_kg_{block}").value == "60",
+          str(at.text_input(key=f"log_kg_{block}").value))
+
+    from lib import programs
+    programs.forget()
+    row = programs.assignment(state.GYM, state.STORE["athletes"][0]["id"])
+    check("the next workout offers day 2", programs.next_step(state.GYM, state.STORE["athletes"][0]["id"], row) == 1)
+
+
+def test_the_order_wraps_round() -> None:
+    from lib import programs
+
+    check("1-2-3 read three ways", programs.parse_sequence("1-2-3", [1, 2, 3]) == [1, 2, 3]
+          and programs.parse_sequence("1 2,1", [1, 2]) == [1, 2, 1])
+    try:
+        programs.parse_sequence("1-4", [1, 2, 3])
+        check("a day the programme lacks is refused", False)
+    except ValueError as exc:
+        check("a day the programme lacks is refused", "Ημέρα 4" in str(exc), str(exc))
+
+
+def test_the_owner_assigns_from_the_athlete_sheet() -> None:
+    from lib import programs
+
+    state.reset()
+    program = programs.create_program(state.GYM, "Δύναμη")
+    programs.add_day(state.GYM, programs.program_by_id(state.GYM, program), "Α")
+    programs.add_day(state.GYM, programs.program_by_id(state.GYM, program), "Β")
+    at = open_athlete()
+    athlete = state.STORE["athletes"][0]["id"]
+    at.text_input(key=f"athlete_prog_order_{athlete}_{program}").set_value("1-2-1")
+    at.checkbox(key=f"athlete_prog_copy_{athlete}").check()
+    press(at, f"athlete_prog_assign_{athlete}")
+    live = state.rows("athlete_programs", athlete_id=athlete)
+    copies = [p for p in state.rows("programs") if p.get("athlete_id") == athlete]
+    check("assigned to a copy of his own", len(live) == 1 and len(copies) == 1
+          and live[0]["program_id"] == copies[0]["id"] and live[0]["sequence"] == [1, 2, 1], f"{live} {copies}")
+    check("the copy has the template's days", len(state.rows("program_days", program_id=copies[0]["id"])) == 2)
+    check("the sheet says what comes next", "Επόμενη: Ημέρα 1 · Α" in texts(at), texts(at)[:700])
+
+
+def test_a_shared_link_shows_progress_without_signing_in() -> None:
+    state.reset()
+    at = open_athlete()
+    athlete = state.STORE["athletes"][0]
+    press(at, f"athlete_share_new_{athlete['id']}")
+    shares = state.rows("athlete_shares", athlete_id=athlete["id"])
+    check("a link is minted", len(shares) == 1, str(shares))
+    check("with its QR code", len(at.get("image")) >= 1, str(len(at.get("image"))))
+    token = shares[0]["token"]
+    check("the address carries the token", any(token in str(c.value) for c in at.code), str([c.value for c in at.code]))
+
+    page = AppTest.from_file(SHARED_DRIVER, default_timeout=60)
+    page.session_state["share_token"] = token
+    page.run()
+    raise_on_exception(page)
+    check("the athlete's page opens", athlete["full_name"] in [t.value for t in page.title], str([t.value for t in page.title]))
+    check("with the workouts", "Τελευταίες προπονήσεις" in texts(page) and "Πιέσεις Στήθους" in texts(page),
+          texts(page)[:600])
+
+    press(at, f"athlete_share_revoke_{athlete['id']}")
+    from lib import share
+    share.fetch.clear()
+    page = AppTest.from_file(SHARED_DRIVER, default_timeout=60)
+    page.session_state["share_token"] = token
+    page.run()
+    check("a revoked link shows nothing", "δεν ισχύει" in texts(page), texts(page)[:300])
+
+
+def test_before_013_nothing_new_shows() -> None:
+    state.reset()
+    fake_supabase.MISSING_TABLES.update({"athlete_programs", "programs", "program_days",
+                                         "program_items", "athlete_shares"})
+    try:
+        at = open_screen(PROGRAMS_DRIVER)
+        check("Προγράμματα asks for the SQL", "trainhub-προγραμματα" in texts(at), texts(at)[:300])
+        at = open_athlete()
+        check("the sheet has no programme or share", "Πρόγραμμα" not in [s.value for s in at.subheader]
+              and "Κοινοποίηση" not in str([e.label for e in at.expander]))
+        at = _pick(open_log(), "Πιέσεις Στήθους")
+        check("no small bar yet", "Μικρή μπάρα" not in way_list(at).options, str(way_list(at).options))
+    finally:
+        fake_supabase.MISSING_TABLES.clear()
+
 
 def main() -> int:
     tests = [value for name, value in sorted(globals().items()) if name.startswith("test_")]

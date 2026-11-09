@@ -53,8 +53,67 @@ FAIL_ONCE: list[str] = []
 MISSING_COLUMNS: dict[str, set[str]] = {}
 
 
+# Whole tables the "database" does not have yet: a read or write on one is
+# refused as PostgREST refuses an unknown table. Models a deploy ahead of 013.
+MISSING_TABLES: set[str] = set()
+
+
 class _MissingColumn(Exception):
     code = "42703"
+
+
+class _MissingTable(Exception):
+    code = "PGRST205"
+
+
+def _shared_progress(store: dict[str, list[dict[str, Any]]], params: dict[str, Any]) -> Any:
+    """public.shared_progress(), on the fake store: the same keys, the same filters."""
+    token = str(params.get("p_token") or "")
+    share = next((r for r in store.get("athlete_shares", [])
+                  if str(r.get("token")) == token and not r.get("revoked_at")), None)
+    if not share:
+        return None
+    athlete = next((a for a in store.get("athletes", []) if a.get("id") == share["athlete_id"]
+                    and not a.get("deleted_at")), None)
+    if not athlete:
+        return None
+    live = lambda rows: [r for r in rows if not r.get("deleted_at")]  # noqa: E731
+    sessions = [r for r in live(store.get("sessions", [])) if r.get("athlete_id") == share["athlete_id"]
+                and r.get("gym_id") == share["gym_id"]]
+    sids = {r["id"] for r in sessions}
+    blocks = [r for r in live(store.get("blocks", [])) if r.get("session_id") in sids]
+    bids = {r["id"] for r in blocks}
+    sets = [r for r in live(store.get("sets", [])) if r.get("block_id") in bids and r.get("done_at")]
+    eids = {r.get("exercise_id") for r in blocks}
+    exercises = [r for r in store.get("exercises", []) if r.get("id") in eids]
+    eids |= {r.get("merged_into_id") for r in exercises if r.get("merged_into_id")}
+    exercises = [dict(r) for r in store.get("exercises", []) if r.get("id") in eids]
+    return {
+        "athlete": athlete.get("full_name"),
+        "gym": next((g.get("name") for g in store.get("gyms", []) if g.get("id") == share["gym_id"]), ""),
+        "sessions": [dict(r) for r in sessions],
+        "blocks": [dict(r) for r in blocks],
+        "sets": [dict(r) for r in sets],
+        "exercises": exercises,
+        "links": [dict(r) for r in live(store.get("exercise_muscles", [])) if r.get("exercise_id") in eids],
+        "groups": [dict(r) for r in live(store.get("muscle_groups", []))],
+        "members": [{"id": m["id"], "display_name": m.get("display_name")}
+                    for m in store.get("memberships", []) if m.get("gym_id") == share["gym_id"]],
+    }
+
+
+RPC_HANDLERS: dict[str, Any] = {"shared_progress": _shared_progress}
+
+
+class _RpcCall:
+    def __init__(self, store: dict[str, list[dict[str, Any]]], name: str, params: dict[str, Any]) -> None:
+        self._store, self._name, self._params = store, name, params
+
+    def execute(self) -> Any:
+        ROUND_TRIPS.append(f"rpc:{self._name}")
+        if self._name == "shared_progress" and "athlete_shares" in MISSING_TABLES:
+            raise _MissingTable("Could not find the function public.shared_progress in the schema cache")
+        return _Response(RPC_HANDLERS[self._name](self._store, self._params))
 
 
 class _Response:
@@ -234,6 +293,8 @@ class _Query:
     # --- execution -----------------------------------------------------
     def execute(self) -> _Response:
         ROUND_TRIPS.append(f"{self._mode}:{self._table}")
+        if self._table in MISSING_TABLES:
+            raise _MissingTable(f"Could not find the table 'public.{self._table}' in the schema cache")
         missing = MISSING_COLUMNS.get(self._table, set())
         named = set(self._columns or [])
         named |= {key for row in self._written for key in row}
@@ -360,5 +421,7 @@ class FakeClient:
     def table(self, name: str) -> _Query:
         return _Query(self.store, name, self._stamp)
 
-    def rpc(self, *_: Any, **__: Any) -> _Query:
+    def rpc(self, name: str = "", params: Any = None, *_: Any, **__: Any) -> Any:
+        if name in RPC_HANDLERS:
+            return _RpcCall(self.store, name, dict(params or {}))
         return _Query(self.store, "gyms", self._stamp)

@@ -509,6 +509,7 @@ export const en: Translation = {
     bosu: 'Bosu',
     box: 'Box',
     equalizer: 'Equalizer',
+    small_barbell: 'Short bar',
     other: 'Other',
   },
 

@@ -455,7 +455,7 @@ def _tools_input(gym_id: str, exercise: dict[str, Any] | None) -> list[str]:
     allowed = exercises.options_of(exercise)
     if allowed is None and exercise:
         allowed = [str(exercise.get("equipment") or "")]
-    if allowed and len(allowed) == len(_EQUIPMENT_LABELS):
+    if allowed and set(exercises.BASE_TOOLS) <= set(allowed):
         # "Any tool" is stored as every tool; shown as none, the way it is entered.
         allowed = []
     chosen = st.multiselect(

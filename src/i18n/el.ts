@@ -578,6 +578,7 @@ export const el = {
     bosu: 'Bosu',
     box: 'Box',
     equalizer: 'Equalizer',
+    small_barbell: 'Μικρή μπάρα',
     other: 'Άλλο',
   },
 

@@ -1,4 +1,4 @@
-"""TrainHub — the Streamlit pilot. One script, seven pages, shaped for a phone.
+"""TrainHub — the Streamlit pilot. One script, eight pages, shaped for a phone.
 
 This is the second client on the gym's Supabase project; the React PWA in `src/`
 is the first. Both read and write the same rows through the same policies, so
@@ -22,8 +22,8 @@ from __future__ import annotations
 
 import streamlit as st
 
-from lib import auth, version
-from views import athletes, calendar, library, log, progress, settings, team
+from lib import auth, share, version
+from views import athletes, calendar, library, log, programs, progress, settings, team
 
 st.set_page_config(
     page_title="TrainHub",
@@ -91,6 +91,16 @@ div.stButton > button,
 
 st.markdown(_CHROME_CSS, unsafe_allow_html=True)
 
+# A shared progress link (lib/share.py) is read by someone with no account: it
+# is drawn before the gate, from the one SECURITY DEFINER function 013 opens to
+# anon, and the run ends there — no page, no tab bar, nothing else reachable.
+_shared_token = st.query_params.get(share.PARAM)
+if _shared_token:
+    from views import shared
+
+    shared.render(str(_shared_token))
+    st.stop()
+
 if not auth.gate():
     st.stop()
 
@@ -103,6 +113,7 @@ _PAGES = (
     ("log", log.render, "Προπόνηση", "📝", False),
     ("calendar", calendar.render, "Πρόγραμμα", "📅", False),
     ("library", library.render, "Ασκήσεις", "📚", False),
+    ("programs", programs.render, "Προγράμματα", "📋", False),
     ("progress", progress.render, "Πρόοδος", "📈", False),
     # Listed for everyone: an ordinary trainer opens it to read the roster,
     # which is the legend for every name stamped on a set. What they may *do*
@@ -136,7 +147,7 @@ _NAV_SEEN = "trainhub_nav_seen"
 
 
 def _tab_bar() -> None:
-    """Seven pages, one wrapped bar, always visible.
+    """Eight pages, one wrapped bar, always visible.
 
     Not st.columns: on a 412px phone they stack, so seven links became seven
     full-width rows and ate 252px of screen before the athlete's name. Pills

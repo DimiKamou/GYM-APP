@@ -49,6 +49,8 @@ export type Equipment =
   | 'bosu'
   | 'box'
   | 'equalizer'
+  /** A short bar (013): its own tool, so plates on it are never read as kilos on a 20 kg bar. */
+  | 'small_barbell'
   | 'other'
 
 /** Columns every table carries. Reads always filter `deletedAt === null`. */
@@ -204,6 +206,9 @@ export interface Session extends Auditable {
   finishedAt: Timestamp | null
   /** Trigger-derived: `(startedAt at time zone gym.timezone)::date`. */
   localDate: LocalDate
+  /** The programme assignment and step of its order this workout was (013). */
+  athleteProgramId?: Uuid | null
+  programStep?: number | null
 }
 
 /**
@@ -235,6 +240,71 @@ export interface Block extends Auditable {
   supersetId?: Uuid | null
   /** The muscle group this exercise counted toward today (012). Absent or null: its primary. */
   muscleGroupId?: Uuid | null
+  /** The programme item this block was started from (013), for its target. */
+  programItemId?: Uuid | null
+}
+
+/** A named programme of numbered days (013). `athleteId` null = a gym template. Owner-written. */
+export interface Program extends Auditable {
+  id: Uuid
+  gymId: Uuid
+  name: string
+  athleteId: Uuid | null
+  notes: string | null
+}
+
+export interface ProgramDay {
+  id: Uuid
+  gymId: Uuid
+  programId: Uuid
+  /** «Ημέρα N». What an athlete's `sequence` refers to. */
+  position: number
+  name: string | null
+  createdAt: Timestamp
+  deletedAt: Timestamp | null
+  createdBy: Uuid | null
+}
+
+/** One prescribed exercise of a day: sets, and reps or seconds, optionally a load. */
+export interface ProgramItem {
+  id: Uuid
+  gymId: Uuid
+  dayId: Uuid
+  position: number
+  exerciseId: Uuid
+  equipment: Equipment | null
+  muscleGroupId: Uuid | null
+  sets: number
+  reps: number | null
+  loadKg: number | null
+  seconds: number | null
+  note: string | null
+  createdAt: Timestamp
+  deletedAt: Timestamp | null
+  createdBy: Uuid | null
+}
+
+/** Who follows which programme, in which order of day positions. One live row per athlete. */
+export interface AthleteProgram {
+  id: Uuid
+  gymId: Uuid
+  athleteId: Uuid
+  programId: Uuid
+  /** Day positions in training order, e.g. [1, 2, 1, 3]; the next workout offers the step after the last. */
+  sequence: number[]
+  createdAt: Timestamp
+  deletedAt: Timestamp | null
+  createdBy: Uuid | null
+}
+
+/** A read-only link to one athlete's progress (013), read through `shared_progress(token)`. */
+export interface AthleteShare {
+  token: Uuid
+  gymId: Uuid
+  athleteId: Uuid
+  createdAt: Timestamp
+  revokedAt: Timestamp | null
+  createdBy: Uuid | null
 }
 
 export interface WorkoutSet extends Auditable {
