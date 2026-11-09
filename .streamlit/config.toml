@@ -17,3 +17,9 @@ gatherUsageStats = false
 
 [server]
 headless = true
+# How long a session whose phone went to sleep is kept, in seconds. The default
+# is two minutes: a coach who locked the phone between sets came back to a new
+# session, and everything held only in it (the sign-in, the open athlete) had
+# to be rebuilt from the cookie and the URL. Four hours covers a whole training
+# block; the memory it costs is one small gym's handful of sessions.
+disconnectedSessionTTL = 14400

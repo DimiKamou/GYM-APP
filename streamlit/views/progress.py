@@ -554,29 +554,29 @@ def _period_section(
         ordered = sorted(worked.items(), key=lambda kv: (-kv[1], kv[0]))
         st.caption("Μυϊκές ομάδες: " + " · ".join(f"{name} {n} σετ" for name, n in ordered))
 
+    workouts = []
+    for session in in_range:
+        own = [b for b in blocks if b.get("session_id") == session["id"]]
+        own_ids = {b["id"] for b in own}
+        workouts.append({
+            "session": session,
+            "blocks": own,
+            "sets": [r for r in _performed(sets) if r.get("block_id") in own_ids],
+            "exercises": by_id,
+            "groups": groups,
+            "group_names": names_of_groups,
+        })
+
     if not week:
-        st.markdown(
-            history.month_calendar(first.year, first.month, history.trained_days(data), today),
-            unsafe_allow_html=True,
+        # A trained day opens its workout; the boxes below are the same
+        # workouts, in order, for reading the month straight through.
+        history.month_grid(
+            [w for w in workouts if w["sets"]], first.year, first.month, names, today, "progress_month",
         )
 
     # In the order they happened: a week read Monday to Sunday is the programme.
-    for n, session in enumerate(in_range):
-        own = [b for b in blocks if b.get("session_id") == session["id"]]
-        own_ids = {b["id"] for b in own}
-        history.workout_box(
-            {
-                "session": session,
-                "blocks": own,
-                "sets": [r for r in _performed(sets) if r.get("block_id") in own_ids],
-                "exercises": by_id,
-                "groups": groups,
-                "group_names": names_of_groups,
-            },
-            names,
-            today,
-            key=f"progress_box_{n}",
-        )
+    for n, workout in enumerate(workouts):
+        history.workout_box(workout, names, today, key=f"progress_box_{n}")
 
 
 def render() -> None:

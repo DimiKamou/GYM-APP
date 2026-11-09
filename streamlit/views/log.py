@@ -91,7 +91,7 @@ _FINISHED = nav.FINISHED_KEY
 _KIND_LABELS = {
     "weight_reps": "κιλά × επαναλήψεις",
     "bodyweight": "επαναλήψεις με το βάρος σώματος",
-    "duration": "χρόνος",
+    "duration": "χρόνος (και κιλά αν υπάρχουν)",
     "distance": "απόσταση",
 }
 
@@ -939,6 +939,42 @@ def _kind_of(
     return exercises.kind_for_block(default, equipment)
 
 
+_MEASURES = {"reps": "Επαναλήψεις", "time": "Χρόνος"}
+
+
+def _measured_in(block_id: str, rows: list[dict[str, Any]], kind: str) -> str:
+    """The kind the coach chose for this block, while it is still theirs to choose.
+
+    Before the first set an exercise can be counted in repetitions or held for
+    a time — an iso hold, a weighted plank. Once a set is in, the block's sets
+    decide (see _kind_of): a block of reps with one timed set in it has no
+    honest volume. The choice lives in the session, keyed by block, because it
+    only has to survive until that first set says it for good.
+    """
+    if rows or kind == "distance":
+        return kind
+    chosen = st.session_state.get(f"log_measure_{block_id}")
+    if chosen == "time":
+        return "duration"
+    if chosen == "reps" and kind == "duration":
+        return "weight_reps"
+    return kind
+
+
+def _measure_choice(block_id: str, kind: str) -> None:
+    """«Επαναλήψεις | Χρόνος», above an empty block's form."""
+    key = f"log_measure_{block_id}"
+    if key not in st.session_state:
+        st.session_state[key] = "time" if kind == "duration" else "reps"
+    st.segmented_control(
+        "Μέτρηση",
+        options=list(_MEASURES),
+        format_func=lambda m: _MEASURES[m],
+        key=key,
+        help="Χρόνος για ισομετρικές: κράτημα με ή χωρίς κιλά.",
+    )
+
+
 def _next_position(rows: list[dict[str, Any]]) -> int:
     highest = -1
     for row in rows:
@@ -1016,6 +1052,15 @@ def _set_form(
         note = _note_input(block_id)
 
         if kind == "duration":
+            # Kilos are optional: a plank is time alone, a farmer's hold or a
+            # weighted iso hold is a load held for a time. sets.load_kg has
+            # always been allowed on a duration set; nothing asked for it.
+            held_text = st.text_input(
+                "κιλά (προαιρετικά)",
+                value=fmt.weight_input_default(prev.get("load_kg")),
+                placeholder="π.χ. 20",
+                key=f"log_durkg_{block_id}",
+            )
             minute_col, second_col, times_col, go_col = st.columns(
                 [3, 3, 2, 4], vertical_alignment="bottom"
             )
@@ -1051,7 +1096,17 @@ def _set_form(
             if total > _MAX_SECONDS:
                 st.error("Ο χρόνος είναι πολύ μεγάλος.")
                 return None
-            return {"seconds": total, "note": note or None}, times
+            held: dict[str, Any] = {"seconds": total}
+            typed = (held_text or "").strip()
+            if typed:
+                load = fmt.decimal(typed)
+                if load is None or load < 0 or load > _MAX_KG:
+                    st.error("Τα κιλά δεν διαβάζονται — π.χ. 12,5.")
+                    return None
+                if load > 0:
+                    held["load_kg"] = round(load, 2)
+            held["note"] = note or None
+            return held, times
 
         if kind == "distance":
             meters_col, times_col, go_col = st.columns([4, 2, 4], vertical_alignment="bottom")
@@ -1413,10 +1468,17 @@ def _edit_set_form(gym_id: str, session_id: str, row: dict[str, Any], kind: str)
                                       value=before // 60, key=f"log_edit_min_{set_id}")
             seconds = st.number_input("δευτερόλεπτα", min_value=0, max_value=59, step=5,
                                       value=before % 60, key=f"log_edit_sec_{set_id}")
+            held = st.text_input("κιλά (προαιρετικά)", value=fmt.weight_input_default(row.get("load_kg")),
+                                 key=f"log_edit_durkg_{set_id}")
             total = int(minutes) * 60 + int(seconds)
+            typed = (held or "").strip()
+            load = fmt.decimal(typed) if typed else None
             if not 1 <= total <= _MAX_SECONDS:
                 problem = "Γράψε πόση ώρα κράτησε."
+            elif typed and (load is None or load < 0 or load > _MAX_KG):
+                problem = "Τα κιλά δεν διαβάζονται — π.χ. 12,5."
             values["seconds"] = total
+            values["load_kg"] = round(load, 2) if load else None
         elif kind == "distance":
             text = st.text_input("μέτρα", value=fmt.weight_input_default(row.get("meters")),
                                  key=f"log_edit_m_{set_id}")
@@ -1560,7 +1622,7 @@ def _block_card(
                 st.rerun()
         return
 
-    kind = _kind_of(rows, exercise, str(block.get("equipment") or ""))
+    kind = _measured_in(block_id, rows, _kind_of(rows, exercise, str(block.get("equipment") or "")))
 
     # With the όργανο, exactly as the picker offered it. Reading back «Πιέσεις
     # Στήθους · 40×10» without knowing it was dumbbells is how a coach loads
@@ -1606,6 +1668,8 @@ def _block_card(
                 st.rerun()
         else:
             st.caption(f"Κανένα σετ ακόμα · {_KIND_LABELS.get(kind, kind)}")
+            if kind != "distance":
+                _measure_choice(block_id, kind)
 
         _block_edit(
             gym_id, session_id, athlete_id, block_id, exercise, rows, kind, names,
@@ -1872,9 +1936,12 @@ def _group_for(
 
     Picked from the first list: that one. Filed under one group: that one, said
     on screen so the coach sees it. Filed under several — Bench Press under
-    chest, triceps and shoulders — and searched by name: the coach chooses, and
-    «Προσθήκη» waits, because only they know what today's set was for. Before
-    012 there is nowhere to keep the answer, so nothing is asked.
+    chest, triceps and shoulders — and searched by name: the primary is put in
+    for them and stays changeable. The gym first asked to be made to choose and
+    then asked for it to fill itself in: an RDL is a hamstring exercise nine
+    times in ten, and a forced question on every one of them was a tap paid for
+    the tenth. Before 012 there is nowhere to keep the answer, so nothing is
+    asked.
     """
     if waiting or exercise is None:
         return None, False
@@ -1893,15 +1960,11 @@ def _group_for(
         "Για ποια μυϊκή ομάδα;",
         options=[g for g, _ in filed],
         format_func=lambda g: dict(filed)[g],
-        index=None,
-        placeholder="Διάλεξε μυϊκή ομάδα",
+        index=0,
         key=f"log_mg_{exercise['id']}",
-        help="Η άσκηση δουλεύει περισσότερες από μία ομάδες — για ποια μετράει σήμερα;",
+        help="Μπήκε η κύρια ομάδα της άσκησης — άλλαξέ τη αν σήμερα μετράει για άλλη.",
     )
-    if not picked:
-        st.caption("Διάλεξε για ποια μυϊκή ομάδα μετράει η άσκηση σήμερα.")
-        return None, True
-    return str(picked), False
+    return str(picked or filed[0][0]), False
 
 
 def _superset_picker(
@@ -1912,25 +1975,48 @@ def _superset_picker(
     rows: list[dict[str, Any]],
     by_id: dict[str, dict[str, Any]],
 ) -> None:
-    """Two exercises that will be logged together, a round at a time."""
-    by_name: dict[str, list[dict[str, Any]]] = {}
-    for row in sorted(rows, key=lambda row: fmt.fold(fmt.exercise_name(row))):
-        by_name.setdefault(fmt.exercise_name(row), []).append(row)
+    """Two exercises that will be logged together, a round at a time.
 
+    Each half has its own muscle-group list, the same filter as a single
+    exercise: a superset is very often two groups (chest + back), so one list
+    for both would filter one half away.
+    """
+    grouped = _grouped_exercises(gym_id)
+    groups: list[str | None] = []
     picked: list[tuple[dict[str, Any], str] | None] = []
     for n in (1, 2):
+        group_index = int(st.selectbox(
+            f"Μυϊκή ομάδα {n}ης",
+            [-1] + list(range(len(grouped))),
+            format_func=lambda index: "Όλες οι ασκήσεις" if index < 0 else grouped[index][0],
+            key=f"log_ss_group_{n}",
+        ))
+        members = rows if group_index < 0 else grouped[group_index][2]
+        group_id = None if group_index < 0 else grouped[group_index][1]
+        by_name: dict[str, list[dict[str, Any]]] = {}
+        for row in sorted(members, key=lambda row: fmt.fold(fmt.exercise_name(row))):
+            by_name.setdefault(fmt.exercise_name(row), []).append(row)
         name = st.selectbox(
             f"{n}η άσκηση",
             options=list(by_name),
             index=None,
             placeholder="Γράψε ή διάλεξε — π.χ. bench",
-            key=f"log_ss_name_{n}",
+            # The group is in the key for the same reason as the single picker:
+            # a name from the previous group must not stay under the new one.
+            key=f"log_ss_name_{n}" if group_index < 0 else f"log_ss_name_{n}_{group_index}",
         )
         exercise = (by_name.get(name or "") or [None])[0]
         allowed = exercises.options_of(exercise)
         if exercise is None:
             picked.append(None)
+            groups.append(None)
             continue
+        if not group_id:
+            filed = _exercise_groups(gym_id, str(exercise["id"]))
+            group_id = filed[0][0] if filed else None
+            if filed:
+                st.caption(f"Μυϊκή ομάδα: {fmt.md(filed[0][1])}")
+        groups.append(group_id)
         if allowed is None:
             options = list(exercises.tool_labels(gym_id))
             own = str(exercise.get("equipment") or "")
@@ -1956,7 +2042,7 @@ def _superset_picker(
         try:
             for offset, (exercise, tool) in enumerate(picked):  # type: ignore[misc]
                 _add_block(gym_id, session_id, str(exercise["id"]), next_position + offset, tool,
-                           superset_id=pair)
+                           superset_id=pair, muscle_group_id=groups[offset] or "")
         except Exception as exc:
             ui.notice(_NOTICE, "error", f"Το super set δεν προστέθηκε: {exc}")
             st.rerun()

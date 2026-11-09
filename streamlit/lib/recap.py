@@ -88,7 +88,8 @@ def _run(count: int, row: dict[str, Any]) -> str:
         seconds = fmt.integer(row.get("seconds"))
         if seconds is None or seconds < 0:
             return f"{count} σετ"
-        return f"{count}×{fmt.format_duration(seconds)}".replace(" ", _NBSP)
+        held = f"{count}×{fmt.format_duration(seconds)}".replace(" ", _NBSP)
+        return f"{held} · {_kg(load)}" if load is not None and load > 0 else held
 
     if kind == "distance":
         meters = fmt.decimal(row.get("meters"))
@@ -118,6 +119,10 @@ def _single(row: dict[str, Any]) -> str:
         if load is not None and load > 0:
             return f"+{fmt.format_weight(load)}×{reps}"
         return f"×{reps}"
+    if kind == "duration" and load is not None and load > 0:
+        seconds = fmt.integer(row.get("seconds"))
+        if seconds is not None and seconds >= 0:
+            return f"{_kg(load)}×{fmt.format_duration(seconds)}".replace(" ", _NBSP)
     # Time and distance read the same alone as in a run of one.
     return _run(1, row).split("×", 1)[-1]
 
