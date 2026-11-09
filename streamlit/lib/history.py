@@ -5,7 +5,7 @@ box: the day and the coach, one line per exercise in the owner's words, and a
 «Λεπτομέρειες» fold with every set, who typed it, and every comment. One reader
 and one box, so the three screens never disagree about what happened.
 
-Also the month calendar with the days the athlete trained marked.
+Also the month calendar, where a day the athlete trained opens that workout.
 """
 
 from __future__ import annotations
@@ -82,7 +82,17 @@ def _read(
             if str(row.get("id")) != before[2]
             and _order(row.get("local_date"), row.get("started_at"), row.get("id")) < limit
         ]
-    sessions = sessions[:_LOOKBACK]
+    return _assemble(client, gym_id, sessions[:_LOOKBACK], WORKOUTS)
+
+
+def _assemble(
+    client: Any, gym_id: str, sessions: list[dict[str, Any]], limit: int | None
+) -> list[dict[str, Any]]:
+    """Sessions -> workouts with their blocks, sets, names and groups, in the order given.
+
+    A session with no set done is skipped: an opened-and-abandoned workout is
+    not a workout. `limit` stops after that many; None keeps them all.
+    """
     if not sessions:
         return []
 
@@ -111,7 +121,7 @@ def _read(
             "blocks": [b for b in blocks if str(b.get("session_id")) == session_id],
             "sets": own_sets,
         })
-        if len(picked) == WORKOUTS:
+        if limit is not None and len(picked) == limit:
             break
     if not picked:
         return []
@@ -196,9 +206,37 @@ def last_workouts(
     return _latest(gym_id, athlete_id)
 
 
+@st.cache_data(ttl=120, show_spinner=False)
+def workouts_between(gym_id: str, athlete_id: str, first: date, last: date) -> list[dict[str, Any]]:
+    """Every workout with a set done between two gym days, inclusive, newest first.
+
+    For the calendar: a month is at most a few dozen sessions, so unlike the
+    last three there is no lookback to bound.
+    """
+    client = db.client()
+    sessions = (
+        client.table("sessions")
+        .select(_SESSION_COLUMNS)
+        .eq("gym_id", gym_id)
+        .eq("athlete_id", athlete_id)
+        .is_("deleted_at", "null")
+        .gte("local_date", first.isoformat())
+        .lte("local_date", last.isoformat())
+        .order("local_date", desc=True)
+        .order("started_at", desc=True)
+        .order("id", desc=True)
+        .execute()
+        .data
+        or []
+    )
+    return _assemble(client, gym_id, sessions, None)
+
+
 def forget(gym_id: str, athlete_id: str) -> None:
     """A workout of this athlete changed: the sheet's latest three are stale."""
     _latest.clear(gym_id, athlete_id)
+    # Every month of this athlete: which one the workout fell in is not known here.
+    workouts_between.clear()
 
 
 # ---------------------------------------------------------------------------
@@ -311,49 +349,60 @@ def boxes(
 _DAY_HEADS = ("Δ", "Τ", "Τ", "Π", "Π", "Σ", "Κ")
 
 
-def month_calendar(year: int, month: int, trained: set[date], today: date) -> str:
-    """A month as an HTML table, the days with a workout marked. Monday first.
+def month_grid(
+    workouts: list[dict[str, Any]],
+    year: int,
+    month: int,
+    names: dict[str, str],
+    today: date,
+    key: str,
+) -> None:
+    """The month as rows of seven; a day with a workout opens it as a pop-up.
 
-    HTML rather than widgets: seven columns of buttons stack on a phone, and a
-    calendar that is one column of 31 rows is not a calendar.
+    Widgets rather than an HTML table, because a day has to answer a tap.
+    One horizontal container per week keeps the seven side by side on a
+    phone, where st.columns would stack them into one column of 31.
     """
-    weeks = _calendar.Calendar(firstweekday=0).monthdatescalendar(year, month)
-    head = "".join(f"<th>{d}</th>" for d in _DAY_HEADS)
-    rows = []
-    for week in weeks:
-        cells = []
-        for day in week:
-            classes = []
-            if day.month != month:
-                classes.append("out")
-            if day in trained:
-                classes.append("done")
-            if day == today:
-                classes.append("today")
-            cells.append(f'<td class="{" ".join(classes)}"><span>{day.day}</span></td>')
-        rows.append("<tr>" + "".join(cells) + "</tr>")
-    return (
+    by_day: dict[date, list[dict[str, Any]]] = {}
+    for workout in workouts:
+        day = fmt.parse_local_date(workout["session"].get("local_date"))
+        if day:
+            by_day.setdefault(day, []).append(workout)
+
+    with st.container(key=f"{key}_cal", gap="xxsmall"):
+        head = st.container(horizontal=True, wrap=False, gap="xxsmall")
+        for name in _DAY_HEADS:
+            head.markdown(f"<div class='th-cal-head'>{name}</div>", width="stretch",
+                          unsafe_allow_html=True)
+        for n, week in enumerate(_calendar.Calendar(firstweekday=0).monthdatescalendar(year, month)):
+            row = st.container(horizontal=True, wrap=False, gap="xxsmall", vertical_alignment="center")
+            for day in week:
+                done = by_day.get(day) if day.month == month else None
+                if done:
+                    with row.popover(str(day.day), width="stretch", type="primary",
+                                     key=f"{key}_{day.isoformat()}"):
+                        for i, workout in enumerate(done):
+                            workout_box(workout, names, today, f"{key}_{day.isoformat()}_{i}",
+                                        folded_details=False)
+                    continue
+                classes = "th-cal-day" + (" out" if day.month != month else "") + (
+                    " today" if day == today else "")
+                row.markdown(f"<div class='{classes}'>{day.day}</div>", width="stretch",
+                             unsafe_allow_html=True)
+    st.markdown(
         "<style>"
-        ".th-cal{width:100%;max-width:360px;border-collapse:collapse;table-layout:fixed;margin:4px 0 8px}"
-        ".th-cal th{font-size:.75rem;font-weight:600;opacity:.6;padding:2px 0;text-align:center}"
-        ".th-cal td{text-align:center;padding:3px 0}"
-        ".th-cal td span{display:inline-block;width:2.1em;height:2.1em;line-height:2.1em;border-radius:50%}"
-        ".th-cal td.out span{opacity:.3}"
-        ".th-cal td.done span{background:#5b7553;color:#fff;font-weight:700}"
-        ".th-cal td.today span{outline:2px solid #5b7553;outline-offset:-2px}"
-        "</style>"
-        f'<table class="th-cal"><thead><tr>{head}</tr></thead><tbody>{"".join(rows)}</tbody></table>'
+        f".st-key-{key}_cal .th-cal-head{{text-align:center;font-size:.75rem;font-weight:600;opacity:.6;"
+        "line-height:1.5rem;min-height:1.5rem}"
+        f".st-key-{key}_cal .th-cal-day{{text-align:center;line-height:2.75rem;min-height:2.75rem}}"
+        f".st-key-{key}_cal .th-cal-day.out{{opacity:.3}}"
+        f".st-key-{key}_cal .th-cal-day.today{{outline:2px solid #5b7553;outline-offset:-4px;border-radius:.5rem}}"
+        # Streamlit pulls a markdown block up by a paragraph margin, which in a
+        # row that scrolls its overflow cut the weekday letters down to a dash.
+        f".st-key-{key}_cal div:has(> .th-cal-head),.st-key-{key}_cal div:has(> .th-cal-day)"
+        "{margin-bottom:0 !important}"
+        # The chevron eats half of a seventh of a phone; the day number is the label.
+        f".st-key-{key}_cal [data-testid='stPopoverButton'] [data-testid='stIconMaterial']{{display:none}}"
+        f".st-key-{key}_cal [data-testid='stPopoverButton']{{padding-left:0;padding-right:0;min-width:0}}"
+        "</style>",
+        unsafe_allow_html=True,
     )
-
-
-def trained_days(data: dict[str, list[dict[str, Any]]]) -> set[date]:
-    """Days with at least one set done, from Πρόοδος's history read."""
-    session_of_block = {b["id"]: b.get("session_id") for b in data.get("blocks", [])}
-    done = {session_of_block.get(row.get("block_id")) for row in recap.performed(data.get("sets", []))}
-    out: set[date] = set()
-    for session in data.get("sessions", []):
-        if session.get("id") in done:
-            day = fmt.parse_local_date(session.get("local_date"))
-            if day:
-                out.add(day)
-    return out

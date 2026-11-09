@@ -22,7 +22,7 @@ coaching number with no one to ask about it is the failure this app replaces.
 
 from __future__ import annotations
 
-from datetime import date, datetime, timezone
+from datetime import date, datetime, timedelta, timezone
 from typing import Any
 
 import streamlit as st
@@ -363,15 +363,8 @@ def _last_session_section(
 _CALENDAR_KEY = "athlete_calendar"
 
 
-def _calendar_section(gym_id: str, athlete_id: str, today: date) -> None:
-    """A month at a glance, the days the athlete trained marked."""
-    from views import progress
-
-    try:
-        trained = history.trained_days(progress._history(gym_id, athlete_id))
-    except Exception:
-        return
-
+def _calendar_section(gym_id: str, athlete_id: str, names: dict[str, str], today: date) -> None:
+    """A month at a glance; a day the athlete trained opens that workout."""
     stored = st.session_state.get(_CALENDAR_KEY)
     if isinstance(stored, dict) and stored.get("athlete") == athlete_id:
         year, month = stored["year"], stored["month"]
@@ -400,8 +393,15 @@ def _calendar_section(gym_id: str, athlete_id: str, today: date) -> None:
                   disabled=(year, month) >= (today.year, today.month)):
         _go(1)
         st.rerun()
-    st.markdown(history.month_calendar(year, month, trained, today), unsafe_allow_html=True)
-    count = sum(1 for d in trained if d.year == year and d.month == month)
+    first = date(year, month, 1)
+    last = date(year + (month == 12), month % 12 + 1, 1) - timedelta(days=1)
+    try:
+        workouts = history.workouts_between(gym_id, athlete_id, first, last)
+    except Exception as exc:
+        st.caption(f"Το ημερολόγιο δεν φορτώθηκε: {exc}")
+        return
+    history.month_grid(workouts, year, month, names, today, "athlete_month")
+    count = len({w["session"].get("local_date") for w in workouts})
     st.caption(
         "Καμία προπόνηση αυτόν τον μήνα." if not count
         else ("1 προπόνηση" if count == 1 else f"{count} προπονήσεις") + " αυτόν τον μήνα."
@@ -712,7 +712,7 @@ def _athlete_sheet(gym_id: str, selected: dict[str, Any]) -> None:
         _start_session(current)
 
     _last_session_section(gym_id, athlete_id, names, today)
-    _calendar_section(gym_id, athlete_id, today)
+    _calendar_section(gym_id, athlete_id, names, today)
 
     st.divider()
     _history_section(notes, names, tz, today)

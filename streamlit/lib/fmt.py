@@ -251,7 +251,12 @@ def format_set(row: dict[str, Any], kind: str) -> str:
 
     if kind == "duration":
         seconds = integer(row.get("seconds"))
-        return EMPTY if seconds is None or seconds < 0 else format_duration(seconds)
+        if seconds is None or seconds < 0:
+            return EMPTY
+        # A held load reads load first, like every other set: «20 kg × 45 δευτ.».
+        if load is not None and load > 0:
+            return f"{format_weight(load)} kg × {format_duration(seconds)}"
+        return format_duration(seconds)
 
     if kind == "distance":
         meters = decimal(row.get("meters"))

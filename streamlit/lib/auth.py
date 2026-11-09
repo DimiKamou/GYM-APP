@@ -30,7 +30,6 @@ from lib import db, nav, version
 USERNAME_DOMAIN: str = (db.config("USERNAME_DOMAIN") or "trainhub.local").strip().lstrip("@").lower()
 
 _COOKIE_NAME = "trainhub_session"
-_COOKIE_DAYS = 30
 # Refresh a little before the hour is up: a token that expires mid-set turns
 # every query into an empty screen.
 _REFRESH_MARGIN_S = 120
@@ -66,6 +65,10 @@ _REFRESH_RETRY_S = 8.0
 # handing it back to the server would sign the trainer who pressed Αποσύνδεση
 # straight back in, under the next trainer's fingers.
 _SIGNED_OUT_KEY = "_auth_signed_out"
+# «Να με θυμάσαι». Off: no cookie is written, and this phone forgets the
+# sign-in when the tab goes — for a shared tablet at the desk.
+_REMEMBER_KEY = "_auth_remember"
+_REMEMBER_DAYS = 365
 # Set when bootstrap_gym() refused because a membership row exists that this
 # session cannot read. The create-gym form must not be re-offered after that.
 _BLOCKED_KEY = "_auth_membership_blocked"
@@ -222,7 +225,7 @@ def change_password(new_password: str, current_password: str | None = None) -> N
     `current_password` is optional in the signature and mandatory in the body:
     a caller still written against the one-argument version must fail loudly at
     the first attempt rather than silently keep the unverified behaviour. The
-    session on a phone that lives in a gym bag lasts thirty days and these
+    session on a phone that lives in a gym bag lasts a year and these
     accounts have no mailbox, so a stranger who changes this password locks the
     trainer out of the only sheet their gym has, and only the owner can undo it.
     """
@@ -395,10 +398,12 @@ def _remember(session: Any) -> bool:
     # being restored, so none of them can outlive the person who caused it.
     for key in (_PROBE_KEY, _SIGNED_OUT_KEY, _BLOCKED_KEY):
         st.session_state.pop(key, None)
-    if refresh:
+    if refresh and st.session_state.get(_REMEMBER_KEY, True):
         # Supabase rotates the refresh token on every use, so the cookie is
         # rewritten each time — an old one is already spent.
         st.session_state[_PENDING_COOKIE_KEY] = ("set", refresh)
+    elif refresh:
+        st.session_state[_PENDING_COOKIE_KEY] = ("delete", None)
     return True
 
 
@@ -514,7 +519,30 @@ def _cookie_snapshot() -> dict[str, Any] | None:
     return answered or None
 
 
+def _cookie_from_request() -> str | None:
+    """The session cookie as the browser sent it when this tab connected.
+
+    Read with the page request itself, so it is there on the very first run —
+    no component round trip, no probe budget. That round trip, raced against a
+    phone waking from lock, is what kept putting the sign-in form over a
+    session the browser still held. Frozen for the life of the connection, so
+    it is only trusted for a fresh connection, never after a sign-out in it.
+    """
+    try:
+        value = st.context.cookies.get(_COOKIE_NAME)
+    except Exception:
+        return None
+    return str(value) if value else None
+
+
 def _restore_from_cookie() -> bool:
+    if not st.session_state.get(_SIGNED_OUT_KEY):
+        token = _cookie_from_request()
+        if token:
+            # The component would read this same cookie a round trip later, so
+            # a refusal here is the answer for both: _use_refresh_token signs
+            # out and drops it.
+            return _use_refresh_token(token)
     cookies = _cookie_snapshot()
     if cookies is None:
         probes = int(st.session_state.get(_PROBE_KEY, 0) or 0)
@@ -564,7 +592,7 @@ def _flush_cookie() -> None:
             manager.set(
                 _COOKIE_NAME,
                 token,
-                expires_at=datetime.now(timezone.utc) + timedelta(days=_COOKIE_DAYS),
+                expires_at=datetime.now(timezone.utc) + timedelta(days=_REMEMBER_DAYS),
                 secure=_cookie_secure(),
                 same_site="lax",
                 key=key,
@@ -605,6 +633,11 @@ def _render_sign_in() -> None:
         st.subheader("Σύνδεση")
         username = st.text_input("Χρήστης", autocomplete="username")
         password = st.text_input("Κωδικός", type="password", autocomplete="current-password")
+        remember = st.checkbox(
+            "Να με θυμάσαι σε αυτή τη συσκευή", value=True,
+            help="Μένεις συνδεδεμένος έναν χρόνο, ακόμα κι αν κλείσεις την εφαρμογή. "
+                 "Βγάλ' το σε κοινόχρηστο tablet.",
+        )
         submitted = st.form_submit_button("Σύνδεση", type="primary")
 
     # There is no self-service reset: these accounts have no reachable mailbox,
@@ -639,6 +672,7 @@ def _render_sign_in() -> None:
         st.error(_auth_error(exc))
         return
 
+    st.session_state[_REMEMBER_KEY] = bool(remember)
     if not _remember(getattr(response, "session", None)):
         st.error(_BAD_CREDENTIALS)
         return

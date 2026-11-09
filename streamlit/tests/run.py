@@ -2557,18 +2557,20 @@ def test_the_athlete_sheet_shows_the_last_three_and_a_calendar() -> None:
           any(b.key == "athlete_recent_1_action" for b in at.button), str([b.key for b in at.button]))
 
     html = "\n".join(str(m.value) for m in at.markdown if "th-cal" in str(m.value))
-    check("a calendar is drawn", "<table" in html, html[:200])
-    press(at, "athlete_cal_back")
-    html = "\n".join(str(m.value) for m in at.markdown if "th-cal" in str(m.value))
+    check("a calendar is drawn", "th-cal-head" in html, html[:200])
     # Step back to August 2026 whatever month the tests run in.
     for _ in range(36):
         if "Αύγουστος 2026" in texts(at):
             break
         press(at, "athlete_cal_back")
-    html = "\n".join(str(m.value) for m in at.markdown if "th-cal" in str(m.value))
+    days = _calendar_days(at, "athlete_month")
     for day in (18, 20, 22):
-        check(f"{day} Αυγ is marked", f'class="done"><span>{day}</span>' in html, html[:300])
-    check("a day without a workout is not", 'class="done"><span>19</span>' not in html)
+        check(f"{day} Αυγ opens its workout", f"2026-08-{day}" in days, str(sorted(days)))
+    check("a day without a workout does not", "2026-08-19" not in days)
+    opened = days.get("2026-08-18")
+    inside = "\n".join(str(m.value) for m in opened.markdown) if opened else ""
+    check("the pop-up is that day's workout, set by set",
+          "**Τρίτη 18 Αυγ · Δημήτρης**" in inside and "1\\. " in inside, inside[:300])
     check("and the month says how many", "3 προπονήσεις αυτόν τον μήνα." in texts(at), texts(at)[-400:])
 
 
@@ -2583,13 +2585,22 @@ def test_last_time_shows_the_whole_day_in_bold() -> None:
           "Τελευταία φορά: **60×12, 65×10, 70×8** · 27 Αυγ · Δημήτρης" in texts(at), texts(at)[:600])
 
 
+def _calendar_days(at: AppTest, key: str) -> dict:
+    """{iso day: its pop-up} for the days of a calendar that open a workout."""
+    out = {}
+    for pop in at.get("popover"):
+        marker = f"-{key}_"
+        if marker in pop.proto.id:
+            out[pop.proto.id.split(marker, 1)[1]] = pop
+    return out
+
+
 def test_progress_month_has_the_calendar() -> None:
     state.reset()
     at = open_screen(PROGRESS_DRIVER)
     at.radio(key="progress_period").set_value("month").run()
-    html = "\n".join(str(m.value) for m in at.markdown if "th-cal" in str(m.value))
-    check("the month view draws its calendar, 1 Σεπ marked",
-          'class="done"><span>1</span>' in html, html[:300])
+    days = _calendar_days(at, "progress_month")
+    check("the month view draws its calendar, 1 Σεπ opens", "2026-09-01" in days, str(sorted(days)))
 
 
 def test_each_set_has_its_pencil_and_cross() -> None:
@@ -2628,14 +2639,14 @@ def test_an_exercise_in_one_group_takes_it_by_itself() -> None:
     check("and it is kept on the block", block.get("muscle_group_id") == state.CHEST, str(block))
 
 
-def test_an_exercise_in_two_groups_makes_the_coach_choose() -> None:
-    """«Πιέσεις σε μηχάνημα» is filed under chest and back: which was it for today?"""
+def test_an_exercise_in_two_groups_takes_its_primary_and_can_change() -> None:
+    """«Πιέσεις σε μηχάνημα» is filed under chest and back: chest goes in, back is one tap."""
     at = _fresh_workout_open()
     _pick(at, "Πιέσεις σε μηχάνημα")
     ask = [w for w in at.selectbox if w.label == "Για ποια μυϊκή ομάδα;"]
-    check("the coach is asked", bool(ask), str([w.label for w in at.selectbox]))
-    check("with nothing chosen for them", bool(ask) and ask[0].value is None)
-    check("and «Προσθήκη» waits for the answer", button(at, "log_add_-1").disabled)
+    check("the group is offered", bool(ask), str([w.label for w in at.selectbox]))
+    check("with the primary already in", bool(ask) and ask[0].value == state.CHEST, str(ask and ask[0].value))
+    check("and «Προσθήκη» does not wait", not button(at, "log_add_-1").disabled)
     ask[0].set_value(state.BACK).run()
     press(at, "log_add_-1")
     block = state.rows("blocks", session_id=state.SESSION)[0]
@@ -2648,6 +2659,79 @@ def test_an_exercise_in_two_groups_makes_the_coach_choose() -> None:
     name.set_value("Πιέσεις σε μηχάνημα").run()
     check("picked under a group, nothing more is asked",
           not [w for w in at.selectbox if w.label == "Για ποια μυϊκή ομάδα;"])
+
+
+def test_remember_me_decides_whether_a_cookie_is_written() -> None:
+    import streamlit as st
+    from lib import auth
+
+    class Session:
+        access_token = "a"
+        refresh_token = "r"
+        user = None
+        expires_at = 9e12
+
+    try:
+        st.session_state[auth._REMEMBER_KEY] = False
+        auth._remember(Session())
+        check("off: no cookie, and any old one goes",
+              st.session_state.get(auth._PENDING_COOKIE_KEY) == ("delete", None),
+              str(st.session_state.get(auth._PENDING_COOKIE_KEY)))
+        st.session_state[auth._REMEMBER_KEY] = True
+        auth._remember(Session())
+        check("on: the refresh token is kept",
+              st.session_state.get(auth._PENDING_COOKIE_KEY) == ("set", "r"),
+              str(st.session_state.get(auth._PENDING_COOKIE_KEY)))
+    finally:
+        for key in (auth._REMEMBER_KEY, auth._PENDING_COOKIE_KEY):
+            st.session_state.pop(key, None)
+        auth._sign_out_state(drop_cookie=False)
+
+
+def test_an_iso_hold_is_kilos_for_a_time() -> None:
+    """«Μέτρηση: Χρόνος» before the first set, and the kilos ride along."""
+    at = _fresh_workout_open()
+    _pick(at, "Incline Bench Press")
+    way_list(at).set_value("dumbbell").run()
+    press(at, "log_add_-1")
+    block = str(state.rows("blocks", session_id=state.SESSION)[0]["id"])
+    choice = at.button_group(key=f"log_measure_{block}")
+    check("an empty block offers reps or time", choice is not None and choice.value == "reps",
+          str(choice.value if choice else None))
+    choice.set_value("time").run()
+    raise_on_exception(at)
+    at.text_input(key=f"log_durkg_{block}").set_value("20")
+    at.number_input(key=f"log_sec_{block}").set_value(45)
+    button(at, f"log_set_{block}").click().run()
+    raise_on_exception(at)
+    rows = state.rows("sets", block_id=block)
+    check("a timed set with its load", len(rows) == 1 and rows[0]["kind"] == "duration"
+          and rows[0]["seconds"] == 45 and str(rows[0].get("load_kg")).startswith("20"), str(rows))
+    check("read load first", "20 kg × 45 δευτ." in texts(at), texts(at)[:600])
+    check("and once a set is in, the choice is gone",
+          not [w for w in at.button_group if w.key == f"log_measure_{block}"])
+
+    from lib import recap
+    check("the recap says it the same way", recap.sets_summary(rows + [dict(rows[0], id="z")])
+          == "2×45\u00a0δευτ. · 20\u00a0kg", recap.sets_summary(rows + [dict(rows[0], id="z")]))
+
+
+def test_each_half_of_a_superset_has_its_own_group() -> None:
+    at = _fresh_workout_open()
+    at.radio(key="log_mode").set_value("superset").run()
+    groups = [w for w in at.selectbox if w.label.startswith("Μυϊκή ομάδα ")]
+    check("one group list per exercise", len(groups) == 2, str([w.label for w in at.selectbox]))
+    chest = groups[0].options.index("Στήθος") - 1
+    at.selectbox(key="log_ss_group_1").set_value(chest).run()
+    names = at.selectbox(key=f"log_ss_name_1_{chest}")
+    check("and it filters the names", "Κωπηλατική" not in names.options and "Πιέσεις Στήθους" in names.options,
+          str(names.options))
+    names.set_value("Πιέσεις Στήθους").run()
+    at.selectbox(key="log_ss_name_2").set_value("Κωπηλατική").run()
+    press(at, "log_add_superset")
+    added = sorted(state.rows("blocks", session_id=state.SESSION), key=lambda b: b["position"])
+    check("both halves keep a group", [b.get("muscle_group_id") for b in added] == [state.CHEST, state.BACK],
+          str([b.get("muscle_group_id") for b in added]))
 
 
 def test_the_logged_group_is_the_one_history_counts() -> None:
