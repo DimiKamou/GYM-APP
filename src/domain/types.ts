@@ -305,6 +305,10 @@ export interface AthleteShare {
   createdAt: Timestamp
   revokedAt: Timestamp | null
   createdBy: Uuid | null
+  /** What the link covers (014): the last N days as of opening, or fixed `fromDate`–`toDate`. Neither: 400 days. */
+  periodDays?: number | null
+  fromDate?: LocalDate | null
+  toDate?: LocalDate | null
 }
 
 export interface WorkoutSet extends Auditable {

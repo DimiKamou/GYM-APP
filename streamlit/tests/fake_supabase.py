@@ -78,8 +78,15 @@ def _shared_progress(store: dict[str, list[dict[str, Any]]], params: dict[str, A
     if not athlete:
         return None
     live = lambda rows: [r for r in rows if not r.get("deleted_at")]  # noqa: E731
+    from datetime import date as _date, timedelta as _td
+
+    today = _date.today()
+    first = (_date.fromisoformat(str(share["from_date"])) if share.get("from_date")
+             else today - _td(days=int(share.get("period_days") or 400)))
+    last = _date.fromisoformat(str(share["to_date"])) if share.get("to_date") else today
     sessions = [r for r in live(store.get("sessions", [])) if r.get("athlete_id") == share["athlete_id"]
-                and r.get("gym_id") == share["gym_id"]]
+                and r.get("gym_id") == share["gym_id"]
+                and first.isoformat() <= str(r.get("local_date") or "") <= last.isoformat()]
     sids = {r["id"] for r in sessions}
     blocks = [r for r in live(store.get("blocks", [])) if r.get("session_id") in sids]
     bids = {r["id"] for r in blocks}
@@ -91,6 +98,9 @@ def _shared_progress(store: dict[str, list[dict[str, Any]]], params: dict[str, A
     return {
         "athlete": athlete.get("full_name"),
         "gym": next((g.get("name") for g in store.get("gyms", []) if g.get("id") == share["gym_id"]), ""),
+        "from": first.isoformat(),
+        "to": last.isoformat(),
+        "period_days": share.get("period_days"),
         "sessions": [dict(r) for r in sessions],
         "blocks": [dict(r) for r in blocks],
         "sets": [dict(r) for r in sets],

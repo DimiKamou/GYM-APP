@@ -449,12 +449,40 @@ def gym_athlete_names(gym_id: str) -> dict[str, str]:
     return {str(r["id"]): str(r.get("full_name") or "") for r in rows}
 
 
+def _period_picker(gym_id: str, athlete_id: str, today: date, current: dict[str, Any] | None,
+                   key: str) -> dict[str, Any] | None:
+    """«Περίοδος»: μήνας, 3 μήνες, 6 μήνες, χρόνος, ή από–έως. None before 014."""
+    if not share.periods_ready(gym_id):
+        return None
+    kinds = list(share.PERIODS)
+    start = share.period_kind(current) if current else "3m"
+    kind = st.segmented_control(
+        "Περίοδος", options=kinds, format_func=lambda k: share.PERIOD_LABELS[k],
+        default=start, key=f"{key}_kind",
+    ) or start
+    if kind != "custom":
+        return share.period_values(kind)
+    first_default = fmt.parse_local_date((current or {}).get("from_date")) or today - timedelta(days=90)
+    last_default = fmt.parse_local_date((current or {}).get("to_date")) or today
+    picked = st.date_input(
+        "Από – έως", value=(first_default, last_default), max_value=today, format="DD/MM/YYYY",
+        key=f"{key}_range",
+    )
+    first, last = (tuple(picked) + (None, None))[:2] if isinstance(picked, (list, tuple)) else (picked, None)
+    try:
+        return share.period_values("custom", first, last)
+    except ValueError as exc:
+        st.caption(str(exc))
+        return {}
+
+
 def _share_section(gym_id: str, athlete: dict[str, Any]) -> None:
-    """A read-only link to the athlete's progress: QR on screen, or by mail."""
+    """A read-only link to the athlete's progress for a chosen period: QR on screen, or by mail."""
     if not programs.ready(gym_id):
         return
     athlete_id = str(athlete["id"])
     name = str(athlete.get("full_name") or "")
+    today = gym.today(gym_id)
     with st.expander("📤 Κοινοποίηση προόδου"):
         try:
             live = share.active(gym_id, athlete_id)
@@ -462,17 +490,21 @@ def _share_section(gym_id: str, athlete: dict[str, Any]) -> None:
             st.caption(f"Ο σύνδεσμος δεν διαβάστηκε: {exc}")
             return
         if not live:
-            st.caption("Ένας σύνδεσμος που δείχνει τις προπονήσεις και την πρόοδο, χωρίς σύνδεση. "
-                       "Τον ακυρώνεις όποτε θέλεις.")
-            if st.button("Δημιουργία συνδέσμου", key=f"athlete_share_new_{athlete_id}", type="primary"):
+            st.caption("Ένας σύνδεσμος που δείχνει τις προπονήσεις και την πρόοδο της περιόδου που διαλέγεις, "
+                       "χωρίς σύνδεση. Τον ακυρώνεις όποτε θέλεις.")
+            period = _period_picker(gym_id, athlete_id, today, None, f"athlete_share_period_{athlete_id}")
+            if st.button("Δημιουργία συνδέσμου", key=f"athlete_share_new_{athlete_id}", type="primary",
+                         disabled=period == {}):
                 try:
-                    share.create(gym_id, athlete_id)
+                    share.create(gym_id, athlete_id, period or None)
                 except Exception as exc:
                     st.error(str(exc))
                 else:
                     st.rerun()
             return
         url = share.link(str(live["token"]))
+        if share.periods_ready(gym_id):
+            st.markdown(f"Περίοδος: **{fmt.md(share.period_text(live, today))}**")
         try:
             st.image(share.qr_png(url), width=220, caption="Σκάναρε με την κάμερα του κινητού")
         except Exception:
@@ -484,6 +516,15 @@ def _share_section(gym_id: str, athlete: dict[str, Any]) -> None:
             share.revoke(gym_id, str(live["token"]))
             ui.notice(_NOTICE, "ok", "Ο σύνδεσμος ακυρώθηκε· όποιος τον έχει δεν βλέπει πια τίποτα.")
             st.rerun()
+        if share.periods_ready(gym_id):
+            with st.popover("Αλλαγή περιόδου", key=f"athlete_share_change_{athlete_id}"):
+                period = _period_picker(gym_id, athlete_id, today, live, f"athlete_share_edit_{athlete_id}")
+                st.caption("Ο ίδιος σύνδεσμος, άλλη περίοδος — δεν χρειάζεται να τον ξαναστείλεις.")
+                if st.button("Αποθήκευση περιόδου", key=f"athlete_share_save_{athlete_id}", type="primary",
+                             disabled=not period):
+                    share.set_period(gym_id, str(live["token"]), period or {})
+                    ui.notice(_NOTICE, "ok", "Η περίοδος του συνδέσμου άλλαξε.")
+                    st.rerun()
 
 
 def _calendar_section(gym_id: str, athlete_id: str, names: dict[str, str], today: date) -> None:
