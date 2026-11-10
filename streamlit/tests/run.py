@@ -3048,6 +3048,13 @@ def test_a_link_shows_only_its_period() -> None:
     page.session_state["share_token"] = token
     page.run()
     check("and the page follows it", "Πιέσεις Στήθους" in texts(page), texts(page)[:600])
+    check("with the progress: totals, volume, groups, first-to-last",
+          "Πρόοδος" in [h.value for h in page.subheader]
+          and any(m.label == "Κιλά" for m in page.metric) and len(page.dataframe) >= 2,
+          f"{[h.value for h in page.subheader]} {[m.label for m in page.metric]} {len(page.dataframe)}")
+    first_last = page.dataframe[0].value
+    check("first and last per exercise", "Πρώτη" in list(first_last.columns)
+          and "Αλλαγή" in list(first_last.columns), str(list(first_last.columns)))
 
 
 def test_before_014_a_link_has_no_period() -> None:

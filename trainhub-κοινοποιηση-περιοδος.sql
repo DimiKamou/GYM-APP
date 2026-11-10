@@ -77,7 +77,8 @@ begin
                   'exercise_id', m.exercise_id, 'muscle_group_id', m.muscle_group_id, 'role', m.role))
                 from public.exercise_muscles m
                where m.exercise_id in (select id from e) and m.deleted_at is null), '[]'::jsonb),
-      'groups', coalesce((select jsonb_agg(jsonb_build_object('id', g.id, 'name_el', g.name_el, 'name_en', g.name_en))
+      'groups', coalesce((select jsonb_agg(jsonb_build_object('id', g.id, 'name_el', g.name_el, 'name_en', g.name_en,
+                                                   'position', g.position))
                 from public.muscle_groups g
                where g.deleted_at is null
                  and (g.gym_id is null or g.gym_id = (select gym_id from share))), '[]'::jsonb),
