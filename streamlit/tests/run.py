@@ -239,7 +239,7 @@ def test_the_implement_the_coach_picks_is_what_gets_written() -> None:
     at = open_log()
     name_list(at).set_value("Πιέσεις Στήθους").run()
     way_list(at).set_value("dumbbell").run()
-    button(at, "log_add_-1").click().run()
+    button(at, "log_add").click().run()
     raise_on_exception(at)
 
     added = [b for b in state.rows("blocks", session_id=state.SESSION) if b["id"] != state.BLOCK]
@@ -252,14 +252,14 @@ def test_the_add_button_is_dead_until_there_is_something_to_add() -> None:
     """A button that looks live and does nothing is worse than one that says wait."""
     state.reset()
     at = open_log()
-    add = button(at, "log_add_-1")
+    add = button(at, "log_add")
     check("«Προσθήκη άσκησης» starts disabled", add.disabled is True, str(add.disabled))
 
     name_list(at).set_value("Έλξεις").run()
     raise_on_exception(at)
     check("and comes alive once a movement is chosen",
-          button(at, "log_add_-1").disabled is False,
-          str(button(at, "log_add_-1").disabled))
+          button(at, "log_add").disabled is False,
+          str(button(at, "log_add").disabled))
 
 
 def test_last_time_does_not_read_one_implement_under_another() -> None:
@@ -407,7 +407,7 @@ def test_the_add_button_waits_for_a_movement() -> None:
     state.reset()
     at = open_log()
     check("«Προσθήκη άσκησης» starts disabled",
-          button(at, "log_add_-1").disabled is True)
+          button(at, "log_add").disabled is True)
     ways = way_list(at)
     check("and so does the implement list", ways.disabled is True)
     check("which says what to do first", ways.placeholder == "Διάλεξε πρώτα άσκηση",
@@ -436,7 +436,7 @@ def test_adding_an_exercise_stays_on_the_workout() -> None:
     state.reset()
     at = open_log()
     name_list(at).set_value("Έλξεις").run()
-    button(at, "log_add_-1").click().run()
+    button(at, "log_add").click().run()
     raise_on_exception(at)
 
     blocks = state.rows("blocks", session_id=state.SESSION)
@@ -1650,8 +1650,8 @@ def test_a_tool_in_the_name_is_selected_by_itself() -> None:
     check("the third list holds that one tool", list(ways.options) == ["Τροχαλία"], str(ways.options))
     check("already selected", ways.value == "cable", str(ways.value))
     check("and locked, because the name already said it", ways.disabled is True)
-    check("the button is live straight away", button(at, "log_add_-1").disabled is False)
-    press(at, "log_add_-1")
+    check("the button is live straight away", button(at, "log_add").disabled is False)
+    press(at, "log_add")
     added = state.rows("blocks", session_id=state.SESSION, exercise_id=state.FIXED)
     check("the block records the cable", added and added[0].get("equipment") == "cable", str(added))
     check("and the card says so", "Cable Lateral Raise · Τροχαλία" in texts(at), texts(at)[:500])
@@ -1668,12 +1668,12 @@ def test_a_choice_of_tools_is_the_coachs_to_make() -> None:
     check("and the list is open", ways.disabled is False)
 
     before = len(state.rows("blocks", session_id=state.SESSION))
-    press(at, "log_add_-1")
+    press(at, "log_add")
     check("adding without a tool is refused", len(state.rows("blocks", session_id=state.SESSION)) == before)
     check("with the reason", "Διάλεξε τρόπο εκτέλεσης" in texts(at), texts(at)[:500])
 
     way_list(at).set_value("dumbbell").run()
-    press(at, "log_add_-1")
+    press(at, "log_add")
     added = state.rows("blocks", session_id=state.SESSION, exercise_id=state.CHOICE)
     check("the chosen tool is written", added and added[0].get("equipment") == "dumbbell", str(added))
     check("and shown", "Incline Bench Press · Αλτήρες" in texts(at), texts(at)[:500])
@@ -1703,7 +1703,7 @@ def test_bodyweight_chosen_asks_for_reps_not_kilos() -> None:
     state.reset()
     at = _pick(open_log(), "Step-Up")
     way_list(at).set_value("bodyweight").run()
-    press(at, "log_add_-1")
+    press(at, "log_add")
     block = state.rows("blocks", session_id=state.SESSION, exercise_id=state.STEP_UP)[0]
     keys = {w.key for w in at.number_input} | {w.key for w in at.text_input}
     check("the set form is the bodyweight one", f"log_bwreps_{block['id']}" in keys, str(sorted(k for k in keys if k)))
@@ -1718,7 +1718,7 @@ def test_bodyweight_chosen_asks_for_reps_not_kilos() -> None:
     # The same exercise with a barbell is kilos × reps as usual.
     at = _pick(open_log(), "Step-Up")
     way_list(at).set_value("barbell").run()
-    press(at, "log_add_-1")
+    press(at, "log_add")
     loaded = [b for b in state.rows("blocks", session_id=state.SESSION, exercise_id=state.STEP_UP)
               if b.get("equipment") == "barbell"][0]
     keys = {w.key for w in at.text_input}
@@ -1825,7 +1825,7 @@ def test_the_app_keeps_working_until_the_sql_is_run() -> None:
     check("the third list offers only the tools the old schema has",
           len(ways.options) == 9 and "EZ bar" not in ways.options, str(ways.options))
     way_list(at).set_value("dumbbell").run()
-    press(at, "log_add_-1")
+    press(at, "log_add")
     check("and an exercise still goes in", any(b.get("equipment") == "dumbbell"
           for b in state.rows("blocks", session_id=state.SESSION)))
 
@@ -2638,23 +2638,32 @@ def test_an_exercise_in_one_group_takes_it_by_itself() -> None:
     at = _fresh_workout_open()
     _pick(at, "Incline Bench Press")
     way_list(at).set_value("dumbbell").run()
-    check("its group is said, not asked", "Μυϊκή ομάδα: Στήθος" in texts(at), texts(at)[-500:])
+    check("its group goes into the list above by itself", _group_label(at).startswith("Στήθος"), _group_label(at))
     check("nothing to choose", not [w for w in at.selectbox if w.label == "Για ποια μυϊκή ομάδα;"])
-    press(at, "log_add_-1")
+    press(at, "log_add")
     block = state.rows("blocks", session_id=state.SESSION)[0]
     check("and it is kept on the block", block.get("muscle_group_id") == state.CHEST, str(block))
 
 
+def _group_label(at: AppTest) -> str:
+    box = at.selectbox(key="log_group")
+    return str(box.options[int(box.value) + 1])
+
+
 def test_an_exercise_in_two_groups_takes_its_primary_and_can_change() -> None:
-    """«Πιέσεις σε μηχάνημα» is filed under chest and back: chest goes in, back is one tap."""
+    """«Πιέσεις σε μηχάνημα» is filed under chest and back: chest goes in above, back is one tap there."""
     at = _fresh_workout_open()
     _pick(at, "Πιέσεις σε μηχάνημα")
-    ask = [w for w in at.selectbox if w.label == "Για ποια μυϊκή ομάδα;"]
-    check("the group is offered", bool(ask), str([w.label for w in at.selectbox]))
-    check("with the primary already in", bool(ask) and ask[0].value == state.CHEST, str(ask and ask[0].value))
-    check("and «Προσθήκη» does not wait", not button(at, "log_add_-1").disabled)
-    ask[0].set_value(state.BACK).run()
-    press(at, "log_add_-1")
+    check("the primary goes into the list above", _group_label(at).startswith("Στήθος"), _group_label(at))
+    check("and no second question below", not [w for w in at.selectbox if w.label == "Για ποια μυϊκή ομάδα;"],
+          str([w.label for w in at.selectbox]))
+    check("and «Προσθήκη» does not wait", not button(at, "log_add").disabled)
+    box = at.selectbox(key="log_group")
+    back = next(i for i, label in enumerate(box.options) if str(label).startswith("Πλάτη")) - 1
+    box.set_value(back).run()
+    check("changing the group keeps the exercise", name_list(at).value == "Πιέσεις σε μηχάνημα",
+          str(name_list(at).value))
+    press(at, "log_add")
     block = state.rows("blocks", session_id=state.SESSION)[0]
     check("the answer is kept on the block", block.get("muscle_group_id") == state.BACK, str(block))
 
@@ -2699,7 +2708,7 @@ def test_an_iso_hold_is_kilos_for_a_time() -> None:
     at = _fresh_workout_open()
     _pick(at, "Incline Bench Press")
     way_list(at).set_value("dumbbell").run()
-    press(at, "log_add_-1")
+    press(at, "log_add")
     block = str(state.rows("blocks", session_id=state.SESSION)[0]["id"])
     choice = at.button_group(key=f"log_measure_{block}")
     check("an empty block offers reps or time", choice is not None and choice.value == "reps",
@@ -2807,7 +2816,7 @@ def test_before_012_the_picker_is_what_it_was() -> None:
         _pick(at, "Πιέσεις σε μηχάνημα")
         check("no group question with nowhere to keep the answer",
               not [w for w in at.selectbox if w.label == "Για ποια μυϊκή ομάδα;"])
-        press(at, "log_add_-1")
+        press(at, "log_add")
         check("and the exercise goes in", len(state.rows("blocks", session_id=state.SESSION)) == 1,
               texts(at)[:400])
         check("the workout still reads", "Πιέσεις σε μηχάνημα" in texts(at), texts(at)[:400])
