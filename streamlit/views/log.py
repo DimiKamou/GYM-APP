@@ -1822,6 +1822,8 @@ def _picker(
         # «Όλες» first and selected by default, because the second list is
         # typeable: a coach who knows the name should not have to answer where
         # it is filed before they can search for it.
+        names_in = {i: {fmt.exercise_name(r) for r in grouped[i][2]} for i in range(len(grouped))}
+        primary_index = _primary_index(gym_id, grouped, rows)
         group_index = int(
             st.selectbox(
                 "Μυϊκή ομάδα",
@@ -1832,6 +1834,8 @@ def _picker(
                     else f"{grouped[index][0]} ({len(grouped[index][2])})"
                 ),
                 key="log_group",
+                on_change=_carry_name,
+                args=(int(st.session_state.get("log_group", -1)), names_in),
             )
         )
         if group_index < 0:
@@ -1854,6 +1858,11 @@ def _picker(
             placeholder="Γράψε ή διάλεξε — π.χ. pull",
             key=f"log_name_{group_index}",
             help="Γράφοντας φιλτράρει: «pull» φέρνει το Pull-Up χωρίς να ψάξεις ομάδα.",
+            # Chosen from «Όλες», the exercise puts its own primary group in
+            # the list above — the group is then said once, up there, and
+            # changing it there keeps the exercise.
+            on_change=_set_group_from_name if group_index < 0 else None,
+            args=(primary_index,) if group_index < 0 else None,
         )
 
         # Always drawn, even with nothing chosen above it. The gym asked for three
@@ -1871,6 +1880,41 @@ def _picker(
         else:
             st.divider()
             st.caption("Δεν τη βρίσκεις; Διάλεξε μυϊκή ομάδα από πάνω για να την προσθέσεις.")
+
+
+def _primary_index(
+    gym_id: str, grouped: list[tuple[str, str | None, list[dict[str, Any]]]], rows: list[dict[str, Any]]
+) -> dict[str, int]:
+    """Exercise name -> the index in `grouped` of its primary muscle group."""
+    index_of = {str(group_id): i for i, (_, group_id, _) in enumerate(grouped) if group_id}
+    out: dict[str, int] = {}
+    for row in rows:
+        name = fmt.exercise_name(row)
+        if name in out:
+            continue
+        filed = _exercise_groups(gym_id, str(row["id"]))
+        for group_id, _ in filed:
+            if group_id in index_of:
+                out[name] = index_of[group_id]
+                break
+    return out
+
+
+def _set_group_from_name(primary_index: dict[str, int]) -> None:
+    name = st.session_state.get("log_name_-1")
+    index = primary_index.get(name or "")
+    if index is None:
+        return
+    st.session_state["log_group"] = index
+    st.session_state[f"log_name_{index}"] = name
+
+
+def _carry_name(before: int, names_in: dict[int, set[str]]) -> None:
+    """A change of group keeps the exercise when the new group has it too."""
+    name = st.session_state.get(f"log_name_{before}")
+    after = int(st.session_state.get("log_group", -1))
+    if name and (after < 0 or name in names_in.get(after, set())):
+        st.session_state[f"log_name_{after}"] = name
 
 
 def _ways_and_add(
@@ -1946,7 +1990,7 @@ def _ways_and_add(
 
     if st.button(
         "Προσθήκη άσκησης",
-        key=f"log_add_{group_index}",
+        key="log_add",
         type="primary",
         disabled=waiting or needs_group,
     ):
