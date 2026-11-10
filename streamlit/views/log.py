@@ -37,7 +37,7 @@ from __future__ import annotations
 
 import time
 import uuid
-from datetime import date, datetime, timezone
+from datetime import date, datetime, timedelta, timezone
 from typing import Any
 
 import streamlit as st
@@ -1043,6 +1043,15 @@ def _note_input(block_id: str) -> str:
     ).strip()
 
 
+def _initial(block_id: str, value: Any) -> dict[str, Any]:
+    """`value=` for a set box, except on a block whose boxes _prime_form fills.
+
+    Streamlit warns on screen when a box is given a value both ways, so a
+    primed block's boxes take theirs from the session state alone.
+    """
+    return {} if f"log_primed_{block_id}" in st.session_state else {"value": value}
+
+
 def _set_form(
     block_id: str, kind: str, previous: dict[str, Any] | None, small_bar: bool = False
 ) -> tuple[dict[str, Any], int] | None:
@@ -1059,7 +1068,10 @@ def _set_form(
     """
     prev = previous or {}
 
-    with st.form(f"log_set_{block_id}", clear_on_submit=True):
+    # A primed block (_prime_form) refills its own boxes after each set;
+    # clearing them as well raced that refill and left «κιλά» empty.
+    primed = f"log_primed_{block_id}" in st.session_state
+    with st.form(f"log_set_{block_id}", clear_on_submit=not primed):
         note = _note_input(block_id)
 
         if kind == "duration":
@@ -1068,7 +1080,7 @@ def _set_form(
             # always been allowed on a duration set; nothing asked for it.
             held_text = st.text_input(
                 "κιλά (προαιρετικά)",
-                value=fmt.weight_input_default(prev.get("load_kg")),
+                **_initial(block_id, fmt.weight_input_default(prev.get("load_kg"))),
                 placeholder="π.χ. 20",
                 key=f"log_durkg_{block_id}",
             )
@@ -1082,7 +1094,7 @@ def _set_form(
                     min_value=0,
                     max_value=1440,
                     step=1,
-                    value=seconds_before // 60,
+                    **_initial(block_id, seconds_before // 60),
                     key=f"log_min_{block_id}",
                 )
             with second_col:
@@ -1091,7 +1103,7 @@ def _set_form(
                     min_value=0,
                     max_value=59,
                     step=5,
-                    value=seconds_before % 60,
+                    **_initial(block_id, seconds_before % 60),
                     key=f"log_sec_{block_id}",
                 )
             with times_col:
@@ -1153,13 +1165,13 @@ def _set_form(
                     min_value=0,
                     max_value=1000,
                     step=1,
-                    value=fmt.integer(prev.get("reps")) or 0,
+                    **_initial(block_id, fmt.integer(prev.get("reps")) or 0),
                     key=f"log_bwreps_{block_id}",
                 )
             with extra_col:
                 extra_text = st.text_input(
                     "επιπλέον κιλά",
-                    value=fmt.weight_input_default(prev.get("load_kg")),
+                    **_initial(block_id, fmt.weight_input_default(prev.get("load_kg"))),
                     placeholder="0",
                     key=f"log_bwkg_{block_id}",
                 )
@@ -1191,7 +1203,7 @@ def _set_form(
         with kg_col:
             load_text = st.text_input(
                 "κιλά δίσκων" if small_bar else "κιλά",
-                value=fmt.weight_input_default(prev.get("load_kg")),
+                **_initial(block_id, fmt.weight_input_default(prev.get("load_kg"))),
                 placeholder="72,5",
                 key=f"log_kg_{block_id}",
             )
@@ -1201,7 +1213,7 @@ def _set_form(
                 min_value=0,
                 max_value=1000,
                 step=1,
-                value=fmt.integer(prev.get("reps")) or 0,
+                **_initial(block_id, fmt.integer(prev.get("reps")) or 0),
                 key=f"log_reps_{block_id}",
             )
         with times_col:
@@ -1673,6 +1685,10 @@ def _block_card(
         st.markdown(_last_time_line(last, names, today))
         if target:
             st.markdown(f"Στόχος: **{fmt.md(programs.target_text(target))}**")
+        loaded = _loaded_of(block_id)
+        if loaded and loaded.get("sets"):
+            st.markdown(f"Από {fmt.md(str(loaded.get('day') or ''))}: "
+                        f"**{fmt.md(recap.sets_summary([dict(r, done_at='x', id=str(n), position=n) for n, r in enumerate(loaded['sets'])]))}**")
 
         note = (block.get("note") or "").strip()
         if note:
@@ -1696,7 +1712,15 @@ def _block_card(
         # The first set starts on the prescription; every one after it on the
         # set before, as always.
         # On the small bar the coach counts the plates, not the bar.
-        entry = _set_form(block_id, kind, rows[-1] if rows else target,
+        # A block loaded from an old day starts each set on that day's set of
+        # the same number, while the old day still has one.
+        old_sets = (loaded or {}).get("sets") or []
+        start = old_sets[len(rows)] if len(rows) < len(old_sets) else (rows[-1] if rows else target)
+        # Past the old day's last set, the set before, as on any block: a
+        # primed block's boxes are reset from here, not from `value=`.
+        if old_sets and start:
+            _prime_form(block_id, len(rows), start)
+        entry = _set_form(block_id, kind, start,
                           small_bar=str(block.get("equipment") or "") == "small_barbell")
         if entry is None:
             return
@@ -2766,6 +2790,129 @@ def _recap(
     history.boxes(workouts, names, today, key="log_recap")
 
 
+_LOADED = "log_loaded_"
+_LOAD_LOOKBACK_DAYS = 365
+_LOAD_CHOICES = 40
+
+
+def _loaded_of(block_id: str) -> dict[str, Any] | None:
+    """What a block was loaded from: {"day": «Τρί 3 Νοε», "sets": [the old day's sets, in order]}."""
+    value = st.session_state.get(_LOADED + block_id)
+    return value if isinstance(value, dict) else None
+
+
+def _prime_form(block_id: str, done: int, start: dict[str, Any]) -> None:
+    """Put the old day's next set into the boxes, once per set written.
+
+    A keyed widget keeps the value it was first drawn with, so passing the next
+    set as `value` changes nothing on screen after the first; writing the
+    boxes' state directly, before they are drawn, does.
+    """
+    marker = f"log_primed_{block_id}"
+    if st.session_state.get(marker) == done:
+        return
+    st.session_state[marker] = done
+    load = fmt.weight_input_default(start.get("load_kg"))
+    reps = fmt.integer(start.get("reps")) or 0
+    seconds = fmt.integer(start.get("seconds")) or 0
+    st.session_state[f"log_kg_{block_id}"] = load
+    st.session_state[f"log_reps_{block_id}"] = reps
+    st.session_state[f"log_bwkg_{block_id}"] = load
+    st.session_state[f"log_bwreps_{block_id}"] = reps
+    st.session_state[f"log_durkg_{block_id}"] = load
+    st.session_state[f"log_min_{block_id}"] = seconds // 60
+    st.session_state[f"log_sec_{block_id}"] = seconds % 60
+
+
+def _load_offer(
+    gym_id: str, athlete_id: str, session: dict[str, Any], names: dict[str, str], today: date,
+    expanded: bool = True,
+) -> None:
+    """«Φόρτωσε από παλιά προπόνηση»: an old day's exercises, ready to be done again.
+
+    The coach picks a day; its exercises go in on the same tools, groups and
+    supersets, and each set starts on that day's numbers — set 1 on its set 1,
+    set 2 on its set 2 — so repeating «60×12, 65×10, 70×8» is a press per set.
+    Nothing old is copied as done: only what to aim for.
+    """
+    session_id = str(session["id"])
+    try:
+        found = history.workouts_between(
+            gym_id, athlete_id, today - timedelta(days=_LOAD_LOOKBACK_DAYS), today)
+    except Exception:
+        return
+    found = [w for w in found if str(w["session"]["id"]) != session_id][:_LOAD_CHOICES]
+    if not found:
+        return
+    with st.expander("📂 Φόρτωσε από παλιά προπόνηση", expanded=expanded):
+        index = st.selectbox(
+            "Ποια μέρα;",
+            options=list(range(len(found))),
+            format_func=lambda i: recap.workout_heading(found[i]["session"], names, today),
+            key=f"log_load_pick_{session_id}",
+        )
+        workout = found[int(index)]
+        lines = recap.workout_lines(workout["blocks"], workout["sets"], workout.get("exercises") or {},
+                                    workout.get("groups") or {}, workout.get("group_names"))
+        st.markdown("\n".join(f"- {fmt.md(line)}" for line in lines))
+        if st.button("Φόρτωσε αυτή την προπόνηση", key="log_load_go", type="primary"):
+            try:
+                count = _load_workout(gym_id, session_id, workout, today)
+            except Exception as exc:
+                ui.notice(_NOTICE, "error", f"Η προπόνηση δεν φορτώθηκε: {exc}")
+                st.rerun()
+            _clear_workout_caches(gym_id, session_id)
+            _forget_recent(gym_id, athlete_id)
+            ui.notice(_NOTICE, "ok", f"Φορτώθηκαν {count} ασκήσεις — τα σετ ξεκινούν με τα νούμερα εκείνης της μέρας.")
+            st.rerun()
+
+
+def _load_workout(gym_id: str, session_id: str, workout: dict[str, Any], today: date) -> int:
+    """Put an old workout's exercises into this one and remember each one's old sets."""
+    session = workout["session"]
+    day = fmt.parse_local_date(session.get("local_date"))
+    when = f"{recap.WEEKDAYS_EL[day.weekday()][:3]} {fmt.format_day(day, today)}" if day else fmt.EMPTY
+    exercises_by_id = workout.get("exercises") or {}
+    by_block: dict[str, list[dict[str, Any]]] = {}
+    for row in workout["sets"]:
+        by_block.setdefault(str(row.get("block_id")), []).append(row)
+    sources = [b for b in recap._ordered(workout["blocks"]) if by_block.get(str(b.get("id")))]
+    pairs: dict[str, str] = {}
+    payload = []
+    for position, block in enumerate(sources):
+        exercise_id = str(block.get("exercise_id") or "")
+        # A folded duplicate is loaded as the row it was folded into.
+        target = str((exercises_by_id.get(exercise_id) or {}).get("merged_into_id") or "")
+        row: dict[str, Any] = {
+            "gym_id": gym_id, "session_id": session_id, "position": position,
+            "exercise_id": target if target in exercises_by_id else exercise_id,
+        }
+        if block.get("equipment"):
+            row["equipment"] = block["equipment"]
+        if block_columns.ready(gym_id):
+            if block.get("muscle_group_id"):
+                row["muscle_group_id"] = block["muscle_group_id"]
+            old_pair = str(block.get("superset_id") or "")
+            if old_pair:
+                row["superset_id"] = pairs.setdefault(old_pair, str(uuid.uuid4()))
+        payload.append(row)
+    if not payload:
+        return 0
+    written = db.client().table("blocks").insert(payload).execute().data or []
+    for source, new in zip(sources, written):
+        old_sets = recap._ordered(by_block[str(source["id"])])
+        new_id = str(new.get("id") or "")
+        if not new_id:
+            continue
+        st.session_state[_LOADED + new_id] = {
+            "day": when,
+            "sets": [{k: r.get(k) for k in ("kind", "load_kg", "reps", "seconds", "meters")} for r in old_sets],
+        }
+        if fmt.dominant_kind(old_sets) == "duration":
+            st.session_state[f"log_measure_{new_id}"] = "time"
+    return len(written)
+
+
 def _program_offer(gym_id: str, athlete_id: str, session: dict[str, Any]) -> bool:
     """On an empty workout: the athlete's programme, its next day, one tap to fill it.
 
@@ -2917,9 +3064,10 @@ def _workout(gym_id: str, athlete: dict[str, Any], session: dict[str, Any]) -> N
 
     if not blocks:
         offered = _program_offer(gym_id, athlete_id, session)
+        _load_offer(gym_id, athlete_id, session, names, today, expanded=not offered)
         st.info(
-            "Καμία άσκηση ακόμα. " + ("Ξεκίνα με το πρόγραμμα ή πρόσθεσε" if offered else "Πρόσθεσε")
-            + " από το «Προσθήκη άσκησης»."
+            "Καμία άσκηση ακόμα. " + ("Ξεκίνα με το πρόγραμμα, φόρτωσε" if offered else "Φόρτωσε")
+            + " μια παλιά προπόνηση ή πρόσθεσε από το «Προσθήκη άσκησης»."
         )
 
     def last_of(block: dict[str, Any]) -> dict[str, Any] | None:
@@ -2928,6 +3076,22 @@ def _workout(gym_id: str, athlete: dict[str, Any], session: dict[str, Any]) -> N
             canonical.get(exercise_id, exercise_id),
             exercises.implement_of(catalogue.get(exercise_id), str(block.get("equipment") or "")),
         ))
+
+    # The exercise being worked on stays open. Usually that is the newest one;
+    # in a workout filled from a programme or an old day every exercise is
+    # there from the start, so it is the first one whose planned sets are not
+    # all done yet — otherwise the first set of the first exercise folded it.
+    def planned(block: dict[str, Any]) -> int:
+        loaded = _loaded_of(str(block["id"]))
+        if loaded and loaded.get("sets"):
+            return len(loaded["sets"])
+        target = _target_of(gym_id, block) if block.get("program_item_id") else None
+        return fmt.integer((target or {}).get("sets")) or 0
+
+    current = next(
+        (b for b in blocks if planned(b) and len(by_block.get(str(b["id"]), [])) < planned(b)),
+        blocks[-1] if blocks else None,
+    )
 
     pairs = block_columns.pairs(blocks)
     drawn: set[str] = set()
@@ -2943,7 +3107,7 @@ def _workout(gym_id: str, athlete: dict[str, Any], session: dict[str, Any]) -> N
                 gym_id, session_id, athlete_id, pair,
                 [_resolve_exercise(gym_id, catalogue, canonical, str(b.get("exercise_id") or "")) for b in pair],
                 by_block, [last_of(b) for b in pair], names, session.get("logged_by"), today,
-                newest=pair[-1] is blocks[-1],
+                newest=current in pair,
             )
             continue
         _block_card(
@@ -2957,7 +3121,7 @@ def _workout(gym_id: str, athlete: dict[str, Any], session: dict[str, Any]) -> N
             names,
             session.get("logged_by"),
             today,
-            newest=block is blocks[-1],
+            newest=block is current,
         )
 
     with recap_slot:

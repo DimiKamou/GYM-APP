@@ -3016,6 +3016,39 @@ def test_before_013_nothing_new_shows() -> None:
         fake_supabase.MISSING_TABLES.clear()
 
 
+def test_a_new_workout_loads_an_old_day() -> None:
+    """«Φόρτωσε από παλιά προπόνηση»: the old exercises, and each set starting on the old set."""
+    _fresh_workout_open()
+    _past_workout("old1", "2026-08-27", [
+        ("e-bar", "barbell", [("60.00", 12, True), ("65.00", 10, True), ("70.00", 8, True)]),
+        ("e-db", "dumbbell", [("20.00", 12, True)]),
+    ])
+    import streamlit as st
+    st.cache_data.clear()
+    at = open_log()
+    pick = at.selectbox(key=f"log_load_pick_{state.SESSION}")
+    labels = list(pick.options)
+    check("the old days are offered", any("27 Αυγ" in label for label in labels), str(labels))
+    pick.set_value(next(i for i, label in enumerate(labels) if "27 Αυγ" in label)).run()
+    press(at, "log_load_go")
+    blocks = sorted(state.rows("blocks", session_id=state.SESSION), key=lambda b: b["position"])
+    check("its exercises go in, on the same tools", [(b["exercise_id"], b.get("equipment")) for b in blocks]
+          == [("e-bar", "barbell"), ("e-db", "dumbbell")], str(blocks))
+    check("nothing old is copied as done", not [r for r in state.STORE["sets"]
+                                                 if r["block_id"] in {b["id"] for b in blocks}])
+    first = str(blocks[0]["id"])
+    body = "\n".join(_lines(at))
+    check("the card says where it came from", "Από Πέμ 27 Αυγ: **60×12, 65×10, 70×8**" in body, body[:900])
+    check("set 1 starts on the old set 1", at.text_input(key=f"log_kg_{first}").value == "60"
+          and at.number_input(key=f"log_reps_{first}").value == 12,
+          f"{at.text_input(key=f'log_kg_{first}').value} {at.number_input(key=f'log_reps_{first}').value}")
+    button(at, f"log_set_{first}").click().run()
+    raise_on_exception(at)
+    check("set 2 starts on the old set 2", at.text_input(key=f"log_kg_{first}").value == "65"
+          and at.number_input(key=f"log_reps_{first}").value == 10,
+          f"{at.text_input(key=f'log_kg_{first}').value} {at.number_input(key=f'log_reps_{first}').value}")
+
+
 def main() -> int:
     tests = [value for name, value in sorted(globals().items()) if name.startswith("test_")]
     for test in tests:
