@@ -1,8 +1,10 @@
 """Programmes (ασκησιολόγια): what the owner prescribes, and which day comes next.
 
 A programme is numbered days, each a list of exercises with sets, reps and
-kilos. The owner hands one to an athlete with an order — «1-2-3», «1-2-1-3» —
-and a new workout for that athlete offers the next step of the order. The
+kilos, and it belongs to ONE athlete (programs.athlete_id): the gym asked for
+programmes written for a person, not general templates. It is followed in an
+order — «1-2-3», «1-2-1-3» — and a new workout for that athlete offers the
+next step of the order. The
 coach takes it or logs something else: a programme fills an empty workout, it
 never fences one.
 
@@ -266,8 +268,29 @@ def add_day(gym_id: str, program: dict[str, Any], name: str = "") -> str:
     if name.strip():
         payload["name"] = name.strip()
     rows = db.client().table("program_days").insert(payload).execute().data or []
+    _extend_default_order(gym_id, program, position)
     forget()
     return str(rows[0]["id"]) if rows else ""
+
+
+def _extend_default_order(gym_id: str, program: dict[str, Any], position: int) -> None:
+    """A new day joins the order of whoever follows the programme, if the order was the plain one.
+
+    1-2 becomes 1-2-3 by itself; an order the owner wrote by hand (1-2-1) is
+    theirs, and is left as it is.
+    """
+    athlete_id = str(program.get("athlete_id") or "")
+    if not athlete_id:
+        return
+    try:
+        row = assignment(gym_id, athlete_id)
+    except Exception:
+        return
+    if not row or str(row.get("program_id")) != str(program["id"]):
+        return
+    if sequence_of(row) == list(range(1, position)):
+        db.client().table("athlete_programs").update({"sequence": list(range(1, position + 1))}).eq(
+            "gym_id", gym_id).eq("id", row["id"]).execute()
 
 
 def add_item(gym_id: str, day: dict[str, Any], values: dict[str, Any]) -> None:
@@ -296,9 +319,9 @@ def restore(gym_id: str, table: str, row_id: str) -> None:
     forget()
 
 
-def copy_for_athlete(gym_id: str, program: dict[str, Any], athlete_id: str, athlete_name: str) -> str:
-    """A copy of a template for one athlete, so their kilos change and the template does not."""
-    new_id = create_program(gym_id, f"{program['name']} · {athlete_name}"[:120], athlete_id)
+def copy_for_athlete(gym_id: str, program: dict[str, Any], athlete_id: str, name: str = "") -> str:
+    """Another athlete's programme copied to this one, days and kilos and all, to adjust."""
+    new_id = create_program(gym_id, (name or str(program["name"]))[:120], athlete_id)
     client = db.client()
     for day in program.get("days", []):
         payload: dict[str, Any] = {"gym_id": gym_id, "program_id": new_id, "position": day["position"]}
@@ -316,6 +339,26 @@ def copy_for_athlete(gym_id: str, program: dict[str, Any], athlete_id: str, athl
         client.table("program_items").insert(copied).execute()
     forget()
     return new_id
+
+
+def new_for_athlete(
+    gym_id: str, athlete_id: str, name: str, copy_of: dict[str, Any] | None = None
+) -> str:
+    """A programme for this athlete, empty with Ημέρα 1 or copied from another, and put in use.
+
+    Assigned at once, in the plain order of its days, unless the athlete
+    already follows a programme: then it waits to be chosen on their sheet.
+    """
+    if copy_of:
+        program_id = copy_for_athlete(gym_id, copy_of, athlete_id, name)
+    else:
+        program_id = create_program(gym_id, name, athlete_id)
+        add_day(gym_id, {"id": program_id, "days": []})
+    if not assignment(gym_id, athlete_id):
+        program = program_by_id(gym_id, program_id) or {"days": []}
+        positions = [fmt.integer(d.get("position")) or 0 for d in program.get("days", [])] or [1]
+        assign(gym_id, athlete_id, program_id, positions)
+    return program_id
 
 
 def assign(gym_id: str, athlete_id: str, program_id: str, order: list[int]) -> None:

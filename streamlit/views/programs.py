@@ -1,9 +1,10 @@
-"""Προγράμματα — the owner writes the gym's programmes; every coach reads them.
+"""Προγράμματα — the owner writes each athlete's programme; every coach reads them.
 
-A programme is numbered days, each a list of exercises with what is
-prescribed: «Στήθος · Bench Press · Μπάρα · 3×12 · 60 kg». The athlete's sheet
-hands one to an athlete with an order of days, and an empty workout offers the
-next day of that order (lib/programs.py).
+A programme belongs to one athlete and is numbered days, each a list of
+exercises with what is prescribed: «Στήθος · Bench Press · Μπάρα · 3×12 · 60
+kg». It is made for someone, never in general — the gym's own rule — so the
+form starts with who it is for, and the list is read athlete by athlete. An
+empty workout of that athlete offers the next day (lib/programs.py).
 
 Only the owner sees the forms. RLS refuses anyone else's write regardless
 (013's RESTRICTIVE policies), so hiding them is courtesy, not the guard.
@@ -118,9 +119,8 @@ def _program(gym_id: str, program: dict[str, Any], owner: bool, catalogue: dict[
              group_names: dict[str, str], athlete_names: dict[str, str]) -> None:
     program_id = str(program["id"])
     title = str(program.get("name") or "")
-    who = athlete_names.get(str(program.get("athlete_id") or ""))
     days = program.get("days") or []
-    label = f"📋 {title}" + (f" · για {who}" if who else "") + f" · {len(days)} μέρες"
+    label = f"📋 {title} · {len(days)} μέρες"
     with st.expander(label, expanded=st.session_state.get(_OPEN_KEY) == program_id):
         for day in days:
             day_id = str(day["id"])
@@ -190,7 +190,10 @@ def render() -> None:
         catalogue = {str(e["id"]): e for e in log._catalogue(gym_id)}
         group_names = {str(g["id"]): str(g.get("name_el") or g.get("name_en") or "")
                        for g in log._muscle_groups(gym_id)}
-        athlete_rows = db.client().table("athletes").select("id, full_name").eq("gym_id", gym_id).execute().data or []
+        athlete_rows = (
+            db.client().table("athletes").select("id, full_name").eq("gym_id", gym_id)
+            .is_("deleted_at", "null").execute().data or []
+        )
     except Exception as exc:
         st.error("Τα προγράμματα δεν φορτώθηκαν.")
         st.caption(str(exc))
@@ -198,26 +201,73 @@ def render() -> None:
     athlete_names = {str(a["id"]): str(a.get("full_name") or "") for a in athlete_rows}
 
     if owner:
-        with st.form("prog_new", clear_on_submit=True):
-            name = st.text_input("Νέο πρόγραμμα", placeholder="π.χ. Πρόγραμμα Α — Όγκος", max_chars=120)
-            if st.form_submit_button("Δημιουργία", type="primary"):
-                if not (name or "").strip():
-                    st.error("Γράψε όνομα.")
-                else:
-                    try:
-                        new_id = programs.create_program(gym_id, name)
-                        program = {"id": new_id, "days": []}
-                        programs.add_day(gym_id, program)
-                    except Exception as exc:
-                        st.error(f"Το πρόγραμμα δεν φτιάχτηκε: {exc}")
-                    else:
-                        st.session_state[_OPEN_KEY] = new_id
-                        st.rerun()
+        new_program_form(gym_id, athlete_names, found, key="prog_new")
     else:
         st.caption("Τα προγράμματα τα γράφει ο ιδιοκτήτης. Εδώ τα διαβάζεις· στον αθλητή φαίνεται ποιο ακολουθεί.")
 
     if not found:
         st.info("Κανένα πρόγραμμα ακόμα.")
         return
+    # Athlete by athlete, in the roster's order of names. A programme from
+    # before this rule, made for nobody, is listed last so it can be copied
+    # to someone or removed.
+    by_athlete: dict[str, list[dict[str, Any]]] = {}
     for program in found:
-        _program(gym_id, program, owner, catalogue, group_names, athlete_names)
+        by_athlete.setdefault(str(program.get("athlete_id") or ""), []).append(program)
+    order = sorted(by_athlete, key=lambda a: (not a, fmt.fold(athlete_names.get(a, ""))))
+    for athlete_id in order:
+        st.subheader(athlete_names.get(athlete_id) or ("Χωρίς αθλητή" if not athlete_id else "—"))
+        for program in by_athlete[athlete_id]:
+            _program(gym_id, program, owner, catalogue, group_names, athlete_names)
+
+
+def new_program_form(
+    gym_id: str,
+    athlete_names: dict[str, str],
+    found: list[dict[str, Any]],
+    key: str,
+    athlete_id: str | None = None,
+) -> None:
+    """«Νέο πρόγραμμα»: for whom, its name, and optionally another programme to start from.
+
+    `athlete_id` fixes the athlete (the form on their own sheet). Starting from
+    another programme copies its days and kilos, the way a coach adjusts a
+    colleague's programme for a new athlete instead of retyping it.
+    """
+    with st.form(key, clear_on_submit=True):
+        if athlete_id is None:
+            chosen = st.selectbox(
+                "Για ποιον αθλητή", options=sorted(athlete_names, key=lambda a: fmt.fold(athlete_names[a])),
+                format_func=lambda a: athlete_names.get(a, a), index=None, placeholder="Διάλεξε αθλητή",
+                key=f"{key}_athlete",
+            )
+        else:
+            chosen = athlete_id
+        name = st.text_input("Όνομα προγράμματος", placeholder="π.χ. Όγκος — Νοέμβριος", max_chars=120,
+                             key=f"{key}_name")
+        sources = {str(p["id"]): p for p in found}
+        source = st.selectbox(
+            "Ξεκίνα από (προαιρετικά)", options=list(sources), index=None,
+            format_func=lambda pid: str(sources[pid].get("name") or "") + (
+                f" · {athlete_names[str(sources[pid].get('athlete_id'))]}"
+                if str(sources[pid].get("athlete_id") or "") in athlete_names else ""),
+            placeholder="Κενό πρόγραμμα", key=f"{key}_source",
+            help="Αντιγράφει τις μέρες και τα κιλά, για να τα προσαρμόσεις.",
+        )
+        submitted = st.form_submit_button("Δημιουργία", type="primary")
+    if not submitted:
+        return
+    if not chosen:
+        st.error("Διάλεξε για ποιον αθλητή είναι.")
+        return
+    if not (name or "").strip():
+        st.error("Γράψε όνομα.")
+        return
+    try:
+        new_id = programs.new_for_athlete(gym_id, str(chosen), name.strip(), sources.get(source or ""))
+    except Exception as exc:
+        st.error(f"Το πρόγραμμα δεν φτιάχτηκε: {exc}")
+        return
+    st.session_state[_OPEN_KEY] = new_id
+    ui.notice(_NOTICE, "ok", f"Φτιάχτηκε το «{name.strip()}» για {athlete_names.get(str(chosen), '')}.")
+    st.rerun()

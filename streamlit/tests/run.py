@@ -2826,7 +2826,8 @@ def _seed_programme(order=(1, 2)) -> tuple[str, str, str]:
     """A two-day template with one exercise a day, assigned to the athlete. (program, item1, assignment)."""
     from lib import programs
 
-    program = programs.create_program(state.GYM, "Πρόγραμμα Α")
+    athlete = state.STORE["athletes"][0]["id"]
+    program = programs.create_program(state.GYM, "Πρόγραμμα Α", athlete)
     for name, exercise, kg in (("Στήθος", "e-bar", "60"), ("Πλάτη", "e-db", None)):
         programs.add_day(state.GYM, programs.program_by_id(state.GYM, program), name)
         day = programs.program_by_id(state.GYM, program)["days"][-1]
@@ -2841,13 +2842,25 @@ def _seed_programme(order=(1, 2)) -> tuple[str, str, str]:
 def test_the_owner_writes_a_programme() -> None:
     state.reset()
     at = open_screen(PROGRAMS_DRIVER)
-    form_name = [w for w in at.text_input if w.label == "Νέο πρόγραμμα"][0]
-    form_name.set_value("Όγκος")
+    at.text_input(key="prog_new_name").set_value("Όγκος")
+    button(at, "prog_new").click().run()
+    raise_on_exception(at)
+    check("a programme for nobody is refused", not state.rows("programs") and "για ποιον αθλητή" in texts(at),
+          texts(at)[:400])
+    athlete = state.STORE["athletes"][0]
+    at.selectbox(key="prog_new_athlete").set_value(athlete["id"])
+    at.text_input(key="prog_new_name").set_value("Όγκος")
     button(at, "prog_new").click().run()
     raise_on_exception(at)
     made = state.rows("programs")
-    check("a programme with its first day", len(made) == 1 and len(state.rows("program_days")) == 1,
+    check("a programme for that athlete, with its first day",
+          len(made) == 1 and made[0].get("athlete_id") == athlete["id"] and len(state.rows("program_days")) == 1,
           f"{made} {state.rows('program_days')}")
+    live = state.rows("athlete_programs", athlete_id=athlete["id"])
+    check("and put in use at once", len(live) == 1 and live[0]["program_id"] == made[0]["id"]
+          and live[0]["sequence"] == [1], str(live))
+    check("listed under the athlete's name", athlete["full_name"] in [h.value for h in at.subheader],
+          str([h.value for h in at.subheader]))
     day = state.rows("program_days")[0]["id"]
     at.selectbox(key=f"prog_name_{day}_-1").set_value("Πιέσεις Στήθους").run()
     raise_on_exception(at)
@@ -2914,24 +2927,49 @@ def test_the_order_wraps_round() -> None:
         check("a day the programme lacks is refused", "Ημέρα 4" in str(exc), str(exc))
 
 
-def test_the_owner_assigns_from_the_athlete_sheet() -> None:
+def test_the_athlete_sheet_makes_his_own_programme() -> None:
     from lib import programs
 
     state.reset()
-    program = programs.create_program(state.GYM, "Δύναμη")
-    programs.add_day(state.GYM, programs.program_by_id(state.GYM, program), "Α")
-    programs.add_day(state.GYM, programs.program_by_id(state.GYM, program), "Β")
+    other = programs.create_program(state.GYM, "Δύναμη", "someone-else")
+    programs.add_day(state.GYM, programs.program_by_id(state.GYM, other), "Α")
+    programs.add_day(state.GYM, programs.program_by_id(state.GYM, other), "Β")
     at = open_athlete()
     athlete = state.STORE["athletes"][0]["id"]
-    at.text_input(key=f"athlete_prog_order_{athlete}_{program}").set_value("1-2-1")
-    at.checkbox(key=f"athlete_prog_copy_{athlete}").check()
+    check("another athlete's programme is not offered to him",
+          not [w for w in at.selectbox if w.key == f"athlete_prog_pick_{athlete}"])
+    key = f"athlete_prog_new_{athlete}"
+    at.text_input(key=f"{key}_name").set_value("Δύναμη · δική του")
+    at.selectbox(key=f"{key}_source").set_value(other)
+    button(at, key).click().run()
+    raise_on_exception(at)
+    mine = [p for p in state.rows("programs") if p.get("athlete_id") == athlete]
+    check("his own copy", len(mine) == 1 and len(state.rows("program_days", program_id=mine[0]["id"])) == 2,
+          str(mine))
+    live = state.rows("athlete_programs", athlete_id=athlete)
+    check("in use, in the order of its days", len(live) == 1 and live[0]["sequence"] == [1, 2], str(live))
+    check("the sheet says what comes next", "Επόμενη: Ημέρα 1 · Α" in texts(at), texts(at)[:700])
+
+    at.text_input(key=f"athlete_prog_order_{athlete}_{mine[0]['id']}").set_value("1-2-1")
     press(at, f"athlete_prog_assign_{athlete}")
     live = state.rows("athlete_programs", athlete_id=athlete)
-    copies = [p for p in state.rows("programs") if p.get("athlete_id") == athlete]
-    check("assigned to a copy of his own", len(live) == 1 and len(copies) == 1
-          and live[0]["program_id"] == copies[0]["id"] and live[0]["sequence"] == [1, 2, 1], f"{live} {copies}")
-    check("the copy has the template's days", len(state.rows("program_days", program_id=copies[0]["id"])) == 2)
-    check("the sheet says what comes next", "Επόμενη: Ημέρα 1 · Α" in texts(at), texts(at)[:700])
+    check("the order is his to change", len(live) == 1 and live[0]["sequence"] == [1, 2, 1], str(live))
+
+    programs.forget()
+    programs.add_day(state.GYM, programs.program_by_id(state.GYM, mine[0]["id"]), "Γ")
+    check("a hand-written order is not touched by a new day",
+          state.rows("athlete_programs", athlete_id=athlete)[0]["sequence"] == [1, 2, 1])
+
+
+def test_a_new_day_joins_the_plain_order() -> None:
+    from lib import programs
+
+    state.reset()
+    athlete = state.STORE["athletes"][0]["id"]
+    program = programs.new_for_athlete(state.GYM, athlete, "Νέο")
+    programs.add_day(state.GYM, programs.program_by_id(state.GYM, program), "Β")
+    check("1 becomes 1-2", state.rows("athlete_programs", athlete_id=athlete)[0]["sequence"] == [1, 2],
+          str(state.rows("athlete_programs", athlete_id=athlete)))
 
 
 def test_a_shared_link_shows_progress_without_signing_in() -> None:
