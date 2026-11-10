@@ -94,18 +94,30 @@ def render(token: str) -> None:
     st.title(str(data.get("athlete") or ""))
     st.caption(f"{data.get('gym') or ''} · μόνο για ανάγνωση")
 
-    month_ago = today - timedelta(days=30)
-    recent = [w for w in workouts if (fmt.parse_local_date(w["session"].get("local_date")) or date.min) >= month_ago]
-    st.markdown(f"**{len(recent)}** προπονήσεις τις τελευταίες 30 μέρες · **{len(workouts)}** συνολικά")
+    # The period is the database's answer (014): the page only says it.
+    first = fmt.parse_local_date(data.get("from"))
+    last = fmt.parse_local_date(data.get("to")) or today
+    if first:
+        span = share.period_text(data, today) if data.get("period_days") else (
+            f"{fmt.format_day(first, today)} – {fmt.format_day(last, today)}")
+        st.markdown(f"Περίοδος: **{fmt.md(span)}** · **{len(workouts)}** προπονήσεις")
+    else:
+        month_ago = today - timedelta(days=30)
+        recent = [w for w in workouts
+                  if (fmt.parse_local_date(w["session"].get("local_date")) or date.min) >= month_ago]
+        st.markdown(f"**{len(recent)}** προπονήσεις τις τελευταίες 30 μέρες · **{len(workouts)}** συνολικά")
 
-    stored = st.session_state.get(_MONTH_KEY) or (today.year, today.month)
+    # Opens on the period's last month and never leaves the period.
+    stored = st.session_state.get(_MONTH_KEY) or (last.year, last.month)
     year, month = stored
+    earliest = (first.year, first.month) if first else (1900, 1)
+    latest = (last.year, last.month)
     row = st.container(horizontal=True, vertical_alignment="center", wrap=False)
-    if row.button("‹", key="shared_back", width=48):
+    if row.button("‹", key="shared_back", width=48, disabled=(year, month) <= earliest):
         st.session_state[_MONTH_KEY] = (year - (month == 1), 12 if month == 1 else month - 1)
         st.rerun()
     row.markdown(f"**{recap.MONTHS_FULL_EL[month - 1]} {year}**", width="stretch", text_alignment="center")
-    if row.button("›", key="shared_forward", width=48, disabled=(year, month) >= (today.year, today.month)):
+    if row.button("›", key="shared_forward", width=48, disabled=(year, month) >= latest):
         st.session_state[_MONTH_KEY] = (year + (month == 12), 1 if month == 12 else month + 1)
         st.rerun()
     in_month = [w for w in workouts if (fmt.parse_local_date(w["session"].get("local_date")) or date.min)

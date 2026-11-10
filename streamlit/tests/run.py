@@ -2985,9 +2985,17 @@ def test_a_shared_link_shows_progress_without_signing_in() -> None:
     state.reset()
     at = open_athlete()
     athlete = state.STORE["athletes"][0]
+    # A fixed range around the seeded workouts, so the test does not age out.
+    kind = at.button_group(key=f"athlete_share_period_{athlete['id']}_kind")
+    check("the period is offered, 3 months first", kind.value == "3m", str(kind.value))
+    kind.set_value("custom").run()
+    at.date_input(key=f"athlete_share_period_{athlete['id']}_range").set_value(
+        (date(2026, 8, 1), date(2026, 9, 30))).run()
     press(at, f"athlete_share_new_{athlete['id']}")
     shares = state.rows("athlete_shares", athlete_id=athlete["id"])
     check("a link is minted", len(shares) == 1, str(shares))
+    check("for that range", shares and shares[0].get("from_date") == "2026-08-01"
+          and shares[0].get("to_date") == "2026-09-30", str(shares))
     check("with its QR code", len(at.get("image")) >= 1, str(len(at.get("image"))))
     token = shares[0]["token"]
     check("the address carries the token", any(token in str(c.value) for c in at.code), str([c.value for c in at.code]))
@@ -3007,6 +3015,53 @@ def test_a_shared_link_shows_progress_without_signing_in() -> None:
     page.session_state["share_token"] = token
     page.run()
     check("a revoked link shows nothing", "δεν ισχύει" in texts(page), texts(page)[:300])
+
+
+def test_a_link_shows_only_its_period() -> None:
+    from lib import share
+
+    state.reset()
+    athlete = state.STORE["athletes"][0]
+    at = open_athlete()
+    at.button_group(key=f"athlete_share_period_{athlete['id']}_kind").set_value("1m").run()
+    press(at, f"athlete_share_new_{athlete['id']}")
+    token = state.rows("athlete_shares", athlete_id=athlete["id"])[0]["token"]
+    check("the month is stored as 30 days", state.rows("athlete_shares", token=token)[0].get("period_days") == 30)
+    check("the sheet says the period", "Περίοδος: **Μήνας**" in texts(at), texts(at)[:900])
+
+    share.fetch.clear()
+    page = AppTest.from_file(SHARED_DRIVER, default_timeout=60)
+    page.session_state["share_token"] = token
+    page.run()
+    raise_on_exception(page)
+    check("the page says its period", "Περίοδος: **Μήνας**" in texts(page), texts(page)[:400])
+    check("a workout before the month is not on it", "Πιέσεις Στήθους" not in texts(page), texts(page)[:600])
+
+    at.button_group(key=f"athlete_share_edit_{athlete['id']}_kind").set_value("custom").run()
+    at.date_input(key=f"athlete_share_edit_{athlete['id']}_range").set_value(
+        (date(2026, 8, 1), date(2026, 9, 30))).run()
+    press(at, f"athlete_share_save_{athlete['id']}")
+    row = state.rows("athlete_shares", token=token)[0]
+    check("the same link, another period", row.get("from_date") == "2026-08-01" and row.get("period_days") is None,
+          str(row))
+    page = AppTest.from_file(SHARED_DRIVER, default_timeout=60)
+    page.session_state["share_token"] = token
+    page.run()
+    check("and the page follows it", "Πιέσεις Στήθους" in texts(page), texts(page)[:600])
+
+
+def test_before_014_a_link_has_no_period() -> None:
+    state.reset()
+    fake_supabase.MISSING_COLUMNS["athlete_shares"] = {"period_days", "from_date", "to_date"}
+    try:
+        at = open_athlete()
+        athlete = state.STORE["athletes"][0]
+        check("no period choice yet", not [w for w in at.button_group
+                                           if w.key == f"athlete_share_period_{athlete['id']}_kind"])
+        press(at, f"athlete_share_new_{athlete['id']}")
+        check("and a link is still made", len(state.rows("athlete_shares", athlete_id=athlete["id"])) == 1)
+    finally:
+        fake_supabase.MISSING_COLUMNS.clear()
 
 
 def test_before_013_nothing_new_shows() -> None:
