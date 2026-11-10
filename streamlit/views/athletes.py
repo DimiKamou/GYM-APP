@@ -364,11 +364,11 @@ _CALENDAR_KEY = "athlete_calendar"
 
 
 def _program_section(gym_id: str, athlete: dict[str, Any]) -> None:
-    """Which programme the athlete follows and what comes next; the owner assigns it.
+    """The athlete's own programme and what comes next; the owner makes and assigns it.
 
-    «Δικό του αντίγραφο» copies a template for this athlete alone, so their
-    kilos change on the copy and the template the rest of the gym follows does
-    not. A brand-new programme is written in Προγράμματα.
+    Programmes are written for one athlete (lib/programs.py), so only this
+    athlete's are offered here, and a new one can be started from anyone's to
+    adjust instead of retyping it.
     """
     if not programs.ready(gym_id):
         return
@@ -378,6 +378,7 @@ def _program_section(gym_id: str, athlete: dict[str, Any]) -> None:
         found = programs.programs(gym_id)
     except Exception:
         return
+    mine = [p for p in found if str(p.get("athlete_id") or "") == athlete_id]
     current = next((p for p in found if row and str(p["id"]) == str(row["program_id"])), None)
     owner = db.is_owner()
     if not current and not owner:
@@ -396,11 +397,21 @@ def _program_section(gym_id: str, athlete: dict[str, Any]) -> None:
     if not owner:
         return
 
-    mine = [p for p in found if not p.get("athlete_id") or str(p.get("athlete_id")) == athlete_id]
-    with st.expander("Ανάθεση προγράμματος" if not current else "Αλλαγή προγράμματος"):
-        if not mine:
-            st.caption("Δεν υπάρχει πρόγραμμα ακόμα — φτιάξε ένα στα Προγράμματα.")
-            return
+    from views import programs as programs_view
+
+    with st.expander("Νέο πρόγραμμα για τον αθλητή"):
+        try:
+            names = gym_athlete_names(gym_id)
+        except Exception:
+            names = {}
+        names.setdefault(athlete_id, str(athlete.get("full_name") or ""))
+        programs_view.new_program_form(gym_id, names, found, key=f"athlete_prog_new_{athlete_id}",
+                                       athlete_id=athlete_id)
+        st.caption("Τις μέρες και τις ασκήσεις τις γράφεις στα Προγράμματα.")
+
+    if not mine:
+        return
+    with st.expander("Σειρά ημερών / αλλαγή προγράμματος"):
         picked = st.selectbox(
             "Πρόγραμμα", options=[str(p["id"]) for p in mine],
             format_func=lambda pid: next(str(p.get("name") or "") for p in mine if str(p["id"]) == pid),
@@ -410,34 +421,32 @@ def _program_section(gym_id: str, athlete: dict[str, Any]) -> None:
         program = next(p for p in mine if str(p["id"]) == picked)
         positions = [fmt.integer(d.get("position")) or 0 for d in program.get("days", [])]
         st.caption(" · ".join(programs.day_label(d) for d in program.get("days", [])) or "Χωρίς μέρες ακόμα.")
+        default = row and str(row["program_id"]) == picked and programs.sequence_of(row) or positions
         order_text = st.text_input(
-            "Σειρά ημερών", value="-".join(map(str, positions)),
+            "Σειρά ημερών", value="-".join(map(str, default)),
             help="Π.χ. 1-2-3, ή 1-2-1-3. Μετά την τελευταία ξαναρχίζει από την αρχή.",
             key=f"athlete_prog_order_{athlete_id}_{picked}",
         )
-        copy = st.checkbox(
-            "Δικό του αντίγραφο (για να αλλάξεις κιλά μόνο σε αυτόν)",
-            value=False, disabled=bool(program.get("athlete_id")),
-            key=f"athlete_prog_copy_{athlete_id}",
-        )
-        if st.button("Ανάθεση", key=f"athlete_prog_assign_{athlete_id}", type="primary"):
+        if st.button("Αποθήκευση", key=f"athlete_prog_assign_{athlete_id}", type="primary"):
             try:
-                order = programs.parse_sequence(order_text, positions)
-                program_id = (
-                    programs.copy_for_athlete(gym_id, program, athlete_id, str(athlete.get("full_name") or ""))
-                    if copy and not program.get("athlete_id") else str(program["id"])
-                )
-                programs.assign(gym_id, athlete_id, program_id, order)
+                programs.assign(gym_id, athlete_id, picked, programs.parse_sequence(order_text, positions))
             except Exception as exc:
                 st.error(str(exc))
             else:
-                ui.notice(_NOTICE, "ok", "Το πρόγραμμα ανατέθηκε." + (
-                    " Άλλαξε τα κιλά του στα Προγράμματα." if copy else ""))
+                ui.notice(_NOTICE, "ok", "Το πρόγραμμα του αθλητή αποθηκεύτηκε.")
                 st.rerun()
         if current and row and st.button("Τέλος προγράμματος", key=f"athlete_prog_end_{athlete_id}"):
             programs.unassign(gym_id, str(row["id"]))
             ui.notice(_NOTICE, "ok", "Ο αθλητής δεν ακολουθεί πια πρόγραμμα.")
             st.rerun()
+
+
+def gym_athlete_names(gym_id: str) -> dict[str, str]:
+    """Every athlete's name, for naming whose programme a copy starts from."""
+    rows = (
+        db.client().table("athletes").select("id, full_name").eq("gym_id", gym_id).execute().data or []
+    )
+    return {str(r["id"]): str(r.get("full_name") or "") for r in rows}
 
 
 def _share_section(gym_id: str, athlete: dict[str, Any]) -> None:
