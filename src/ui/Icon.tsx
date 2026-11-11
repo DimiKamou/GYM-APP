@@ -47,6 +47,10 @@ export type IconName =
   | 'alert'
   | 'offline'
   | 'sparkle'
+  | 'trophy'
+  | 'chart'
+  | 'flame'
+  | 'list'
 
 export interface IconProps {
   name: IconName
@@ -205,6 +209,29 @@ const PATHS: Record<IconName, ReactElement> = {
     <>
       <path d="M12 3.5l1.8 4.7 4.7 1.8-4.7 1.8L12 16.5l-1.8-4.7L5.5 10l4.7-1.8z" />
       <path d="M18.5 16.5l.8 2 2 .8-2 .8-.8 2-.8-2-2-.8 2-.8z" />
+    </>
+  ),
+  trophy: (
+    <>
+      <path d="M7.5 4h9v5a4.5 4.5 0 0 1-9 0z" />
+      <path d="M7.5 6H4.5a3 3 0 0 0 3 4M16.5 6h3a3 3 0 0 1-3 4" />
+      <path d="M12 13.5V17M8.5 20h7M9.5 17h5" />
+    </>
+  ),
+  chart: (
+    <>
+      <path d="M4 19.5h16" />
+      <path d="M5 15.5l4.5-4.5 3.5 3 6-6.5" />
+      <path d="M15.5 7.5H19V11" />
+    </>
+  ),
+  flame: (
+    <path d="M12 21c-3.6 0-6-2.4-6-5.6 0-3.5 3-5.3 3.6-8.9 2.3 1.4 3.4 3.4 3.3 5.4 1-.6 1.7-1.7 1.9-3 1.9 1.6 3.2 4 3.2 6.5 0 3.2-2.4 5.6-6 5.6z" />
+  ),
+  list: (
+    <>
+      <path d="M9 6.5h11M9 12h11M9 17.5h11" />
+      <path d="M4.5 6.5h.01M4.5 12h.01M4.5 17.5h.01" strokeWidth={2.6} />
     </>
   ),
 }

@@ -11,6 +11,7 @@ import {
   useBriefing,
   useDeleteBlock,
   useExercises,
+  useExercisesByIds,
   useFinishSession,
   useLastPerformance,
   useSessionTree,
@@ -20,11 +21,17 @@ import {
   useUndoableSetDelete,
   useUpdateSession,
   useUpdateSet,
+  useUpdateBlock,
+  useCapabilities,
+  useNextProgramDay,
+  useProgramItems,
   type SetPatch,
 } from '@/data/hooks'
+import { blockEquipment } from '@/domain/analytics'
+import { setsSummary, supersetPairs, targetText } from '@/domain/recap'
 import { sessionSets, sessionVolume } from '@/domain/analytics'
 import { formatDate, formatSet, formatWeight, type Locale } from '@/domain/format'
-import type { LastPerformance, SetKind, Uuid, WorkoutSet } from '@/domain/types'
+import type { Block, Equipment, LastPerformance, SetKind, Uuid, WorkoutSet } from '@/domain/types'
 import { currentLocale } from '@/i18n'
 import {
   Button,
@@ -42,6 +49,14 @@ import { FinishSheet, type FinishPayload } from '@/screens/log/FinishSheet'
 import { RestBar } from '@/screens/log/RestBar'
 import { SessionHeader } from '@/screens/log/SessionHeader'
 import { FIELD_SEQUENCE, fieldKey, fieldValue, type SetField } from '@/screens/log/SetRow'
+import { LoadOldDaySheet, ProgramDayOffer, dayLabel } from '@/screens/log/StartFrom'
+import { useSessionMemo, type OldSet } from '@/screens/log/sessionMemo'
+import { RecentWorkouts } from '@/screens/history/HistoryViews'
+import { useHistory, workoutsBefore, type Workout } from '@/screens/history/workouts'
+import { useMuscleIndex } from '@/screens/log/ExercisePicker'
+import { todayIn } from '@/screens/calendar/WeekStrip'
+import { muscleGroupName } from '@/ui/MuscleChip'
+import { useAuth } from '@/auth/useAuth'
 
 /**
  * The Workout Log — the screen the whole product is timed against.
@@ -99,6 +114,8 @@ interface PadState {
   field: SetField
   draft: Draft
   restS: number
+  /** A superset round: once this set is written, the pad opens on the partner's new set. */
+  chainTo?: Uuid
 }
 
 interface PadConfig {
@@ -252,7 +269,25 @@ function LogScreenBody() {
   const exercises = useExercises()
 
   const [pad, setPad] = useState<PadState | null>(null)
-  const [picker, setPicker] = useState<{ blockId: Uuid | null } | null>(null)
+  /** `supersetId`: the picker is choosing one half of a new superset; `second`: the other half. */
+  const [picker, setPicker] = useState<{ blockId: Uuid | null; supersetId?: Uuid; second?: boolean } | null>(null)
+  const [measures, setMeasures] = useState<Record<Uuid, 'reps' | 'time'>>({})
+  const [oldDayOpen, setOldDayOpen] = useState(false)
+  const [filling, setFilling] = useState(false)
+  const [memo, updateMemo] = useSessionMemo(sessionId)
+  const { gym } = useAuth()
+  const caps = useCapabilities()
+  const index = useMuscleIndex()
+  const { history } = useHistory(athleteId)
+  const before = useMemo(
+    () => (history && session ? workoutsBefore(history.workouts, session) : []),
+    [history, session],
+  )
+  const nextDay = useNextProgramDay(caps.programs && session?.blocks.length === 0 ? athleteId : undefined)
+  const programItems = useProgramItems(
+    (session?.blocks ?? []).map((b) => b.programItemId).filter((id): id is Uuid => Boolean(id)),
+  )
+  const updateBlock = useUpdateBlock()
   const [restEndsAt, setRestEndsAt] = useState<number | null>(null)
   const [finishOpen, setFinishOpen] = useState(false)
   const [finishing, setFinishing] = useState(false)
@@ -276,14 +311,56 @@ function LogScreenBody() {
 
   useWakeLock(session?.status === 'active')
 
+  // An old session can name exercises the live catalogue has since retired; they are fetched
+  // by id so the block still says what was lifted.
+  const missingExerciseIds = useMemo(() => {
+    if (!exercises.data || !session) return []
+    const live = new Set(exercises.data.map((exercise) => exercise.id))
+    return [...new Set(session.blocks.map((block) => block.exerciseId))].filter((id) => !live.has(id))
+  }, [exercises.data, session])
+  const retiredExercises = useExercisesByIds(missingExerciseIds)
+
   const exerciseById = useMemo(
-    () => new Map((exercises.data ?? []).map((exercise) => [exercise.id, exercise])),
-    [exercises.data],
+    () =>
+      new Map(
+        [...(exercises.data ?? []), ...(retiredExercises.data ?? [])].map((exercise) => [exercise.id, exercise]),
+      ),
+    [exercises.data, retiredExercises.data],
   )
   const memberName = useMemo(
     () => new Map((team.data ?? []).map((member) => [member.id, member.displayName])),
     [team.data],
   )
+
+  /** The whole day's sets the last time, on this exercise and this tool, with when and who. */
+  function lastDayOf(block: Block): string | null {
+    const exercise = exerciseById.get(block.exerciseId)
+    const tool = blockEquipment(block, exercise)
+    for (const workout of before) {
+      const match = workout.blocks.find(
+        (b) => b.exerciseId === block.exerciseId && blockEquipment(b, exerciseById.get(b.exerciseId)) === tool,
+      )
+      if (!match) continue
+      const summary = setsSummary(workout.sets.filter((s) => s.blockId === match.id), locale)
+      if (!summary) continue
+      const who = memberName.get(workout.session.creditedTo ?? workout.session.loggedBy)
+      return [formatDate(workout.session.localDate, locale), who, summary].filter(Boolean).join(' · ')
+    }
+    return null
+  }
+
+  function groupsOf(exerciseId: Uuid): Array<{ id: Uuid; name: string }> {
+    return (index.byExercise.get(exerciseId) ?? []).map((entry) => ({
+      id: entry.group.id,
+      name: muscleGroupName(entry.group, locale),
+    }))
+  }
+
+  /** The tool fixed by the name («Cable Lateral Raise») is preselected; a choice is asked. */
+  function fixedTool(exerciseId: Uuid): Equipment | null {
+    const options = exerciseById.get(exerciseId)?.equipmentOptions
+    return options && options.length === 1 ? options[0] : null
+  }
 
   const loggedByName = session ? (memberName.get(session.loggedBy) ?? null) : null
   // Rendered only when it actually differs. A permanent "credited to <the same person>" on
@@ -304,11 +381,13 @@ function LogScreenBody() {
 
   // ---- writes -------------------------------------------------------------
 
-  function openPadForNewSet(blockId: Uuid): void {
+  function openPadForNewSet(blockId: Uuid, chainTo?: Uuid): void {
     const block = session?.blocks.find((candidate) => candidate.id === blockId)
     if (!block) return
     const exercise = exerciseById.get(block.exerciseId)
-    const kind = blockSetKind(block, exercise)
+    const kind: SetKind =
+      block.sets.length === 0 && measures[blockId] === 'time' ? 'duration' : blockSetKind(block, exercise)
+    foldBefore(blockId)
     const previous = block.sets[block.sets.length - 1]
     setPad({
       blockId,
@@ -320,7 +399,25 @@ function LogScreenBody() {
       field: FIELD_SEQUENCE[kind][0],
       draft: EMPTY_DRAFT,
       restS: exercise?.defaultRestS ?? DEFAULT_REST_S,
+      chainTo,
     })
+  }
+
+  /** Moving on to an exercise folds the ones before it that have sets, unless reopened. */
+  function foldBefore(blockId: Uuid): void {
+    const order = session?.blocks ?? []
+    const at = order.findIndex((b) => b.id === blockId)
+    const earlier = order.slice(0, Math.max(at, 0)).filter((b) => b.sets.length > 0 && !memo.opened.includes(b.id))
+    if (earlier.length === 0) return
+    updateMemo((m) => ({ ...m, folded: [...new Set([...m.folded, ...earlier.map((b) => b.id)])] }))
+  }
+
+  function toggleFold(blockId: Uuid): void {
+    updateMemo((m) =>
+      m.folded.includes(blockId)
+        ? { ...m, folded: m.folded.filter((id) => id !== blockId), opened: [...new Set([...m.opened, blockId])] }
+        : { ...m, folded: [...m.folded, blockId], opened: m.opened.filter((id) => id !== blockId) },
+    )
   }
 
   function openPadForSet(blockId: Uuid, set: WorkoutSet, field: SetField): void {
@@ -350,7 +447,9 @@ function LogScreenBody() {
       return
     }
 
-    const draft: Draft = { ...pad.draft, ...withValue(pad.field, value) }
+    // The kilos of a timed set are optional: 0 on the pad is "none", not a 0 kg load.
+    const entered = pad.kind === 'duration' && pad.field === 'load' && value === 0 ? { loadKg: null } : withValue(pad.field, value)
+    const draft: Draft = { ...pad.draft, ...entered }
     const sequence = FIELD_SEQUENCE[pad.kind]
     const next = sequence[sequence.indexOf(pad.field) + 1]
     // Straight on to the next field with the pad still up. Lowering and raising it between the
@@ -369,10 +468,22 @@ function LogScreenBody() {
       ...draft,
     })
     setPad(null)
+    // A superset round: straight on to the partner, and the rest starts after both.
+    if (pad.chainTo) {
+      openPadForNewSet(pad.chainTo)
+      return
+    }
     startRest(pad.restS)
   }
 
-  function repeatLast(blockId: Uuid): void {
+  /** «Ίδιος γύρος»: the same set again on both halves of a superset. */
+  function repeatRound(blockIds: readonly Uuid[]): void {
+    for (const id of blockIds) repeatLast(id, false)
+    const first = session?.blocks.find((b) => b.id === blockIds[0])
+    startRest(exerciseById.get(first?.exerciseId ?? '')?.defaultRestS ?? DEFAULT_REST_S)
+  }
+
+  function repeatLast(blockId: Uuid, rest = true): void {
     if (!sessionId || !athleteId) return
     const block = session?.blocks.find((candidate) => candidate.id === blockId)
     const previous = block?.sets[block.sets.length - 1]
@@ -394,7 +505,7 @@ function LogScreenBody() {
       // that nobody made.
       rpe: null,
     })
-    startRest(exerciseById.get(block.exerciseId)?.defaultRestS ?? DEFAULT_REST_S)
+    if (rest) startRest(exerciseById.get(block.exerciseId)?.defaultRestS ?? DEFAULT_REST_S)
   }
 
   async function removeSet(exerciseId: Uuid, set: WorkoutSet): Promise<void> {
@@ -410,18 +521,100 @@ function LogScreenBody() {
     })
   }
 
-  function chooseExercise(exerciseId: Uuid): void {
+  function chooseExercise(exerciseId: Uuid, underGroup: Uuid | null = null): void {
     if (!session || !sessionId) return
     const target = picker?.blockId ?? null
+    const superset = picker?.supersetId
+    const second = picker?.second ?? false
     setPicker(null)
     if (target) {
       // Re-pointing an existing block keeps its sets, their positions and their authors. It is
       // the repair for "right numbers, wrong exercise", which is why removing a block can stay
       // restricted to empty ones.
-      setBlockExercise.mutate({ sessionId, blockId: target, exerciseId })
+      setBlockExercise.mutate({ sessionId, blockId: target, exerciseId, equipment: fixedTool(exerciseId) })
       return
     }
-    addBlock.mutate({ sessionId, blockId: newId(), exerciseId, position: session.blocks.length })
+    const primary = index.byExercise.get(exerciseId)?.[0]?.group.id ?? null
+    addBlock.mutate({
+      sessionId,
+      blockId: newId(),
+      exerciseId,
+      position: session.blocks.length + (second ? 1 : 0),
+      equipment: fixedTool(exerciseId),
+      muscleGroupId: caps.blockGroups && underGroup && underGroup !== primary ? underGroup : null,
+      supersetId: caps.blockGroups ? (superset ?? null) : null,
+    })
+    // The first half of a superset is in; the picker comes straight back for the second.
+    if (superset && !second) setPicker({ blockId: null, supersetId: superset, second: true })
+  }
+
+  /** The programme's next day, every exercise in, each block remembering its item (013). */
+  async function startProgramDay(): Promise<void> {
+    if (!session || !sessionId || !athleteId || !nextDay) return
+    setFilling(true)
+    try {
+      for (const [offset, item] of nextDay.day.items.entries()) {
+        await addBlock.mutateAsync({
+          sessionId,
+          blockId: newId(),
+          exerciseId: item.exerciseId,
+          position: session.blocks.length + offset,
+          equipment: item.equipment ?? fixedTool(item.exerciseId),
+          muscleGroupId: caps.blockGroups ? item.muscleGroupId : null,
+          programItemId: item.id,
+        })
+      }
+      updateSession.mutate({
+        sessionId,
+        athleteId,
+        patch: {
+          athleteProgramId: nextDay.assignment.id,
+          programStep: nextDay.step,
+          title: session.title ?? dayLabel(t('programs.day'), nextDay.day.position, nextDay.day.name),
+        },
+      })
+    } finally {
+      setFilling(false)
+    }
+  }
+
+  /** An old day's exercises on the same tools, groups and supersets; no set marked as done. */
+  async function loadOldDay(workout: Workout): Promise<void> {
+    if (!session || !sessionId) return
+    setFilling(true)
+    try {
+      const pairs = new Map<string, Uuid>()
+      const blocks = [...workout.blocks].sort((a, b) => a.position - b.position || (a.id < b.id ? -1 : 1))
+      const who = memberName.get(workout.session.creditedTo ?? workout.session.loggedBy)
+      const label = [formatDate(workout.session.localDate, locale), who].filter(Boolean).join(' · ')
+      const fromOld: Record<Uuid, { label: string; sets: OldSet[] }> = {}
+      for (const [offset, old] of blocks.entries()) {
+        const blockId = newId()
+        let supersetId: Uuid | null = null
+        if (old.supersetId) {
+          supersetId = pairs.get(old.supersetId) ?? newId()
+          pairs.set(old.supersetId, supersetId)
+        }
+        await addBlock.mutateAsync({
+          sessionId,
+          blockId,
+          exerciseId: old.exerciseId,
+          position: session.blocks.length + offset,
+          equipment: old.equipment,
+          muscleGroupId: caps.blockGroups ? (old.muscleGroupId ?? null) : null,
+          supersetId: caps.blockGroups ? supersetId : null,
+        })
+        const sets = workout.sets
+          .filter((s) => s.blockId === old.id)
+          .sort((a, b) => a.position - b.position || (a.id < b.id ? -1 : 1))
+          .map(({ kind, loadKg, reps, seconds, meters }) => ({ kind, loadKg, reps, seconds, meters }))
+        fromOld[blockId] = { label, sets }
+      }
+      updateMemo((m) => ({ ...m, fromOld: { ...m.fromOld, ...fromOld } }))
+      setOldDayOpen(false)
+    } finally {
+      setFilling(false)
+    }
   }
 
   function removeBlock(blockId: Uuid): void {
@@ -507,6 +700,28 @@ function LogScreenBody() {
       })
     }
 
+    // The old day this block was loaded from: set n starts on that day's set n, then on its
+    // last set once the old day runs out.
+    const old = memo.fromOld[state.blockId]
+    const number = state.setId ? -1 : (block?.sets.length ?? 0)
+    const oldSet = old && number >= 0 ? (old.sets[number] ?? old.sets[old.sets.length - 1]) : undefined
+    const oldValue = oldSet ? lastValueOf({ ...oldSet, date: '', authorName: null }, state.field) : null
+    if (old && oldValue !== null && !out.some((chip) => chip.value === oldValue)) {
+      out.push({ value: oldValue, label: chipLabel(state.field, oldValue, state.kind, locale), meta: old.label })
+    }
+
+    // What the programme prescribes for this block.
+    const item = block?.programItemId ? programItems.data?.find((i) => i.id === block.programItemId) : undefined
+    const prescribed =
+      item && (state.field === 'load' ? item.loadKg : state.field === 'reps' ? item.reps : state.field === 'seconds' ? item.seconds : null)
+    if (item && prescribed && !out.some((chip) => chip.value === prescribed)) {
+      out.push({ value: prescribed, label: chipLabel(state.field, prescribed, state.kind, locale), meta: t('log.target') })
+    }
+
+    if (state.kind === 'duration' && state.field === 'load') {
+      out.push({ value: 0, label: t('log.noLoad'), meta: t('log.optional') })
+    }
+
     return out
   }
 
@@ -540,6 +755,72 @@ function LogScreenBody() {
   }
 
   const config = pad ? padConfig(pad.field) : null
+  const pairs = supersetPairs(session.blocks)
+
+  function renderBlock(block: Block & { sets: WorkoutSet[] }) {
+    const exercise = exerciseById.get(block.exerciseId)
+    const item = block.programItemId ? programItems.data?.find((i) => i.id === block.programItemId) : undefined
+    const old = memo.fromOld[block.id]
+    return (
+      <ExerciseBlock
+        key={block.id}
+        block={block}
+        exercise={exercise}
+        athleteId={session!.athleteId}
+        sessionId={session!.id}
+        locale={locale}
+        onPickExercise={() => setPicker({ blockId: block.id })}
+        onAddSet={() => openPadForNewSet(block.id)}
+        onRepeatLast={() => repeatLast(block.id)}
+        onEditSet={(set, field) => openPadForSet(block.id, set, field)}
+        onDeleteSet={(set) => void removeSet(block.exerciseId, set)}
+        onRemove={() => removeBlock(block.id)}
+        groups={caps.blockGroups ? groupsOf(block.exerciseId) : []}
+        onSetGroup={(groupId) => updateBlock.mutate({ sessionId: session!.id, blockId: block.id, patch: { muscleGroupId: groupId } })}
+        onSetTool={(tool) => updateBlock.mutate({ sessionId: session!.id, blockId: block.id, patch: { equipment: tool } })}
+        lastDay={lastDayOf(block)}
+        target={item ? targetText(item, locale) : null}
+        fromOld={old ? `${t('log.fromOld', { day: old.label })}: ${setsSummary(old.sets.map((s, i) => ({ ...s, id: String(i), position: i, doneAt: 'x' }) as WorkoutSet), locale)}` : null}
+        measure={measures[block.id] ?? (exercise?.defaultSetKind === 'duration' ? 'time' : 'reps')}
+        onMeasure={(m) => setMeasures((current) => ({ ...current, [block.id]: m }))}
+        folded={memo.folded.includes(block.id)}
+        onToggleFold={() => toggleFold(block.id)}
+      />
+    )
+  }
+
+  /** Blocks in order; the two halves of a superset drawn as one card with a round button. */
+  function renderBlocks() {
+    const drawn = new Set<Uuid>()
+    return session!.blocks.map((block) => {
+      if (drawn.has(block.id)) return null
+      const pair = block.supersetId ? pairs.get(block.supersetId) : undefined
+      if (!pair) return renderBlock(block)
+      for (const b of pair) drawn.add(b.id)
+      const ids = pair.map((b) => b.id)
+      const ready = pair.every((b) => exerciseById.has(b.exerciseId))
+      return (
+        <section
+          key={block.supersetId}
+          aria-label={t('log.superset')}
+          style={{ display: 'flex', flexDirection: 'column', gap: 8, padding: 8, borderRadius: 'var(--th-r-lg)', border: '2px solid var(--th-brand-soft)' }}
+        >
+          <strong style={{ fontSize: 'var(--th-text-xs)', letterSpacing: 'var(--th-label-tracking)', textTransform: 'uppercase', color: 'var(--th-brand)' }}>
+            {t('log.superset')}
+          </strong>
+          {pair.map((b) => renderBlock(b))}
+          <div style={{ display: 'flex', gap: 8 }}>
+            <Button variant="primary" icon="plus" disabled={!ready} onClick={() => openPadForNewSet(ids[0], ids[1])}>
+              {t('log.round')}
+            </Button>
+            <Button variant="quiet" icon="copy" disabled={pair.some((b) => b.sets.length === 0)} onClick={() => repeatRound(ids)}>
+              {t('log.sameRound')}
+            </Button>
+          </div>
+        </section>
+      )
+    })
+  }
 
   return (
     <>
@@ -587,35 +868,58 @@ function LogScreenBody() {
           </div>
         }
       >
+        {/* Always on top: the last three workouts before this one, one tap each. */}
+        {history ? (
+          <RecentWorkouts workouts={before} ctx={history.ctx} names={history.names} label={t('history.lastThree')} />
+        ) : null}
+
         {session.blocks.length === 0 ? (
-          <EmptyState
-            icon="dumbbell"
-            title={t('log.noExercises')}
-            description={t('log.noExercisesHint')}
-          />
+          <>
+            {nextDay ? (
+              <ProgramDayOffer
+                next={nextDay}
+                exerciseName={(id) => exerciseName(exerciseById.get(id), locale)}
+                busy={filling}
+                onStart={() => void startProgramDay()}
+              />
+            ) : null}
+            {before.length > 0 ? (
+              <Button variant="secondary" block icon="undo" disabled={filling} onClick={() => setOldDayOpen(true)}>
+                {t('log.loadOldDay')}
+              </Button>
+            ) : null}
+            <EmptyState icon="dumbbell" title={t('log.noExercises')} description={t('log.noExercisesHint')} />
+          </>
         ) : (
-          session.blocks.map((block) => (
-            <ExerciseBlock
-              key={block.id}
-              block={block}
-              exercise={exerciseById.get(block.exerciseId)}
-              athleteId={session.athleteId}
-              sessionId={session.id}
-              locale={locale}
-              onPickExercise={() => setPicker({ blockId: block.id })}
-              onAddSet={() => openPadForNewSet(block.id)}
-              onRepeatLast={() => repeatLast(block.id)}
-              onEditSet={(set, field) => openPadForSet(block.id, set, field)}
-              onDeleteSet={(set) => void removeSet(block.exerciseId, set)}
-              onRemove={() => removeBlock(block.id)}
-            />
-          ))
+          renderBlocks()
         )}
 
-        <Button variant="secondary" block icon="plus" onClick={() => setPicker({ blockId: null })}>
-          {t('log.addExercise')}
-        </Button>
+        {/* minmax(0, …): a grid track's floor is otherwise its content, and the longer label pushed
+            the second button off a 360px screen. */}
+        <div style={{ display: 'grid', gridTemplateColumns: caps.blockGroups ? 'minmax(0, 3fr) minmax(0, 2fr)' : '1fr', gap: 8 }}>
+          <Button variant="secondary" block icon="plus" onClick={() => setPicker({ blockId: null })}>
+            {t('log.addExercise')}
+          </Button>
+          {caps.blockGroups ? (
+            <Button variant="secondary" block icon="plus" onClick={() => setPicker({ blockId: null, supersetId: newId() })}>
+              {t('log.addSuperset')}
+            </Button>
+          ) : null}
+        </div>
       </Screen>
+
+      {history ? (
+        <LoadOldDaySheet
+          open={oldDayOpen}
+          onClose={() => setOldDayOpen(false)}
+          workouts={before}
+          ctx={history.ctx}
+          names={history.names}
+          today={todayIn(gym?.timezone ?? 'Europe/Athens')}
+          busy={filling}
+          onLoad={(workout) => void loadOldDay(workout)}
+        />
+      ) : null}
 
       <ExercisePicker
         open={picker !== null}

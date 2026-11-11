@@ -18,6 +18,13 @@ export const keys = {
   session: () => ['auth', 'session'] as const,
   me: (userId: Uuid) => ['auth', 'me', userId] as const,
 
+  /**
+   * An athlete's own sheet. Not under `['gym', …]`: an athlete holds no gym id and reads only
+   * through `my_athlete_portal()`, so the athlete id is the whole of the key — and the persisted
+   * cache is wiped on every change of identity, exactly as the staff keys are.
+   */
+  athletePortal: (athleteId: Uuid) => ['athlete', athleteId, 'portal'] as const,
+
   /** The root of one gym's cache. Never used for a query — only for invalidate/remove. */
   gym: (gymId: Uuid) => ['gym', gymId] as const,
   gymProfile: (gymId: Uuid) => ['gym', gymId, 'profile'] as const,
@@ -35,6 +42,9 @@ export const keys = {
     ['gym', gymId, 'athletes', athleteId, 'sessions'] as const,
   athleteNotes: (gymId: Uuid, athleteId: Uuid) =>
     ['gym', gymId, 'athletes', athleteId, 'notes'] as const,
+  /** Whether this athlete has an account, and whether a link is out. Staff side of 015. */
+  athleteAccess: (gymId: Uuid, athleteId: Uuid) =>
+    ['gym', gymId, 'athletes', athleteId, 'access'] as const,
   athleteProgress: (gymId: Uuid, athleteId: Uuid, exerciseId: Uuid | null = null) =>
     ['gym', gymId, 'athletes', athleteId, 'progress', exerciseId] as const,
 
@@ -58,6 +68,15 @@ export const keys = {
     equipment === undefined
       ? (['gym', gymId, 'athletes', athleteId, 'last-performance', exerciseId] as const)
       : (['gym', gymId, 'athletes', athleteId, 'last-performance', exerciseId, equipment ?? 'default'] as const),
+
+  /** Which of 012–014 the database has; asked once a minute, like Streamlit's probes. */
+  capabilities: (gymId: Uuid) => ['gym', gymId, 'capabilities'] as const,
+  programs: (gymId: Uuid) => ['gym', gymId, 'programs'] as const,
+  assignment: (gymId: Uuid, athleteId: Uuid) => ['gym', gymId, 'programs', 'assignment', athleteId] as const,
+  programItems: (gymId: Uuid, ids: string) => ['gym', gymId, 'programs', 'items', ids] as const,
+  share: (gymId: Uuid, athleteId: Uuid) => ['gym', gymId, 'athletes', athleteId, 'share'] as const,
+  /** The public page: the token is the whole tenant, as in `shared_progress()`. */
+  shared: (token: Uuid) => ['shared', token] as const,
 
   appointments: (gymId: Uuid) => ['gym', gymId, 'appointments'] as const,
   appointmentsWeek: (gymId: Uuid, weekStart: LocalDate) =>

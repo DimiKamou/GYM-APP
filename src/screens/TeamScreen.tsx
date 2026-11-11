@@ -15,6 +15,7 @@ import { currentLocale } from '@/i18n'
 import type { WriteState } from '@/data/repo/types'
 import type { Invite, MemberRole, Membership, Uuid } from '@/domain/types'
 import { Avatar, Button, Card, Chip, EmptyState, Field, Icon, Input, Screen, Sheet, Spinner } from '@/ui'
+import { publicOrigin } from '@/native/platform'
 
 /**
  * The coaches, their roles, and the two irreversible things an owner can do.
@@ -190,8 +191,10 @@ export function TeamScreen() {
             setNotice(null)
             setInviting(true)
           }}
+          aria-label={t('team.invite')}
         >
-          {t('team.invite')}
+          {/* The header shares its row with the title; the full name is the sheet's title. */}
+          {t('team.inviteShort')}
         </Button>
       </div>
     </>
@@ -419,7 +422,7 @@ interface InviteSheetProps {
 
 /** The fragment, never the query string: a `?invite=` link puts a bearer token in access logs. */
 function inviteLink(secret: string): string {
-  const origin = typeof window === 'undefined' ? '' : window.location.origin
+  const origin = publicOrigin()
   return `${origin}/join#invite=${encodeURIComponent(secret)}`
 }
 

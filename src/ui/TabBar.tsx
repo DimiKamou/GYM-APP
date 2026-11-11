@@ -98,8 +98,8 @@ export function TabBar() {
   const style = useCallback(
     ({ isActive }: { isActive: boolean }): CSSProperties => ({
       ...linkBase,
-      color: isActive ? 'var(--th-accent)' : 'var(--th-faint)',
-      background: isActive ? 'var(--th-surface-2)' : 'transparent',
+      color: isActive ? 'var(--th-brand)' : 'var(--th-faint)',
+      background: isActive ? 'var(--th-brand-soft)' : 'transparent',
     }),
     [],
   )

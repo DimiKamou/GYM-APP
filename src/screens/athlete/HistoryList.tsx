@@ -21,8 +21,11 @@ export interface HistoryListProps {
   sessions: readonly Session[]
   /** Blocks and sets for this athlete. Undefined while it loads; rows then show no volume. */
   progress: ProgressData | undefined
-  memberships: readonly Membership[]
+  /** Only the names are read: the athlete's own sheet carries nothing else about the staff. */
+  memberships: readonly Pick<Membership, 'id' | 'displayName'>[]
   onOpen: (sessionId: Uuid) => void
+  /** The empty state's second line. The staff's says "start the first one"; an athlete cannot. */
+  emptyHint?: string
 }
 
 const row: CSSProperties = {
@@ -75,7 +78,7 @@ const liveBadge: CSSProperties = {
   color: 'var(--th-accent)',
 }
 
-export function HistoryList({ sessions, progress, memberships, onOpen }: HistoryListProps) {
+export function HistoryList({ sessions, progress, memberships, onOpen, emptyHint }: HistoryListProps) {
   const { t } = useTranslation()
   const locale = currentLocale()
 
@@ -109,7 +112,13 @@ export function HistoryList({ sessions, progress, memberships, onOpen }: History
   }, [memberships])
 
   if (ordered.length === 0) {
-    return <EmptyState icon="dumbbell" title={t('athlete.noSessionsYet')} description={t('athlete.startFirst')} />
+    return (
+      <EmptyState
+        icon="dumbbell"
+        title={t('athlete.noSessionsYet')}
+        description={emptyHint ?? t('athlete.startFirst')}
+      />
+    )
   }
 
   return (

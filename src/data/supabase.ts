@@ -12,7 +12,10 @@ import { createClient, type SupabaseClient } from '@supabase/supabase-js'
  *     no caller has to null-check it.
  *  2. **Read the session out of the URL.** `detectSessionInUrl` is off because we redeem
  *     invites from the fragment ourselves (`redeem_invite`), and gotrue's own fragment
- *     parser would strip the hash before our router ever saw it.
+ *     parser would strip the hash before our router ever saw it. A Google or Microsoft
+ *     sign-in comes back to `/auth/callback?code=…` instead, and that screen exchanges the
+ *     code itself — which is why the flow is PKCE: an implicit-flow token would arrive in the
+ *     very fragment this client is told to leave alone.
  *
  * It is deliberately NOT generic over a generated `Database` type yet: `supabase gen types`
  * needs a live project, and a hand-written stand-in would be a second, drifting copy of
@@ -101,6 +104,7 @@ export const supabase: SupabaseClient = createClient(
       persistSession: true,
       autoRefreshToken: true,
       detectSessionInUrl: false,
+      flowType: 'pkce',
       storageKey: AUTH_STORAGE_KEY,
       storage: safeStorage(),
     },

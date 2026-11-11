@@ -11,7 +11,7 @@ import { formatDate } from '@/domain/format'
 import { matches } from '@/domain/text'
 import { currentLocale } from '@/i18n'
 import type { Athlete, LocalDate, Session, Uuid } from '@/domain/types'
-import { Avatar, Button, Card, EmptyState, Icon, Input, Screen, Spinner } from '@/ui'
+import { afterSheetClosed, Avatar, Button, Card, EmptyState, Icon, Input, Screen, Spinner } from '@/ui'
 import { AthleteSheet } from '@/screens/athlete/AthleteSheet'
 
 /**
@@ -233,7 +233,7 @@ export function AthletesScreen() {
       <AthleteSheet
         open={sheetOpen}
         onClose={() => setSheetOpen(false)}
-        onCreated={(athleteId) => navigate(`/athletes/${athleteId}`)}
+        onCreated={(athleteId) => afterSheetClosed(() => navigate(`/athletes/${athleteId}`))}
       />
     </Screen>
   )

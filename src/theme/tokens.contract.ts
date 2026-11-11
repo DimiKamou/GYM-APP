@@ -25,6 +25,7 @@ export const THEME_TOKEN_GROUPS = {
     '--th-line-soft',
   ],
   accent: ['--th-accent', '--th-accent-ink', '--th-accent-soft'],
+  brand: ['--th-brand', '--th-brand-ink', '--th-brand-soft'],
   avatar: ['--th-avatar-bg', '--th-avatar-ink'],
   semantic: [
     '--th-danger',

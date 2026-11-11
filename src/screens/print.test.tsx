@@ -70,9 +70,19 @@ function identity(): AuthContextValue {
     missingEnv: [],
     resolvedOffline: false,
     isDemo: true,
+    athlete: null,
+    oauthProviders: [],
     error: null,
     signInWithOtp: async () => {},
     verifyOtp: async () => {},
+    signInWithPassword: async () => {},
+    signUpWithPassword: async () => ({ needsCode: false }),
+    signInWithProvider: async () => {},
+    completeOAuth: async () => {},
+    changePassword: async () => {},
+    deleteAccount: async () => {},
+    demoPersona: 'staff',
+    setDemoPersona: () => {},
     signOut: async () => {},
     reload: async () => {},
   }
@@ -281,7 +291,7 @@ function progressData(): ProgressData {
 function renderSheet(variant: 'filled' | 'blank' = 'filled'): HTMLDivElement {
   return render(
     <PrintSheet
-      gymName="Iron Lab"
+      gymName="PowerHouse Gym"
       athlete={{
         id: 'athlete-1',
         gymId: GYM,
@@ -386,7 +396,7 @@ describe('the footer dates the paper', () => {
     const footer = document.body.querySelector('[data-testid="print-footer"]')
     const text = textOf(footer)
 
-    expect(text).toContain('Iron Lab')
+    expect(text).toContain('PowerHouse Gym')
     expect(text).toContain(formatDate(TODAY, 'el', { withYear: true }))
     // The year is on the sheet: "30 Αυγ" tells a coach nothing in eighteen months' time.
     expect(text).toContain('2026')
@@ -457,7 +467,7 @@ describe('the print action on the athlete screen', () => {
     // Μαρία covered Δημήτρης on two of Νίκος' sessions; both names belong on the paper.
     expect(text).toContain('Δημήτρης Κ.')
     expect(text).toContain('Μαρία Σ.')
-    expect(text).toContain('Iron Lab')
+    expect(text).toContain('PowerHouse Gym')
   })
 
   it('says so on paper when an athlete has no sessions at all', async () => {

@@ -37,6 +37,9 @@ import { briefingTopLines } from '@/data/repo/local'
 import type {
   Appointment,
   Athlete,
+  AthleteAccess,
+  AthleteIdentity,
+  AthletePortal,
   Block,
   Briefing,
   Equipment,
@@ -54,7 +57,14 @@ import type {
   Uuid,
   WorkoutSet,
 } from '@/domain/types'
+import { ATHLETE_ACCOUNTS_MISSING, type ProgramStore, type ShareStore } from '@/data/repo/types'
+import { createSupabasePrograms, createSupabaseShares } from '@/data/repo/supabaseStores'
+
+type Stores = { programs: ProgramStore; shares: ShareStore }
 import type {
+  AthleteRedeemOutcome,
+  AthleteSide,
+  SchemaCaps,
   ExerciseMuscleInput,
   NewAppointmentInput,
   NewExerciseInput,
@@ -103,11 +113,11 @@ const APPOINTMENT_COLS = `id, gym_id, athlete_id, membership_id, date, time, dur
  */
 type Row = Record<string, unknown>
 
-function str(value: unknown): string {
+export function str(value: unknown): string {
   return typeof value === 'string' ? value : String(value ?? '')
 }
 
-function strOrNull(value: unknown): string | null {
+export function strOrNull(value: unknown): string | null {
   return typeof value === 'string' ? value : null
 }
 
@@ -116,7 +126,7 @@ function strOrNull(value: unknown): string | null {
  * `Number("72.5")` is fine while a silent `NaN` from anything else would poison every volume
  * total downstream. Anything that is not a finite number becomes null, which renders as "—".
  */
-function num(value: unknown): number | null {
+export function num(value: unknown): number | null {
   if (typeof value === 'number') return Number.isFinite(value) ? value : null
   if (typeof value === 'string' && value.trim() !== '') {
     const parsed = Number(value)
@@ -172,7 +182,7 @@ function toAthlete(row: Row): Athlete {
   }
 }
 
-function toExercise(row: Row): Exercise {
+export function toExercise(row: Row): Exercise {
   return {
     id: str(row.id),
     gymId: strOrNull(row.gym_id),
@@ -214,7 +224,7 @@ function toExerciseMuscle(row: Row): ExerciseMuscle {
   }
 }
 
-function toSession(row: Row): Session {
+export function toSession(row: Row): Session {
   return {
     id: str(row.id),
     gymId: str(row.gym_id),
@@ -228,11 +238,13 @@ function toSession(row: Row): Session {
     startedAt: str(row.started_at),
     finishedAt: strOrNull(row.finished_at),
     localDate: str(row.local_date),
+    athleteProgramId: strOrNull(row.athlete_program_id),
+    programStep: num(row.program_step),
     ...audit(row),
   }
 }
 
-function toBlock(row: Row): Block {
+export function toBlock(row: Row): Block {
   return {
     id: str(row.id),
     gymId: str(row.gym_id),
@@ -241,11 +253,14 @@ function toBlock(row: Row): Block {
     position: num(row.position) ?? 0,
     note: strOrNull(row.note),
     equipment: (row.equipment as Equipment | null) ?? null,
+    supersetId: strOrNull(row.superset_id),
+    muscleGroupId: strOrNull(row.muscle_group_id),
+    programItemId: strOrNull(row.program_item_id),
     ...audit(row),
   }
 }
 
-function toSet(row: Row): WorkoutSet {
+export function toSet(row: Row): WorkoutSet {
   return {
     id: str(row.id),
     gymId: str(row.gym_id),
@@ -312,6 +327,100 @@ function toInvite(row: Row): Invite {
     acceptedBy: strOrNull(row.accepted_by),
     createdAt: str(row.created_at),
   }
+}
+
+/**
+ * `my_athlete_portal()`'s payload. The rows come through the same mappers as every staff read,
+ * so a column the server leaves out (`notes`, `note`, `deleted_at` on a live row) lands as null
+ * exactly as it would from a select that never named it.
+ */
+export function toAthletePortal(raw: Row): AthletePortal {
+  const gym = (raw.gym ?? {}) as Row
+  const athlete = (raw.athlete ?? {}) as Row
+  const list = (key: string): Row[] => (Array.isArray(raw[key]) ? (raw[key] as Row[]) : [])
+  return {
+    gym: {
+      id: str(gym.id),
+      name: str(gym.name),
+      timezone: str(gym.timezone),
+      displayUnit: gym.display_unit === 'lb' ? 'lb' : 'kg',
+    },
+    athlete: {
+      id: str(athlete.id),
+      gymId: str(athlete.gym_id),
+      fullName: str(athlete.full_name),
+      coachMembershipId: strOrNull(athlete.coach_membership_id),
+      planPhase: strOrNull(athlete.plan_phase),
+      planFocus: strOrNull(athlete.plan_focus),
+    },
+    staff: list('staff').map((row) => ({ id: str(row.id), displayName: str(row.display_name) })),
+    sessions: list('sessions').map(toSession),
+    blocks: list('blocks').map(toBlock),
+    sets: list('sets').map(toSet),
+    exercises: list('exercises').map(toExercise),
+  }
+}
+
+function toAthleteAccess(raw: Row | null): AthleteAccess {
+  return {
+    linked: raw?.linked === true,
+    linkedAt: strOrNull(raw?.linked_at),
+    email: strOrNull(raw?.email),
+    pendingExpires: strOrNull(raw?.pending_expires),
+  }
+}
+
+function isMissingFunction(error: PostgrestError): boolean {
+  return error.code === 'PGRST202' || /could not find the function/i.test(error.message)
+}
+
+// ---------------------------------------------------------------------------
+// What the schema can hold yet
+// ---------------------------------------------------------------------------
+
+/**
+ * The app ships before the SQL (CLAUDE.md): a select naming a column 012–014 add is refused
+ * outright (42703) until the owner pastes them, and the screen reading it goes down with it.
+ * So the columns are asked about once a minute, as the Streamlit client does, and until they
+ * exist every read is the one from before them.
+ */
+const CAPS_TTL_MS = 60_000
+let capsCache: { at: number; value: SchemaCaps } | null = null
+const NO_CAPS: SchemaCaps = { blockGroups: false, programs: false, sharePeriods: false }
+
+async function hasColumns(table: string, columns: string): Promise<boolean> {
+  const { error } = await supabase.from(table).select(columns).limit(0)
+  if (!error) return true
+  if (['42703', '42P01', 'PGRST204', 'PGRST205'].includes(error.code ?? '')) return false
+  if (/does not exist|schema cache|could not find/i.test(error.message)) return false
+  throw new Error(error.message)
+}
+
+export async function schemaCaps(): Promise<SchemaCaps> {
+  if (capsCache && Date.now() - capsCache.at < CAPS_TTL_MS) return capsCache.value
+  try {
+    const [blockGroups, programItems, assignments, sharePeriods] = await Promise.all([
+      hasColumns('blocks', 'superset_id, muscle_group_id'),
+      hasColumns('blocks', 'program_item_id'),
+      hasColumns('athlete_programs', 'id'),
+      hasColumns('athlete_shares', 'period_days, from_date, to_date'),
+    ])
+    capsCache = { at: Date.now(), value: { blockGroups, programs: programItems && assignments, sharePeriods } }
+    return capsCache.value
+  } catch {
+    // Could not ask (no signal). "Not yet" is always a correct answer; it is not cached.
+    return capsCache?.value ?? NO_CAPS
+  }
+}
+
+async function blockCols(): Promise<string> {
+  const caps = await schemaCaps()
+  return `${BLOCK_COLS}${caps.blockGroups ? ', superset_id, muscle_group_id' : ''}${caps.programs ? ', program_item_id' : ''}`
+}
+
+async function sessionCols(): Promise<string> {
+  const caps = await schemaCaps()
+  return caps.programs ? `${SESSION_COLS}, athlete_program_id, program_step` : SESSION_COLS
 }
 
 // ---------------------------------------------------------------------------
@@ -399,11 +508,11 @@ async function direct(run: () => Promise<{ error: PostgrestError | null }>): Pro
 
 // ---------------------------------------------------------------------------
 
-export function createSupabaseRepo(): Repo & InviteRedeemer {
+export function createSupabaseRepo(): Repo & InviteRedeemer & AthleteSide & Stores {
   async function liveSessions(gymId: Uuid, athleteId: Uuid, limit?: number): Promise<Session[]> {
     let query = supabase
       .from('sessions')
-      .select(SESSION_COLS)
+      .select(await sessionCols())
       .eq('gym_id', gymId)
       .eq('athlete_id', athleteId)
       .is('deleted_at', null)
@@ -418,7 +527,7 @@ export function createSupabaseRepo(): Repo & InviteRedeemer {
     return rows(
       await supabase
         .from('blocks')
-        .select(BLOCK_COLS)
+        .select(await blockCols())
         .eq('gym_id', gymId)
         .in('session_id', sessionIds as string[])
         .is('deleted_at', null),
@@ -458,6 +567,24 @@ export function createSupabaseRepo(): Repo & InviteRedeemer {
     )
   }
 
+  async function exercisesByIds(ids: readonly Uuid[]): Promise<Exercise[]> {
+    if (ids.length === 0) return []
+    // No deleted filter, on purpose; RLS still limits it to the shared rows and this gym's.
+    return rows(await supabase.from('exercises').select(EXERCISE_COLS).in('id', ids as string[]), toExercise)
+  }
+
+  /**
+   * The live catalogue plus every exercise these blocks name that it no longer holds. 011
+   * retired the gym's old list by `deleted_at`; history keeps naming those rows, the way the
+   * Streamlit app and the backup export already did.
+   */
+  async function catalogueFor(gymId: Uuid, blocks: readonly { exerciseId: Uuid }[]): Promise<Exercise[]> {
+    const current = await catalogue(gymId)
+    const known = new Set(current.map((e) => e.id))
+    const missing = [...new Set(blocks.map((b) => b.exerciseId))].filter((id) => !known.has(id))
+    return missing.length === 0 ? current : [...current, ...(await exercisesByIds(missing))]
+  }
+
   async function taxonomy(gymId: Uuid): Promise<MuscleGroup[]> {
     // The shared taxonomy (`gym_id is null`) plus this gym's own groups, in one round-trip.
     return rows(
@@ -482,8 +609,10 @@ export function createSupabaseRepo(): Repo & InviteRedeemer {
     )
   }
 
-  const repo: Repo & InviteRedeemer = {
+  const repo: Repo & InviteRedeemer & AthleteSide & Stores = {
     kind: 'supabase',
+    programs: createSupabasePrograms(),
+    shares: createSupabaseShares(),
 
     // ---- reads ----
 
@@ -575,7 +704,7 @@ export function createSupabaseRepo(): Repo & InviteRedeemer {
           localDate: last.localDate,
           title: last.title,
           authorName: nameOf(last.creditedTo ?? last.loggedBy),
-          topLines: briefingTopLines(blocks, sets, await catalogue(gymId)),
+          topLines: briefingTopLines(blocks, sets, await catalogueFor(gymId, blocks)),
         }
       }
 
@@ -617,7 +746,7 @@ export function createSupabaseRepo(): Repo & InviteRedeemer {
       const blocks = await blocksFor(gymId, sessions.map((s) => s.id))
       const [sets, exercises, muscleGroups, exerciseMuscles] = await Promise.all([
         setsFor(gymId, blocks.map((b) => b.id)),
-        catalogue(gymId),
+        catalogueFor(gymId, blocks),
         taxonomy(gymId),
         muscleLinks(gymId),
       ])
@@ -629,6 +758,10 @@ export function createSupabaseRepo(): Repo & InviteRedeemer {
           exerciseId: b.exerciseId,
           position: b.position,
           deletedAt: b.deletedAt,
+          equipment: b.equipment,
+          supersetId: b.supersetId ?? null,
+          muscleGroupId: b.muscleGroupId ?? null,
+          note: b.note,
         })),
         sets,
         exercises,
@@ -643,7 +776,7 @@ export function createSupabaseRepo(): Repo & InviteRedeemer {
       const session = first(
         await supabase
           .from('sessions')
-          .select(SESSION_COLS)
+          .select(await sessionCols())
           .eq('gym_id', gymId)
           .eq('id', sessionId)
           .is('deleted_at', null)
@@ -671,7 +804,11 @@ export function createSupabaseRepo(): Repo & InviteRedeemer {
     async listExercises(gymId) {
       return (await catalogue(gymId))
         .filter((e) => e.mergedIntoId === null)
-        .sort((a, b) => (a.nameEl ?? a.nameEn ?? '').localeCompare(b.nameEl ?? b.nameEn ?? '', 'el'))
+        .sort((a, b) => (a.nameEn ?? a.nameEl ?? '').localeCompare(b.nameEn ?? b.nameEl ?? '', 'en'))
+    },
+
+    async getExercisesByIds(_gymId, ids) {
+      return exercisesByIds(ids)
     },
 
     async listMuscleGroups(gymId) {
@@ -720,7 +857,7 @@ export function createSupabaseRepo(): Repo & InviteRedeemer {
       const gymSessions = rows(
         await supabase
           .from('sessions')
-          .select(SESSION_COLS)
+          .select(await sessionCols())
           .eq('gym_id', gymId)
           .is('deleted_at', null)
           .order('local_date', { ascending: false })
@@ -819,6 +956,8 @@ export function createSupabaseRepo(): Repo & InviteRedeemer {
           notes: patch.notes,
           credited_to: patch.creditedTo,
           local_date: patch.localDate,
+          athlete_program_id: patch.athleteProgramId,
+          program_step: patch.programStep,
         }),
       )
     },
@@ -844,12 +983,27 @@ export function createSupabaseRepo(): Repo & InviteRedeemer {
           position,
           equipment: extras?.equipment,
           note: extras?.note,
+          // Ignored by apply_op() until 012/013 exist: it builds its column list from the
+          // live schema, so an early write loses the pairing and nothing else.
+          superset_id: extras?.supersetId,
+          muscle_group_id: extras?.muscleGroupId,
+          program_item_id: extras?.programItemId,
         }),
       )
     },
 
     setBlockExercise: (gymId, blockId, exerciseId, equipment) =>
       enqueue(gymId, 'blocks', blockId, defined({ exercise_id: exerciseId, equipment })),
+
+    updateBlock: (gymId, blockId, patch) =>
+      enqueue(
+        gymId,
+        'blocks',
+        blockId,
+        defined({ equipment: patch.equipment, muscle_group_id: patch.muscleGroupId, superset_id: patch.supersetId }),
+      ),
+
+    capabilities: () => schemaCaps(),
 
     deleteBlock: (gymId, blockId) => enqueueDelete(gymId, 'blocks', blockId),
 
@@ -918,8 +1072,9 @@ export function createSupabaseRepo(): Repo & InviteRedeemer {
     archiveAthlete: (gymId, athleteId) => enqueueDelete(gymId, 'athletes', athleteId),
 
     async createExercise(gymId, input: NewExerciseInput) {
-      const nameEl = input.nameEl.trim()
-      const nameEn = input.nameEn ?? null
+      const nameEl = input.nameEl?.trim() || null
+      const nameEn = input.nameEn?.trim() || null
+      if (!nameEl && !nameEn) return 'failed'
       // Checked here, against the catalogue the client already holds, because a queued write
       // cannot fail in front of the coach: `exercises_gym_el_uniq` (and its `_en_` twin) is
       // one name per gym among LIVE rows — archived and merged ones included, which the
@@ -1111,6 +1266,64 @@ export function createSupabaseRepo(): Repo & InviteRedeemer {
       }
     },
 
+    // ---- athlete accounts (015) — all through functions; the tables have no policies ----
+
+    async createAthleteInvite(_gymId, athleteId, email) {
+      const address = (email ?? '').trim().toLowerCase()
+      const { data, error } = await supabase.rpc('create_athlete_invite', {
+        p_athlete: athleteId,
+        p_email: address === '' ? null : address,
+      })
+      if (error) return { state: 'failed' }
+      const secret = (data as { secret?: string } | null)?.secret
+      return secret ? { state: 'saved', secret } : { state: 'failed' }
+    },
+
+    async getAthleteAccess(_gymId, athleteId) {
+      const { data, error } = await supabase.rpc('athlete_access', { p_athlete: athleteId })
+      if (error) throw new Error(isMissingFunction(error) ? ATHLETE_ACCOUNTS_MISSING : error.message)
+      return toAthleteAccess((data ?? null) as Row | null)
+    },
+
+    async revokeAthleteAccess(_gymId, athleteId) {
+      const { error } = await supabase.rpc('revoke_athlete_access', { p_athlete: athleteId })
+      return error ? 'failed' : 'saved'
+    },
+
+    async getMyAthlete(): Promise<AthleteIdentity | null> {
+      const { data, error } = await supabase.rpc('my_athlete')
+      if (error) {
+        // Before 015 there are no athlete accounts, so "nobody's athlete" is the true answer.
+        if (isMissingFunction(error)) return null
+        throw new Error(error.message)
+      }
+      const row = (data ?? null) as Row | null
+      if (!row?.athlete_id) return null
+      return {
+        gymId: str(row.gym_id),
+        gymName: str(row.gym_name),
+        athleteId: str(row.athlete_id),
+        fullName: str(row.full_name),
+      }
+    },
+
+    async getAthletePortal() {
+      const { data, error } = await supabase.rpc('my_athlete_portal')
+      if (error) throw new Error(isMissingFunction(error) ? ATHLETE_ACCOUNTS_MISSING : error.message)
+      return data ? toAthletePortal(data as Row) : null
+    },
+
+    async redeemAthleteInvite(secret): Promise<AthleteRedeemOutcome> {
+      const { data, error } = await supabase.rpc('redeem_athlete_invite', { p_secret: secret.trim() })
+      // One failure for every cause, as with trainer invites — except a staff account, which
+      // is told so, because "invalid link" would send an owner who is testing the link to
+      // mint a new one and spend that too.
+      if (error) return { ok: false, staff: /staff accounts/i.test(error.message) }
+      const row = (data ?? null) as Row | null
+      if (!row?.athlete_id || !row.gym_id) return { ok: false }
+      return { ok: true, gymId: str(row.gym_id), athleteId: str(row.athlete_id) }
+    },
+
     async updateMember(gymId, membershipId, patch) {
       // Promotion to owner is `transfer_ownership()`, never a PATCH — and this is not a
       // convenience. `memberships_one_active_owner` allows at most one active owner, so an
@@ -1153,11 +1366,11 @@ export function createSupabaseRepo(): Repo & InviteRedeemer {
         ),
       ])
       const sessions = rows(
-        await supabase.from('sessions').select(SESSION_COLS).eq('gym_id', gymId),
+        await supabase.from('sessions').select(await sessionCols()).eq('gym_id', gymId),
         toSession,
       )
       const [blocks, sets, notes, appointments] = await Promise.all([
-        rows(await supabase.from('blocks').select(BLOCK_COLS).eq('gym_id', gymId), toBlock),
+        rows(await supabase.from('blocks').select(await blockCols()).eq('gym_id', gymId), toBlock),
         rows(await supabase.from('sets').select(SET_COLS).eq('gym_id', gymId), toSet),
         rows(await supabase.from('notes').select(NOTE_COLS).eq('gym_id', gymId), toNote),
         rows(

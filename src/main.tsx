@@ -2,9 +2,15 @@ import { StrictMode } from 'react'
 import { createRoot } from 'react-dom/client'
 
 import { App } from '@/App'
+import { registerServiceWorker } from '@/pwa/serviceWorker'
+import { registerLiveUpdates } from '@/native/liveUpdate'
+import { registerNativeLinks } from '@/native/links'
+import { router } from '@/router'
 
-// Reset first, tokens second: the theme files must win on `body`, and the reset's
-// `:focus-visible` outline resolves `--th-accent` from the tokens either way.
+// Fonts first (an @font-face order nothing depends on), then reset, then tokens: the theme
+// files must win on `body`, and the reset's `:focus-visible` outline resolves `--th-accent`
+// from the tokens either way.
+import '@/styles/fonts.css'
 import '@/styles/reset.css'
 import '@/styles/tokens.css'
 
@@ -16,3 +22,7 @@ createRoot(rootEl).render(
     <App />
   </StrictMode>,
 )
+
+registerServiceWorker()
+registerLiveUpdates()
+registerNativeLinks((to, options) => router.navigate(to, options))

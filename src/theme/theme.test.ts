@@ -49,8 +49,8 @@ function parseDeclarations(css: string): Array<[string, string]> {
  * applies none of it. Mutating `:root,` to `:root-TYPO,` used to keep this suite green.
  */
 const EXPECTED_SELECTORS: Record<ThemeName, string[]> = {
-  daylight: [':root', ":root[data-theme='daylight']"],
-  slate: [":root[data-theme='slate']"],
+  daylight: [":root[data-theme='daylight']"],
+  slate: [':root', ":root[data-theme='slate']"],
 }
 
 /** Selectors of every rule block that defines at least one `--th-` custom property. */
@@ -191,11 +191,11 @@ describe('themes bind their tokens to the right selectors', () => {
     )
   })
 
-  it('daylight also answers to bare :root, so the first paint is themed', () => {
-    expect(tokenBindingSelectors(readTheme('daylight'))).toContain(':root')
+  it('the brand (slate, PowerHouse Night) answers to bare :root, so the first paint is themed', () => {
+    expect(tokenBindingSelectors(readTheme('slate'))).toContain(':root')
   })
 
-  it('slate never claims bare :root, or it would beat daylight on an unstamped document', () => {
-    expect(tokenBindingSelectors(readTheme('slate'))).not.toContain(':root')
+  it('daylight never claims bare :root, or it would beat the brand on an unstamped document', () => {
+    expect(tokenBindingSelectors(readTheme('daylight'))).not.toContain(':root')
   })
 })
