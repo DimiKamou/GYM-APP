@@ -548,6 +548,7 @@ export const en: Translation = {
     title: 'Team',
     roster: 'Roster',
     invite: 'Invite trainer',
+    inviteShort: 'Invite',
     inviteEmail: 'Trainer email',
     sendInvite: 'Send invite',
     pendingInvites: 'Pending invites',

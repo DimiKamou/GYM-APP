@@ -599,6 +599,7 @@ export const el = {
     title: 'Ομάδα',
     roster: 'Σύνθεση',
     invite: 'Πρόσκληση προπονητή',
+    inviteShort: 'Πρόσκληση',
     inviteEmail: 'Email προπονητή',
     sendInvite: 'Αποστολή',
     pendingInvites: 'Εκκρεμείς προσκλήσεις',

@@ -301,16 +301,16 @@ describe('the team screen', () => {
     await settle()
 
     expect(textOf(host)).toContain(i18n.t('team.ownerOnlyHint'))
-    expect(buttonWithText(host, i18n.t('team.invite')).disabled).toBe(true)
+    expect(buttonWithText(host, i18n.t('team.inviteShort')).disabled).toBe(true)
     // Never hidden: a trainer who cannot find the button asks for the owner's password.
-    expect(buttons(host).some((b) => textOf(b).includes(i18n.t('team.invite')))).toBe(true)
+    expect(buttons(host).some((b) => textOf(b).includes(i18n.t('team.inviteShort')))).toBe(true)
   })
 
   it('shows the invite link once, in the fragment, with the warning that it cannot return', async () => {
     const host = render(<TeamScreen />)
     await settle()
 
-    await click(buttonWithText(host, i18n.t('team.invite')))
+    await click(buttonWithText(host, i18n.t('team.inviteShort')))
     typeInto(fieldInput(sheet(), i18n.t('team.inviteEmail')), 'nea@ironlab.gr')
     await click(buttonWithText(sheet(), i18n.t('team.sendInvite')))
     await settle()

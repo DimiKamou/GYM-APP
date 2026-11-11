@@ -191,8 +191,10 @@ export function TeamScreen() {
             setNotice(null)
             setInviting(true)
           }}
+          aria-label={t('team.invite')}
         >
-          {t('team.invite')}
+          {/* The header shares its row with the title; the full name is the sheet's title. */}
+          {t('team.inviteShort')}
         </Button>
       </div>
     </>

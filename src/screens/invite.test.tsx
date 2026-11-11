@@ -227,7 +227,7 @@ function sheet(): HTMLElement {
 async function mintThroughTheUi(email: string): Promise<string> {
   const host = render(<TeamScreen />)
   await settle()
-  await click(buttonWithText(host, i18n.t('team.invite')))
+  await click(buttonWithText(host, i18n.t('team.inviteShort')))
   typeInto(fieldInput(sheet(), i18n.t('team.inviteEmail')), email)
   await click(buttonWithText(sheet(), i18n.t('team.sendInvite')))
   await settle()
@@ -441,7 +441,7 @@ describe('the pending list', () => {
     await settle()
     // Visible and dead, never hidden: a trainer who cannot find the button assumes the app is
     // broken and asks the owner for their password.
-    const inviteButton = buttonWithText(trainerView, i18n.t('team.invite'))
+    const inviteButton = buttonWithText(trainerView, i18n.t('team.inviteShort'))
     expect(inviteButton.disabled).toBe(true)
     expect(inviteButton.getAttribute('title')).toBe(i18n.t('team.ownerOnly'))
     expect(textOf(trainerView)).toContain(i18n.t('team.ownerOnlyHint'))
