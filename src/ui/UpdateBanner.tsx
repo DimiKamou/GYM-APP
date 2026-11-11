@@ -19,7 +19,7 @@ const bar: CSSProperties = {
   gap: 12,
   padding: '8px var(--th-screen-pad)',
   paddingTop: 'calc(8px + env(safe-area-inset-top, 0px))',
-  background: 'var(--th-accent-soft)',
+  background: 'var(--th-brand-soft)',
   borderBottom: '1px solid var(--th-line)',
   fontSize: 'var(--th-text-sm)',
   color: 'var(--th-ink)',

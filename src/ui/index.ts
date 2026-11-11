@@ -38,3 +38,4 @@ export {
   type ToastApi,
   type ToastOptions,
 } from '@/ui/Toast'
+export { Tabs, useTabParam, type TabDef, type TabsProps } from '@/ui/Tabs'

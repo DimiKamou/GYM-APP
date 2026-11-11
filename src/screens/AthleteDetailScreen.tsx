@@ -20,7 +20,8 @@ import { sessionSets, sessionVolume } from '@/domain/analytics'
 import { formatVolume } from '@/domain/format'
 import { currentLocale } from '@/i18n'
 import type { Uuid } from '@/domain/types'
-import { afterSheetClosed, Button, Card, EmptyState, Icon, Screen, Segmented, Sheet, Spinner } from '@/ui'
+import { afterSheetClosed, Button, Card, EmptyState, Icon, Screen, Segmented, Sheet, Spinner, Tabs, useTabParam } from '@/ui'
+import { InsightsOverview, RecordsCard } from '@/screens/insights/Insights'
 import { BriefingCard } from '@/screens/athlete/BriefingCard'
 import { HistoryList } from '@/screens/athlete/HistoryList'
 import { NoteComposer, NoteFeed } from '@/screens/athlete/NoteComposer'
@@ -39,9 +40,9 @@ import { todayIn } from '@/screens/calendar/WeekStrip'
  *
  * The order of this screen IS the design. The briefing card is first and alone above the fold:
  * name and coach, the pinned warnings, the last note verbatim, one line of what was actually
- * lifted last time and by whom, and two ways to start. Notes come straight after it — they are
- * what the covering coach writes before walking away. The three stat tiles, the history (a list,
- * or the month for spotting gaps) and the whole Progress section come after that, because at 08:29 with the athlete walking over, "sessions /
+ * lifted last time and by whom, and two ways to start. Everything else sits in tabs under it —
+ * history, progress, records, notes, programme, access — so the card is never pushed below the
+ * fold by a long history. The stats and the whole Progress section live in those tabs, because at 08:29 with the athlete walking over, "sessions /
  * sets / volume" answers a question nobody is asking.
  *
  * "Επανάληψη" copies the last session's EXERCISES into a new one and none of its sets. Copying
@@ -53,12 +54,7 @@ import { todayIn } from '@/screens/calendar/WeekStrip'
  * the bottom third of this screen is where a thumb lands all session long.
  */
 
-const historyHead: CSSProperties = {
-  display: 'flex',
-  alignItems: 'center',
-  justifyContent: 'space-between',
-  gap: 12,
-}
+const ATHLETE_TABS = ['history', 'progress', 'records', 'notes', 'program', 'access'] as const
 
 const backButton: CSSProperties = {
   display: 'flex',
@@ -88,14 +84,6 @@ const statValue: CSSProperties = {
 const statLabel: CSSProperties = {
   display: 'block',
   marginTop: 4,
-  fontSize: 'var(--th-text-xs)',
-  letterSpacing: 'var(--th-label-tracking)',
-  textTransform: 'uppercase',
-  color: 'var(--th-muted)',
-}
-
-const sectionHeading: CSSProperties = {
-  margin: 0,
   fontSize: 'var(--th-text-xs)',
   letterSpacing: 'var(--th-label-tracking)',
   textTransform: 'uppercase',
@@ -142,6 +130,7 @@ export function AthleteDetailScreen() {
   const [starting, setStarting] = useState(false)
   const [editing, setEditing] = useState(false)
   const [historyView, setHistoryView] = useState<'list' | 'month'>('list')
+  const [tab, setTab] = useTabParam(ATHLETE_TABS, 'history')
 
   const [printChoice, setPrintChoice] = useState(false)
   const [printVariant, setPrintVariant] = useState<PrintVariant>('filled')
@@ -289,6 +278,7 @@ export function AthleteDetailScreen() {
   }
 
   const lastSessionId = briefing.data.lastSession?.id ?? null
+  const subject = athlete.data ?? briefing.data.athlete
 
   return (
     <Screen label={t('athlete.briefing')} header={header}>
@@ -301,69 +291,101 @@ export function AthleteDetailScreen() {
         }
       />
 
-      <section style={section} aria-label={t('notes.title')}>
-        <h2 style={sectionHeading}>{t('notes.title')}</h2>
-        <NoteComposer athleteId={athleteId} />
-        <NoteFeed athleteId={athleteId} notes={notes.data ?? []} />
-      </section>
+      <Tabs
+        label={t('insights.tabsLabel')}
+        value={tab}
+        onChange={setTab}
+        tabs={[
+          { id: 'history', label: t('insights.tabHistory'), icon: 'list' },
+          { id: 'progress', label: t('insights.tabProgress'), icon: 'chart' },
+          { id: 'records', label: t('insights.tabRecords'), icon: 'trophy' },
+          { id: 'notes', label: t('insights.tabNotes'), icon: 'note', badge: notes.data?.length ?? 0 },
+          { id: 'program', label: t('insights.tabProgram'), icon: 'dumbbell' },
+          { id: 'access', label: t('insights.tabAccess'), icon: 'share' },
+        ]}
+      >
+        {(open) => {
+          const insightProps = { athleteId, progress: progress.data, memberships: team.data ?? [], today: todayIn(timeZone) }
+          switch (open) {
+            case 'notes':
+              return (
+                <section style={section} aria-label={t('notes.title')}>
+                  <NoteComposer athleteId={athleteId} />
+                  <NoteFeed athleteId={athleteId} notes={notes.data ?? []} />
+                </section>
+              )
+            case 'progress':
+              return (
+                <>
+                  <InsightsOverview {...insightProps} />
+                  <ProgressSection athleteId={athleteId} />
+                </>
+              )
+            case 'records':
+              return <RecordsCard {...insightProps} />
+            case 'program':
+              return <ProgramCard athlete={subject} />
+            case 'access':
+              return (
+                <>
+                  <ShareCard athlete={subject} />
+                  <AthleteAccessCard athlete={subject} />
+                </>
+              )
+            default:
+              return (
+                <>
+                  <div style={statsGrid} data-testid="stats">
+                    <Card>
+                      <span className="num display" style={statValue}>
+                        {totals.sessions}
+                      </span>
+                      <span style={statLabel}>{t('athlete.statSessions')}</span>
+                    </Card>
+                    <Card>
+                      <span className="num display" style={statValue}>
+                        {totals.sets}
+                      </span>
+                      <span style={statLabel}>{t('log.totalSets')}</span>
+                    </Card>
+                    <Card>
+                      <span className="num display" style={statValue}>
+                        {formatVolume(totals.volume, locale)}
+                      </span>
+                      <span style={statLabel}>{t('log.totalVolume')}</span>
+                    </Card>
+                  </div>
 
-      <div style={statsGrid} data-testid="stats">
-        <Card>
-          <span className="num display" style={statValue}>
-            {totals.sessions}
-          </span>
-          <span style={statLabel}>{t('athlete.statSessions')}</span>
-        </Card>
-        <Card>
-          <span className="num display" style={statValue}>
-            {totals.sets}
-          </span>
-          <span style={statLabel}>{t('log.totalSets')}</span>
-        </Card>
-        <Card>
-          <span className="num display" style={statValue}>
-            {formatVolume(totals.volume, locale)}
-          </span>
-          <span style={statLabel}>{t('log.totalVolume')}</span>
-        </Card>
-      </div>
-
-      <section style={section} aria-label={t('athlete.history')}>
-        <div style={historyHead}>
-          <h2 style={sectionHeading}>{t('athlete.history')}</h2>
-          {history && history.workouts.length > 0 ? (
-            <Segmented
-              label={t('history.view')}
-              value={historyView}
-              options={[
-                { value: 'list', label: t('history.viewList') },
-                { value: 'month', label: t('history.viewMonth') },
-              ]}
-              onChange={setHistoryView}
-            />
-          ) : null}
-        </div>
-        {historyView === 'month' && history ? (
-          <Card>
-            <MonthCalendar workouts={history.workouts} ctx={history.ctx} names={history.names} today={todayIn(timeZone)} />
-          </Card>
-        ) : (
-          <HistoryList
-            sessions={sessions.data ?? []}
-            progress={progress.data}
-            memberships={team.data ?? []}
-            onOpen={(sessionId) => navigate(`/log/${sessionId}`)}
-          />
-        )}
-      </section>
-
-      <ProgressSection athleteId={athleteId} />
-
-      <ProgramCard athlete={athlete.data ?? briefing.data.athlete} />
-
-      <ShareCard athlete={athlete.data ?? briefing.data.athlete} />
-
-      <AthleteAccessCard athlete={athlete.data ?? briefing.data.athlete} />
+                  <section style={section} aria-label={t('athlete.history')}>
+                    {history && history.workouts.length > 0 ? (
+                      <Segmented
+                        label={t('history.view')}
+                        value={historyView}
+                        options={[
+                          { value: 'list', label: t('history.viewList') },
+                          { value: 'month', label: t('history.viewMonth') },
+                        ]}
+                        onChange={setHistoryView}
+                      />
+                    ) : null}
+                    {historyView === 'month' && history ? (
+                      <Card>
+                        <MonthCalendar workouts={history.workouts} ctx={history.ctx} names={history.names} today={todayIn(timeZone)} />
+                      </Card>
+                    ) : (
+                      <HistoryList
+                        sessions={sessions.data ?? []}
+                        progress={progress.data}
+                        memberships={team.data ?? []}
+                        onOpen={(sessionId) => navigate(`/log/${sessionId}`)}
+                      />
+                    )}
+                  </section>
+                </>
+              )
+          }
+        }}
+      </Tabs>
 
       <AthleteSheet
         open={editing}

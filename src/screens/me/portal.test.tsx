@@ -233,7 +233,7 @@ describe('the two panels', () => {
 
 describe('athlete access on the staff side', () => {
   it('gives the owner a link shown once, as a fragment on /welcome', async () => {
-    const { host } = mount(`/athletes/${elena}`, auth('owner'), seededRepo())
+    const { host } = mount(`/athletes/${elena}?tab=access`, auth('owner'), seededRepo())
     await settle()
 
     await click(buttonWithText(host, i18n.t('athleteAccess.send')))
@@ -245,7 +245,7 @@ describe('athlete access on the staff side', () => {
   })
 
   it('shows a trainer the state and who can change it, without the buttons', async () => {
-    const { host } = mount(`/athletes/${elena}`, auth('trainer'), seededRepo(SEED_IDS.trainer))
+    const { host } = mount(`/athletes/${elena}?tab=access`, auth('trainer'), seededRepo(SEED_IDS.trainer))
     await settle()
 
     expect(textOf(host)).toContain(i18n.t('athleteAccess.none'))

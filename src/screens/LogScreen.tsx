@@ -803,9 +803,9 @@ function LogScreenBody() {
         <section
           key={block.supersetId}
           aria-label={t('log.superset')}
-          style={{ display: 'flex', flexDirection: 'column', gap: 8, padding: 8, borderRadius: 'var(--th-r-lg)', border: '2px solid var(--th-accent-soft)' }}
+          style={{ display: 'flex', flexDirection: 'column', gap: 8, padding: 8, borderRadius: 'var(--th-r-lg)', border: '2px solid var(--th-brand-soft)' }}
         >
-          <strong style={{ fontSize: 'var(--th-text-xs)', letterSpacing: 'var(--th-label-tracking)', textTransform: 'uppercase', color: 'var(--th-accent)' }}>
+          <strong style={{ fontSize: 'var(--th-text-xs)', letterSpacing: 'var(--th-label-tracking)', textTransform: 'uppercase', color: 'var(--th-brand)' }}>
             {t('log.superset')}
           </strong>
           {pair.map((b) => renderBlock(b))}

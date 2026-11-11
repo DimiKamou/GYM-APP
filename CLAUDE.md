@@ -26,7 +26,12 @@ feature is.
 - **Assignment is a filter, never a fence.** Any active member may log for any athlete in the gym. Fencing by
   assignment stops work when a coach covers a sick colleague, and the workaround is a shared login.
 - **Greek is the default locale.** English is the fallback.
-- **Daylight is the default theme, Slate is its dark pair.** Both are pure token files.
+- **PowerHouse Night (dark) is the default theme, Day its light pair.** Pure token files; the ids stay
+  `slate` / `daylight` because stored preferences say so. 60-30-10: black 60, orange 30 (`--th-brand*`:
+  tabs, selections, avatars, charts), purple 10 (`--th-accent*`: the primary action only). A second purple
+  thing on one screen is a bug.
+- **Screens with more than one subject are tabs** (`Tabs` + `useTabParam` in `src/ui/`), `?tab=` replaced,
+  never pushed. The athlete's briefing card stays above the tabs: the five-second read is never a tab away.
 - **Soft delete everywhere, undo instead of confirm.** No DELETE policy exists in the schema. Confirm dialogs
   survive only for removing an athlete or a trainer.
 - **The service worker ships** on the web. A new build waits for a tap on the update banner, and

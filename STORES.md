@@ -81,8 +81,8 @@ changing them:
 
 ```bash
 npx @capacitor/assets generate --android --ios \
-  --iconBackgroundColor '#5E7355' --iconBackgroundColorDark '#5E7355' \
-  --splashBackgroundColor '#F4F0E7' --splashBackgroundColorDark '#161922'
+  --iconBackgroundColor '#0B0A0C' --iconBackgroundColorDark '#0B0A0C' \
+  --splashBackgroundColor '#FBF8F5' --splashBackgroundColorDark '#0B0A0C'
 git checkout android/app/src/main/AndroidManifest.xml   # the tool reformats it; keep ours
 ```
 

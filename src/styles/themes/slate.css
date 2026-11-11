@@ -1,75 +1,77 @@
 /**
- * Theme B — SLATE (restful desaturated dark). The dark half of the pair.
+ * POWERHOUSE NIGHT — the brand, and the default. (The file and the `slate` id are historical:
+ * stored preferences say `slate`, and renaming the id would silently reset everyone's choice.)
  *
- * Only ever active behind an explicit data-theme stamp; ThemeProvider resolves
- * `system` + prefers-color-scheme: dark to this before the first paint.
+ * 60-30-10:
+ *   60 — black, faintly warm: --th-bg, the cards, the surface steps.
+ *   30 — orange (--th-brand*): the active tab and its indicator, selected chips and segments,
+ *        avatars, the chart bars and lines, the ember glow at the top of the page.
+ *   10 — purple (--th-accent*): the primary button and the keypad's commit key, nothing else.
+ *        One purple thing per screen is the thumb's target.
  *
+ * Also bound to bare `:root`, so the first paint is the brand before ThemeProvider stamps.
  * Contract: every property here is in src/theme/tokens.contract.ts, and nothing else may be.
- * Contrast figures in comments are measured WCAG 2.1 ratios.
+ * Contrast figures are measured WCAG 2.1 ratios against --th-surface-3 #241F27 unless stated.
  */
 
+:root,
 :root[data-theme='slate'] {
-  /* ---- surfaces ---- */
-  --th-bg: #161922;
-  --th-bg-image: radial-gradient(120% 75% at 50% -8%, #1C2230 0%, #14161E 62%);
-  --th-surface: #1E222C;
-  --th-surface-2: #232833;
-  --th-surface-3: #272D39;
-  --th-ink: #E6E9EF;
-  --th-muted: #888E9D;
-  --th-faint: #5C6373;
-  --th-line: #292E3A;
-  --th-line-soft: #242934;
+  /* ---- surfaces (60) ---- */
+  --th-bg: #0B0A0C;
+  --th-bg-image: radial-gradient(130% 70% at 50% -12%, #3A1C0A 0%, #170F0B 42%, #0B0A0C 70%);
+  --th-surface: #151316;
+  --th-surface-2: #1C191E;
+  --th-surface-3: #241F27;
+  --th-ink: #F6F1EC;   /* 14.38:1 */
+  --th-muted: #ADA3A8; /* 6.37:1 */
+  --th-faint: #9C9197; /* 5.30:1 */
+  --th-line: #2E2830;
+  --th-line-soft: #1F1B21;
 
-  /* ---- accent ----
-     CORRECTION to the prototype. It chose accent ink with `lum(hex) > 0.45 ? dark : white`.
-     0.45 is not the WCAG crossover (that is near 0.179), so this blue fell on the "white" side
-     and shipped white on #84A0D6 — 2.63:1, well under the 4.5:1 floor. Dark ink on the same blue
-     measures 6.86:1. Fixed by measuring both candidates rather than thresholding luminance;
-     pickInkOn() in src/theme/tokens.contract.ts does exactly that for runtime-chosen colours. */
-  --th-accent: #84A0D6;
-  --th-accent-ink: #14161E; /* 6.86:1 (white would have been 2.63:1) */
-  --th-accent-soft: #222A38; /* accent on it: 5.48:1 */
+  /* ---- accent (10) — purple ---- white on it is 2.8:1; the ink is near-black. */
+  --th-accent: #A78BFA;     /* 5.93:1 as text */
+  --th-accent-ink: #140A22; /* 7.04:1 on the fill */
+  --th-accent-soft: #2A1D45; /* accent on it: 5.67:1 */
+
+  /* ---- brand (30) — orange ---- */
+  --th-brand: #FF7A1A;      /* 6.19:1 */
+  --th-brand-ink: #140A02;  /* 7.50:1 on the fill */
+  --th-brand-soft: #2E1A0C; /* brand on it: 6.34:1 — selected chips and segments */
 
   /* ---- avatar ---- */
-  --th-avatar-bg: #272D39;
-  --th-avatar-ink: #AEB6C8; /* 6.79:1 on the chip */
+  --th-avatar-bg: #33200F;
+  --th-avatar-ink: #FFB27A; /* 8.79:1 */
 
-  /* ---- semantic ---- measured on --th-surface-3 #272D39 ---- */
-  --th-danger: #FE5E53;      /* 4.56:1 */
-  --th-danger-ink: #14161E;  /* 5.97:1 on the danger fill (white on it is 3.03:1) */
-  --th-danger-soft: #33242A; /* danger text on it: 4.87:1 */
-  --th-success: #10B981;     /* 5.44:1 */
-  --th-warning: #EAB308;     /* 7.20:1 */
+  /* ---- semantic ---- */
+  --th-danger: #FF5C6C;      /* 5.42:1 */
+  --th-danger-ink: #140A02;  /* 6.52:1 on the fill */
+  --th-danger-soft: #3A1820; /* danger on it: 5.26:1 */
+  --th-success: #22C55E;     /* 7.13:1 */
+  --th-warning: #FACC15;     /* 10.61:1 */
 
-  /* ---- category ----
-     Same OKLCH re-derivation as Daylight, walked the other way: hue held, lightness raised until
-     each clears 4.5:1 on the CHIP (#272D39), which is lighter than the near-black the prototype
-     assumed. Green and yellow already cleared it and are kept verbatim. Ratios are vs #272D39. */
-  --th-cat-upper: #5293FD;    /* 4.57:1  (was #3B82F6 — 3.9:1 here) */
-  --th-cat-lower: #FF5F29;    /* 4.55:1  (was #FF5A1F) */
-  --th-cat-core: #B775FE;     /* 4.60:1  (was #A855F7 — 3.6:1 here) */
-  --th-cat-cardio: #10B981;   /* 5.44:1  (unchanged) */
-  --th-cat-mobility: #EAB308; /* 7.20:1  (unchanged) */
+  /* ---- category ---- `lower` is pink, not orange: orange is the brand's own colour here. */
+  --th-cat-upper: #60A5FA;    /* 6.39:1 */
+  --th-cat-lower: #F472B6;    /* 6.13:1 */
+  --th-cat-core: #C084FC;     /* 6.15:1 */
+  --th-cat-cardio: #22C55E;   /* 7.13:1 */
+  --th-cat-mobility: #FACC15; /* 10.61:1 */
 
-  /* ---- appointment type ---- ratios vs #272D39. See daylight.css for why `personal` is the
-     accent and `assessment` is a cyan instead of the prototype's blue. */
-  --th-appt-personal: #84A0D6;   /* 5.25:1 */
-  --th-appt-assessment: #0EA5E9; /* 4.98:1 */
-  --th-appt-group: #B775FE;      /* 4.60:1 */
-  --th-appt-program: #FF5F29;    /* 4.55:1 */
+  /* ---- appointment type ---- */
+  --th-appt-personal: #FF7A1A;   /* 6.19:1 — the brand orange */
+  --th-appt-assessment: #22D3EE; /* 8.99:1 */
+  --th-appt-group: #F472B6;      /* 6.13:1 */
+  --th-appt-program: #60A5FA;    /* 6.39:1 */
 
-  /* ---- type ---- no serif and nothing above 600: on a dark ground heavy weights bloom. */
+  /* ---- type ---- one grotesk, heavy for display: a gym, not a journal. */
   --th-font-display: 'Hanken Grotesk', system-ui, -apple-system, 'Segoe UI', sans-serif;
   --th-font-ui: 'Hanken Grotesk', system-ui, -apple-system, 'Segoe UI', sans-serif;
-  --th-display-weight: 600;
-  --th-display-tracking: -0.015em;
+  --th-display-weight: 700;
+  --th-display-tracking: -0.025em;
 
   /* ---- elevation ---- */
-  --th-shadow: 0 18px 40px -20px rgba(0, 0, 0, 0.65);
-  --th-shadow-soft: 0 10px 24px -16px rgba(0, 0, 0, 0.5);
+  --th-shadow: 0 18px 40px -20px rgba(0, 0, 0, 0.85);
+  --th-shadow-soft: 0 10px 24px -16px rgba(0, 0, 0, 0.7);
 
-  /* ---- chrome ---- matches --th-bg, not the gradient's top stop; the OS bar sits over the page
-     edge, where the gradient has already resolved to the flat background. */
-  --th-theme-color: #161922;
+  /* ---- chrome ---- */
+  --th-theme-color: #0B0A0C;
 }

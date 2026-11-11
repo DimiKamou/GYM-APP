@@ -144,7 +144,7 @@ async function settle(rounds = 6): Promise<void> {
   }
 }
 
-async function renderAthlete(athleteId: string): Promise<HTMLDivElement> {
+async function renderAthlete(athleteId: string, tab?: string): Promise<HTMLDivElement> {
   const host = render(
     <Routes>
       <Route path="/athletes/:athleteId" element={<AthleteDetailScreen />} />
@@ -152,7 +152,7 @@ async function renderAthlete(athleteId: string): Promise<HTMLDivElement> {
           under test here; without a match the router logs a warning on every run. */}
       <Route path="*" element={null} />
     </Routes>,
-    `/athletes/${athleteId}`,
+    `/athletes/${athleteId}${tab ? `?tab=${tab}` : ''}`,
   )
   await settle()
   return host
@@ -215,12 +215,20 @@ describe('the Briefing Card answers the handoff question', () => {
     expect(buttonWithText(briefing, i18n.t('athlete.newSession'))).toBeTruthy()
   })
 
-  it('puts the briefing above the tiles, the history and the whole Progress section', async () => {
-    const host = await renderAthlete(nikos)
-    const briefing = testId(host, 'briefing')
-
-    for (const later of ['stats', 'history', 'notes', 'progress']) {
+  it('puts the briefing above the tabs, whichever tab is open', async () => {
+    for (const [tab, later] of [
+      ['history', 'stats'],
+      ['history', 'history'],
+      ['notes', 'notes'],
+      ['progress', 'progress'],
+    ] as const) {
+      const host = await renderAthlete(nikos, tab)
+      const briefing = testId(host, 'briefing')
+      expect(precedes(briefing, host.querySelector('[role="tablist"]') as Element)).toBe(true)
       expect(precedes(briefing, testId(host, later))).toBe(true)
+      act(() => root?.unmount())
+      root = null
+      host.remove()
     }
   })
 
@@ -261,7 +269,7 @@ describe('history and progress below the fold', () => {
   })
 
   it('draws the three charts, and labels the share chart for what it plots', async () => {
-    const host = await renderAthlete(nikos)
+    const host = await renderAthlete(nikos, 'progress')
     const progress = testId(host, 'progress')
 
     expect(progress.querySelector('[data-testid="trend-chart"] svg')).toBeTruthy()
@@ -274,7 +282,7 @@ describe('history and progress below the fold', () => {
   })
 
   it('gives an athlete with no sessions an empty state instead of an empty chart', async () => {
-    const host = await renderAthlete(katerina)
+    const host = await renderAthlete(katerina, 'progress')
     const progress = testId(host, 'progress')
 
     expect(textOf(progress)).toContain(i18n.t('progress.noExercises'))
@@ -331,7 +339,7 @@ describe('the two ways to start, and the note that follows', () => {
   })
 
   it('appends a note instead of editing one, and clears the box once it has landed', async () => {
-    const host = await renderAthlete(nikos)
+    const host = await renderAthlete(nikos, 'notes')
     const before = await repo.listNotes(SEED_IDS.gym, nikos)
 
     const box = host.querySelector('textarea')

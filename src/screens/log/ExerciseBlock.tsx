@@ -212,7 +212,7 @@ export function ExerciseBlock({
       ) : null}
 
       {target ? (
-        <p className="num" style={{ ...lastLine, color: 'var(--th-accent)', fontWeight: 600 }}>
+        <p className="num" style={{ ...lastLine, color: 'var(--th-brand)', fontWeight: 600 }}>
           {t('log.target')}: {target}
         </p>
       ) : null}

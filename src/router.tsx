@@ -189,7 +189,7 @@ function NotFoundScreen() {
         <Link
           to="/athletes"
           style={{
-            color: 'var(--th-accent)',
+            color: 'var(--th-brand)',
             fontWeight: 600,
             alignSelf: 'flex-start',
             minHeight: 44,
@@ -238,7 +238,7 @@ function RouteErrorScreen() {
         <Link
           to="/athletes"
           style={{
-            color: 'var(--th-accent)',
+            color: 'var(--th-brand)',
             fontWeight: 600,
             alignSelf: 'flex-start',
             minHeight: 44,

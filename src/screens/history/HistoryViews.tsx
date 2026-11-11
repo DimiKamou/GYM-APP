@@ -238,7 +238,7 @@ export function MonthCalendar({
                   className="th-tap num"
                   aria-label={`${formatDate(day, ctx.locale)} — ${t('history.openDay')}`}
                   onClick={() => setOpen(day)}
-                  style={{ ...dayCell, background: 'var(--th-accent)', color: 'var(--th-accent-ink)', fontWeight: 700 }}
+                  style={{ ...dayCell, background: 'var(--th-brand)', color: 'var(--th-brand-ink)', fontWeight: 700 }}
                 >
                   {label}
                 </button>
@@ -251,7 +251,7 @@ export function MonthCalendar({
                 style={{
                   ...dayCell,
                   opacity: inMonth ? 1 : 0.3,
-                  outline: day === today ? '2px solid var(--th-accent)' : undefined,
+                  outline: day === today ? '2px solid var(--th-brand)' : undefined,
                   outlineOffset: -4,
                 }}
               >

@@ -1,4 +1,4 @@
-import { useMemo, type CSSProperties } from 'react'
+import { useMemo, useState, type CSSProperties } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { useTranslation } from 'react-i18next'
 
@@ -8,7 +8,11 @@ import { ATHLETE_ACCOUNTS_MISSING } from '@/data/repo/types'
 import { sessionSets, sessionVolume } from '@/domain/analytics'
 import { formatVolume } from '@/domain/format'
 import { currentLocale } from '@/i18n'
-import { Button, Card, EmptyState, Icon, Screen, Spinner } from '@/ui'
+import { Button, Card, EmptyState, Icon, Screen, Segmented, Spinner, Tabs, useTabParam } from '@/ui'
+import { todayIn } from '@/screens/calendar/WeekStrip'
+import { MonthCalendar } from '@/screens/history/HistoryViews'
+import { buildWorkouts, useRecapContext } from '@/screens/history/workouts'
+import { InsightsOverview, RecordsCard } from '@/screens/insights/Insights'
 import { HistoryList } from '@/screens/athlete/HistoryList'
 import { ProgressView } from '@/screens/progress/ProgressSection'
 import { portalProgress } from '@/screens/me/portal'
@@ -16,8 +20,8 @@ import { portalProgress } from '@/screens/me/portal'
 /**
  * The athlete's panel: their own sheet, read-only.
  *
- * Same order of importance as on paper, from the athlete's side of the clipboard: who is
- * training them and on what, then what they did, then whether it is going anywhere. Every
+ * Four tabs, from the athlete's side of the clipboard: Αρχική (who is training them and on what,
+ * the streak, the latest records), Ιστορικό, Πρόοδος and Ρεκόρ. Every
  * session row carries its date and the coach who wrote it, exactly as the staff see it — "who
  * wrote this line" is the product, and an athlete asking "who put 80 on that?" deserves the
  * same answer the covering coach gets.
@@ -25,6 +29,8 @@ import { portalProgress } from '@/screens/me/portal'
  * What is NOT here is the staff's own writing — notes, warnings, set remarks. The server never
  * sends it (see 015); nothing on this screen has to remember to hide it.
  */
+
+const PORTAL_TABS = ['home', 'history', 'progress', 'records'] as const
 
 const headerRow: CSSProperties = {
   display: 'flex',
@@ -85,8 +91,13 @@ export function AthleteHomeScreen() {
   const navigate = useNavigate()
   const { athlete } = useAuth()
   const portal = useAthletePortal()
+  const [tab, setTab] = useTabParam(PORTAL_TABS, 'home')
+  const [historyView, setHistoryView] = useState<'list' | 'month'>('list')
 
   const progress = useMemo(() => (portal.data ? portalProgress(portal.data) : undefined), [portal.data])
+  const ctx = useRecapContext(progress)
+  const workouts = useMemo(() => (progress ? buildWorkouts(progress) : []), [progress])
+  const names = useMemo(() => new Map((portal.data?.staff ?? []).map((m) => [m.id, m.displayName])), [portal.data])
 
   const totals = useMemo(() => {
     const sets = portal.data?.sets ?? []
@@ -146,61 +157,112 @@ export function AthleteHomeScreen() {
 
   const data = portal.data
   const hasPlan = Boolean(data.athlete.planPhase || data.athlete.planFocus || coachName)
+  const today = todayIn(data.gym.timezone)
+  const insightProps = { athleteId: data.athlete.id, progress, memberships: data.staff, today }
 
   return (
     <Screen label={t('portal.title')} header={header}>
-      {hasPlan ? (
-        <Card>
-          <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
-            <h2 style={sectionHeading}>{t('portal.plan')}</h2>
-            {coachName ? <p style={planText}>{t('portal.coach', { name: coachName })}</p> : null}
-            {data.athlete.planPhase ? <p style={planText}>{data.athlete.planPhase}</p> : null}
-            {data.athlete.planFocus ? (
-              <p style={{ ...planText, color: 'var(--th-muted)' }}>{data.athlete.planFocus}</p>
-            ) : null}
-          </div>
-        </Card>
-      ) : null}
+      <Tabs
+        label={t('insights.tabsLabel')}
+        value={tab}
+        onChange={setTab}
+        tabs={[
+          { id: 'home', label: t('insights.tabHome'), icon: 'sparkle' },
+          { id: 'history', label: t('insights.tabHistory'), icon: 'list' },
+          { id: 'progress', label: t('insights.tabProgress'), icon: 'chart' },
+          { id: 'records', label: t('insights.tabRecords'), icon: 'trophy' },
+        ]}
+      >
+        {(open) => {
+          switch (open) {
+            case 'history':
+              return (
+                <section style={section} aria-label={t('athlete.history')}>
+                  {workouts.length > 0 ? (
+                    <Segmented
+                      label={t('history.view')}
+                      value={historyView}
+                      options={[
+                        { value: 'list', label: t('history.viewList') },
+                        { value: 'month', label: t('history.viewMonth') },
+                      ]}
+                      onChange={setHistoryView}
+                    />
+                  ) : null}
+                  {historyView === 'month' && workouts.length > 0 ? (
+                    <Card>
+                      <MonthCalendar workouts={workouts} ctx={ctx} names={names} today={today} showNotes={false} />
+                    </Card>
+                  ) : (
+                    <HistoryList
+                      sessions={data.sessions}
+                      progress={progress}
+                      memberships={data.staff}
+                      onOpen={(sessionId) => navigate(`/me/sessions/${sessionId}`)}
+                      emptyHint={t('portal.noSessionsHint')}
+                    />
+                  )}
+                </section>
+              )
+            case 'progress':
+              return (
+                <>
+                  <InsightsOverview {...insightProps} />
+                  <ProgressView
+                    athleteId={data.athlete.id}
+                    progress={progress}
+                    pending={false}
+                    memberships={data.staff}
+                    emptyHint={t('portal.noSessionsHint')}
+                  />
+                </>
+              )
+            case 'records':
+              return <RecordsCard {...insightProps} />
+            default:
+              return (
+                <>
+                  {hasPlan ? (
+                    <Card>
+                      <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+                        <h2 style={sectionHeading}>{t('portal.plan')}</h2>
+                        {coachName ? <p style={planText}>{t('portal.coach', { name: coachName })}</p> : null}
+                        {data.athlete.planPhase ? <p style={planText}>{data.athlete.planPhase}</p> : null}
+                        {data.athlete.planFocus ? (
+                          <p style={{ ...planText, color: 'var(--th-muted)' }}>{data.athlete.planFocus}</p>
+                        ) : null}
+                      </div>
+                    </Card>
+                  ) : null}
 
-      <div style={statsGrid} data-testid="portal-stats">
-        <Card>
-          <span className="num display" style={statValue}>
-            {totals.sessions}
-          </span>
-          <span style={statLabel}>{t('athlete.statSessions')}</span>
-        </Card>
-        <Card>
-          <span className="num display" style={statValue}>
-            {totals.sets}
-          </span>
-          <span style={statLabel}>{t('log.totalSets')}</span>
-        </Card>
-        <Card>
-          <span className="num display" style={statValue}>
-            {formatVolume(totals.volume, locale)}
-          </span>
-          <span style={statLabel}>{t('log.totalVolume')}</span>
-        </Card>
-      </div>
+                  <div style={statsGrid} data-testid="portal-stats">
+                    <Card>
+                      <span className="num display" style={statValue}>
+                        {totals.sessions}
+                      </span>
+                      <span style={statLabel}>{t('athlete.statSessions')}</span>
+                    </Card>
+                    <Card>
+                      <span className="num display" style={statValue}>
+                        {totals.sets}
+                      </span>
+                      <span style={statLabel}>{t('log.totalSets')}</span>
+                    </Card>
+                    <Card>
+                      <span className="num display" style={statValue}>
+                        {formatVolume(totals.volume, locale)}
+                      </span>
+                      <span style={statLabel}>{t('log.totalVolume')}</span>
+                    </Card>
+                  </div>
 
-      <section style={section} aria-label={t('athlete.history')}>
-        <h2 style={sectionHeading}>{t('athlete.history')}</h2>
-        <HistoryList
-          sessions={data.sessions}
-          progress={progress}
-          memberships={data.staff}
-          onOpen={(sessionId) => navigate(`/me/sessions/${sessionId}`)}
-          emptyHint={t('portal.noSessionsHint')}
-        />
-      </section>
-
-      <ProgressView
-        athleteId={data.athlete.id}
-        progress={progress}
-        pending={false}
-        memberships={data.staff}
-        emptyHint={t('portal.noSessionsHint')}
-      />
+                  <InsightsOverview {...insightProps} />
+                  <RecordsCard {...insightProps} limit={3} title={t('insights.recent')} />
+                </>
+              )
+          }
+        }}
+      </Tabs>
     </Screen>
   )
 }
