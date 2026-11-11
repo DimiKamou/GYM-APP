@@ -20,7 +20,7 @@ import { routes } from '@/router'
  * What is being defended:
  *
  *  - **An athlete reads their own sheet and nothing of the staff's writing.** The pinned
- *    "careful with the left shoulder" is written for the next coach. 012 never sends it; the
+ *    "careful with the left shoulder" is written for the next coach. 015 never sends it; the
  *    local repository must not either, or the demo teaches the wrong product.
  *  - **Each panel is a fence for the other kind of account.** An athlete on `/athletes` lands
  *    on `/me`; a trainer on `/me` lands on the roster.

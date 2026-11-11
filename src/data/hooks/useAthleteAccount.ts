@@ -1,5 +1,5 @@
 /**
- * Athlete accounts (012), from both sides.
+ * Athlete accounts (015), from both sides.
  *
  * The staff half takes the gym id like every other hook. The athlete half takes none: an
  * athlete is not a member of anything, and `my_athlete_portal()` answers from `auth.uid()`.

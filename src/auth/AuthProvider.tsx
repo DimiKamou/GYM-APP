@@ -30,7 +30,7 @@ import type { AthleteIdentity, Gym, Membership, Uuid } from '@/domain/types'
  *
  * Then the panel. Staff first: an account with an active membership is a trainer whatever
  * else it is. Otherwise `my_athlete()` says whether it is someone's athlete. An athlete is
- * NOT a membership (see 012), so none of the staff screens could read anything for them even
+ * NOT a membership (see 015), so none of the staff screens could read anything for them even
  * if a route let them in.
  *
  * When there is no Supabase project — or `VITE_OFFLINE_FIXTURE=1` forces the local repo —
@@ -238,7 +238,7 @@ type Resolution =
 
 /**
  * Not staff: is this account someone's athlete? `my_athlete()` answers from `auth.uid()`.
- * Before 012 is pasted the function does not exist, and the repository reads that as "no".
+ * Before 015 is pasted the function does not exist, and the repository reads that as "no".
  */
 async function resolveAthlete(userId: Uuid): Promise<Resolution> {
   const stored = readAthlete()

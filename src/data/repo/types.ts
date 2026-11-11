@@ -260,7 +260,7 @@ export interface Repo {
   revokeInvite(gymId: Uuid, inviteId: Uuid): Promise<WriteState>
   updateMember(gymId: Uuid, membershipId: Uuid, patch: Partial<Pick<Membership, 'displayName' | 'role' | 'status'>>): Promise<WriteState>
 
-  // ---- athlete accounts (012) ----
+  // ---- athlete accounts (015) ----
   /**
    * Optional and probed for, like `unarchiveExercise`: a repository without them hides the
    * athlete-access card instead of offering a button that cannot work. Owner-only on the
@@ -277,7 +277,7 @@ export interface Repo {
 }
 
 /**
- * The app ships before the SQL (CLAUDE.md): until 012 is pasted, PostgREST answers PGRST202 for
+ * The app ships before the SQL (CLAUDE.md): until 015 is pasted, PostgREST answers PGRST202 for
  * every function it adds. A read that hits that throws an Error with this message — "this gym
  * has no athlete accounts yet", not a failure to retry — and the screens say so in those words.
  */

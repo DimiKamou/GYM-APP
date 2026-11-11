@@ -425,7 +425,7 @@ export interface Briefing {
 }
 
 // ---------------------------------------------------------------------------
-// Athlete accounts (012). An athlete is not a membership: no table policy admits them, and
+// Athlete accounts (015). An athlete is not a membership: no table policy admits them, and
 // everything they read comes through `my_athlete()` and `my_athlete_portal()`.
 // ---------------------------------------------------------------------------
 

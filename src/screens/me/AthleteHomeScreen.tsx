@@ -23,7 +23,7 @@ import { portalProgress } from '@/screens/me/portal'
  * same answer the covering coach gets.
  *
  * What is NOT here is the staff's own writing — notes, warnings, set remarks. The server never
- * sends it (see 012); nothing on this screen has to remember to hide it.
+ * sends it (see 015); nothing on this screen has to remember to hide it.
  */
 
 const headerRow: CSSProperties = {

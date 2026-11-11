@@ -223,7 +223,7 @@ export const en: Translation = {
     pending: 'A link has been sent — valid until {{date}}.',
     linked: 'Sees their programme as {{email}}.',
     unknown: 'The status did not load.',
-    notInstalled: 'Athlete accounts are not switched on yet (012 is missing).',
+    notInstalled: 'Athlete accounts are not switched on yet (015 is missing).',
     send: 'Send the athlete a link',
     sendNew: 'Send a new link',
     ownerOnly: 'Only the owner sends or removes athlete access.',

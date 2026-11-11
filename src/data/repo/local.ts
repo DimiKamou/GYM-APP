@@ -1130,7 +1130,7 @@ export function createLocalRepo(options: LocalRepoOptions = {}): Repo & InviteRe
         invite.revokedAt = at
       }),
 
-    // ---- athlete accounts — the same rules as 012, so the demo teaches the real flow ----
+    // ---- athlete accounts — the same rules as 015, so the demo teaches the real flow ----
 
     createAthleteInvite: (gymId, athleteId, email) =>
       serialize(async (): Promise<{ state: WriteState; secret?: string }> => {

@@ -42,7 +42,7 @@ export const keys = {
     ['gym', gymId, 'athletes', athleteId, 'sessions'] as const,
   athleteNotes: (gymId: Uuid, athleteId: Uuid) =>
     ['gym', gymId, 'athletes', athleteId, 'notes'] as const,
-  /** Whether this athlete has an account, and whether a link is out. Staff side of 012. */
+  /** Whether this athlete has an account, and whether a link is out. Staff side of 015. */
   athleteAccess: (gymId: Uuid, athleteId: Uuid) =>
     ['gym', gymId, 'athletes', athleteId, 'access'] as const,
   athleteProgress: (gymId: Uuid, athleteId: Uuid, exerciseId: Uuid | null = null) =>

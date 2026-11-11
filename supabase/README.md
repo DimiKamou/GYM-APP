@@ -121,7 +121,7 @@ than recording a no-op — create the gym from the app first, then run it.
 
 ## 4. Auth: email OTP with a real sender
 
-> Since 012 the PWA also signs in with a **username and password** (the accounts
+> Since 015 the PWA also signs in with a **username and password** (the accounts
 > the Streamlit pilot creates), **Google**, **Microsoft**, and an **email and
 > password sign-up** for athletes. Their setup is in section 10. Email codes
 > stay as the recovery path for anyone with a real address, so everything below
@@ -475,17 +475,17 @@ succeeds when it should not — so testing the *denials* is the only way to know
 
 ---
 
-## 10. Athlete accounts, Google / Microsoft, and account deletion (`012`)
+## 10. Athlete accounts, Google / Microsoft, and account deletion (`015`)
 
 Paste `trainhub-αθλητες-στην-εφαρμογη.sql` from the repository root (it is
-`012_athlete_accounts.sql`, byte for byte; `tests/run.sh` checks). It can run
+`015_athlete_accounts.sql`, byte for byte; `tests/run.sh` checks). It can run
 twice, and split statement by statement, and ends in the same place.
 
 **An athlete is not a membership.** `app.my_gym()` is null for them, so all 44
 policies refuse them; their whole view of the database is two SECURITY DEFINER
 functions, `my_athlete()` and `my_athlete_portal()`, which name every column
 they return. Staff notes, session notes, block and set remarks, other athletes
-and anyone's phone number never leave the server. `tests/06_athlete_accounts_test.sql`
+and anyone's phone number never leave the server. `tests/08_athlete_accounts_test.sql`
 asserts each of those.
 
 | function | who | what |

@@ -17,7 +17,7 @@ import { Button, Card, Field, Input, Sheet } from '@/ui'
 /**
  * "Can this athlete see their own sheet?" — on the athlete's page, where the question comes up.
  *
- * Everyone sees the answer; only the owner can change it, which mirrors 012. A trainer gets
+ * Everyone sees the answer; only the owner can change it, which mirrors 015. A trainer gets
  * the same card with the reason instead of the buttons — a missing button is read as a broken
  * app, and the workaround for a broken app is the owner's password.
  *

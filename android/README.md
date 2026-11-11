@@ -42,7 +42,7 @@ Everything below needs your accounts, your keys or your decisions.
 
 ## 2. Supabase (see `supabase/README.md` for each step)
 
-1. Paste `trainhub-αθλητες-στην-εφαρμογη.sql` (migration 012) in the SQL editor.
+1. Paste `trainhub-αθλητες-στην-εφαρμογη.sql` (migration 015) in the SQL editor.
 2. Authentication → URL Configuration: Site URL = your domain; add
    `https://<domain>/auth/callback` to Redirect URLs.
 3. Authentication → Providers: enable **Google** and **Azure** (Microsoft) with their client

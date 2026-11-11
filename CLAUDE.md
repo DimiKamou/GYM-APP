@@ -18,7 +18,7 @@ feature is.
   app**, where the redirect finishes in Safari and leaves the installed app signed out — the original
   reason there was no OAuth. Android's Play Store build is a TWA and shares Chrome's storage, so it is fine.
 - **Two staff roles**, `owner` and `trainer`. The four-role matrix was cut. Adding `manager` is one migration.
-- **An athlete account is not a membership** (012). `app.my_gym()` is null for it, so all 44 policies refuse
+- **An athlete account is not a membership** (015). `app.my_gym()` is null for it, so all 44 policies refuse
   it; it reads only through `my_athlete()` / `my_athlete_portal()`, which build every object column by
   column. Never give athletes access by adding a role to `memberships` or a permissive policy to a table —
   either opens every athlete's sheet and every staff note in the gym.

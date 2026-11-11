@@ -188,7 +188,7 @@ what the single-file preview build uses.
 supabase/migrations/   001_init.sql — schema, triggers, RLS, apply_ops, redeem_invite
                        002_seed_catalogue.sql — the shared bilingual exercise catalogue
                        003_muscle_groups.sql — the muscle taxonomy and exercise↔muscle links
-                       012_athlete_accounts.sql — athlete links, the athlete's read, account deletion
+                       015_athlete_accounts.sql — athlete links, the athlete's read, account deletion
 supabase/functions/    delete-account — the one place the service_role key is used (auth.users only)
 src/domain/            types (the contract), analytics, Greek text handling, parsing, formatting
 src/data/              supabase client, query client + persister, the outbox, id minting

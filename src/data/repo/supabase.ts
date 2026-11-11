@@ -1185,7 +1185,7 @@ export function createSupabaseRepo(): Repo & InviteRedeemer & AthleteSide {
       }
     },
 
-    // ---- athlete accounts (012) — all through functions; the tables have no policies ----
+    // ---- athlete accounts (015) — all through functions; the tables have no policies ----
 
     async createAthleteInvite(_gymId, athleteId, email) {
       const address = (email ?? '').trim().toLowerCase()
@@ -1212,7 +1212,7 @@ export function createSupabaseRepo(): Repo & InviteRedeemer & AthleteSide {
     async getMyAthlete(): Promise<AthleteIdentity | null> {
       const { data, error } = await supabase.rpc('my_athlete')
       if (error) {
-        // Before 012 there are no athlete accounts, so "nobody's athlete" is the true answer.
+        // Before 015 there are no athlete accounts, so "nobody's athlete" is the true answer.
         if (isMissingFunction(error)) return null
         throw new Error(error.message)
       }
