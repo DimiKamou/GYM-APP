@@ -286,6 +286,8 @@ export function AuthScreen() {
 
   const header = (
     <div>
+      {/* The gym's own badge. Decorative here: the h1 below names the app for assistive tech. */}
+      <img src="/brand/logo-512.png" alt="" width={112} height={112} style={{ display: 'block', marginBottom: 14 }} />
       <h1 className="display" style={titleStyle}>
         {t('brand.name')}
       </h1>

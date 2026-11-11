@@ -804,7 +804,7 @@ export function createSupabaseRepo(): Repo & InviteRedeemer & AthleteSide & Stor
     async listExercises(gymId) {
       return (await catalogue(gymId))
         .filter((e) => e.mergedIntoId === null)
-        .sort((a, b) => (a.nameEl ?? a.nameEn ?? '').localeCompare(b.nameEl ?? b.nameEn ?? '', 'el'))
+        .sort((a, b) => (a.nameEn ?? a.nameEl ?? '').localeCompare(b.nameEn ?? b.nameEl ?? '', 'en'))
     },
 
     async getExercisesByIds(_gymId, ids) {

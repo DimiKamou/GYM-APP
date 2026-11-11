@@ -159,7 +159,7 @@ describe('getBriefing — the five-second read', () => {
     expect(briefing?.lastSession?.localDate).toBe('2026-08-23')
     // Every line pairs a movement with a number, and the card carries the date and author
     // alongside — a bare "72,5×5" is what a coach loads a bar with.
-    expect(briefing?.lastSession?.topLines[0]).toBe('Πιέσεις Στήθους · 72,5×5')
+    expect(briefing?.lastSession?.topLines[0]).toBe('Bench Press · 72,5×5')
   })
 
   it('hides a dismissed note from the card but keeps it on the athlete list', async () => {
@@ -599,7 +599,7 @@ describe('filing an exercise into a muscle group', () => {
     expect(
       await repo.createExercise(GYM, {
         id: '01920000-0000-7000-8000-00000000000f',
-        nameEl: 'Πιέσεις Στήθους',
+        nameEl: 'Bench Press',
         category: 'upper',
         equipment: 'dumbbell',
       }),

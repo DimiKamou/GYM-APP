@@ -163,7 +163,6 @@ export function buildCsv(bundle: ExportBundle, context: CsvContext): string {
     for (const block of blocks.filter((b) => b.sessionId === session.id).sort(byPosition)) {
       const exercise = exercises.get(block.exerciseId)
       const name =
-        (context.locale === 'el' ? exercise?.nameEl : exercise?.nameEn) ??
         exercise?.nameEn ??
         exercise?.nameEl ??
         ''

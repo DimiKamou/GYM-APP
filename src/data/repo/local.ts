@@ -159,7 +159,7 @@ function compareSessions(a: Session, b: Session): number {
 
 function exerciseName(exercise: Exercise | undefined): string | null {
   if (!exercise) return null
-  return exercise.nameEl ?? exercise.nameEn ?? null
+  return exercise.nameEn ?? exercise.nameEl ?? null
 }
 
 interface Measurable {
@@ -765,7 +765,7 @@ export function createLocalRepo(
         live(db.exercises)
           // The shared catalogue (`gymId === null`) plus this gym's own additions.
           .filter((e) => (e.gymId === null || e.gymId === gymId) && e.mergedIntoId === null)
-          .sort((a, b) => (a.nameEl ?? a.nameEn ?? '').localeCompare(b.nameEl ?? b.nameEn ?? '', 'el')),
+          .sort((a, b) => (a.nameEn ?? a.nameEl ?? '').localeCompare(b.nameEn ?? b.nameEl ?? '', 'en')),
       ),
 
     listMuscleGroups: (gymId) =>

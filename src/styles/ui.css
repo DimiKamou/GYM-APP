@@ -110,6 +110,14 @@
   width: 100%;
 }
 
+/* Only a full-width button may shorten its label: it is the one whose width is set by its
+   column, not by its words. An inline button keeps its whole label. */
+.th-btn--block .th-btn__label {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
 /* A label long enough to wrap squeezed the glyph to a dot: flex shrinks an svg like any box. */
 .th-btn svg {
   flex: 0 0 auto;
@@ -133,6 +141,20 @@
 
 .th-btn--primary:hover:not([aria-disabled='true']):not(:disabled) {
   filter: brightness(1.06);
+}
+
+.th-btn--brand {
+  background: var(--th-brand-soft);
+  color: var(--th-ink);
+  border-color: var(--th-brand);
+}
+
+.th-btn--brand svg {
+  color: var(--th-brand);
+}
+
+.th-btn--brand:hover:not([aria-disabled='true']):not(:disabled) {
+  filter: brightness(1.12);
 }
 
 .th-btn--secondary {

@@ -40,7 +40,8 @@ feature is.
   No service worker there; Capgo live updates reach the same banner under the same rule. Native edits
   in `android/` and `ios/` are hand-made — never regenerate those folders without carrying them over.
 - **The brand is PowerHouse, for now.** It is `brand.name` in `src/i18n/`, the manifest, `index.html`
-  and the icons. Storage keys stay `trainhub.*` — renaming one signs everyone out and orphans the outbox.
+  and the icons. The badge is `public/brand/logo.svg`, redrawn from the gym's own; every icon, splash and
+  store graphic is rendered from it, so no phone depends on the font its lettering is set in. Storage keys stay `trainhub.*` — renaming one signs everyone out and orphans the outbox.
 
 ## Traps
 

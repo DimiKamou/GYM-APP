@@ -219,9 +219,8 @@ export function ProgressView({ athleteId, progress: progressData, pending, membe
 }
 
 /** Greek first, English as the courtesy — the same order the catalogue is written in. */
-export function exerciseName(exercise: Exercise, locale: Locale): string {
-  const primary = locale === 'en' ? exercise.nameEn : exercise.nameEl
-  return primary ?? exercise.nameEn ?? exercise.nameEl ?? ''
+export function exerciseName(exercise: Exercise, _locale?: Locale): string {
+  return exercise.nameEn?.trim() || exercise.nameEl?.trim() || ''
 }
 
 /**

@@ -1,17 +1,29 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" role="img" aria-label="PowerHouse">
-  <!-- 60 black, 30 orange, 10 purple — the app's own split, at icon size. PH is drawn as
-       strokes rather than set in a font, so it renders the same with no typeface loaded. -->
-  <defs>
-    <radialGradient id="ember" cx="50%" cy="0%" r="95%">
-      <stop offset="0" stop-color="#3A1C0A"/>
-      <stop offset="0.6" stop-color="#0B0A0C"/>
-    </radialGradient>
-  </defs>
-  <rect width="512" height="512" rx="114" fill="url(#ember)"/>
-  <g fill="none" stroke-width="52" stroke-linejoin="round" stroke-linecap="butt">
-    <path d="M107 364V148" stroke="#FF7A1A"/>
-    <path d="M107 174H191A58 58 0 0 1 191 290H107" stroke="#FF7A1A"/>
-    <path d="M319 148V364M405 148V364" stroke="#FF7A1A"/>
-    <path d="M345 256H379" stroke="#A78BFA"/>
+<svg role="img" aria-label="The PowerHouse Gym" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512"><defs><radialGradient id="e" cx="50%" cy="0%" r="95%"><stop offset="0" stop-color="#3A1C0A"/><stop offset="0.6" stop-color="#0B0A0C"/></radialGradient></defs><rect width="512" height="512" rx="0" fill="url(#e)"/><g transform="translate(256 256) scale(0.94) translate(-256 -256)">
+  
+  <polygon points="256,10 469,133 469,379 256,502 43,379 43,133" fill="#0B0A0C"/>
+  <polygon points="256,40 443,148 443,364 256,472 69,364 69,148" fill="none" stroke="#F6F1EC" stroke-width="6"/>
+  <g fill="#F6F1EC" font-family="'Inter Display','Inter','Arial Black','Helvetica Neue',sans-serif" text-anchor="middle">
+    <text x="256" y="122" font-size="25" font-weight="800" letter-spacing="5">THE</text>
+    <text x="256" y="200" font-size="80" font-weight="900" letter-spacing="1">POWER</text>
+    <text x="256" y="378" font-size="80" font-weight="900" letter-spacing="1">HOUSE</text>
+    <text x="256" y="424" font-size="23" font-weight="800" letter-spacing="5">GYM</text>
   </g>
-</svg>
+  <g stroke="#F6F1EC" stroke-width="4" stroke-linecap="round">
+    <path d="M196 113H222M290 113H316M196 416H224M288 416H316"/>
+  </g>
+  
+  <g fill="#F6F1EC">
+    <rect x="128" y="274" width="256" height="9" rx="2"/>
+    <rect x="128" y="248" width="16" height="61" rx="4"/>
+    <rect x="148" y="256" width="13" height="45" rx="4"/>
+    <rect x="164" y="268" width="8" height="21" rx="2"/>
+    <rect x="368" y="248" width="16" height="61" rx="4"/>
+    <rect x="351" y="256" width="13" height="45" rx="4"/>
+    <rect x="340" y="268" width="8" height="21" rx="2"/>
+    <rect x="114" y="272" width="14" height="13" rx="2"/>
+    <rect x="384" y="272" width="14" height="13" rx="2"/>
+  </g>
+  
+  <path d="M224 268C220 236 232 222 256 222C280 222 292 236 288 268" fill="none" stroke="#F6F1EC" stroke-width="9" stroke-linecap="round"/>
+  <path d="M256 250C232 250 218 266 218 288C218 302 224 312 232 318H280C288 312 294 302 294 288C294 266 280 250 256 250Z" fill="#F6F1EC"/>
+</g></svg>

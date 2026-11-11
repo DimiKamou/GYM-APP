@@ -77,6 +77,7 @@ function BootScreen() {
         gap: 10,
       }}
     >
+      <img src="/brand/logo-512.png" alt="" width={140} height={140} />
       <span
         className="display"
         aria-hidden="true"

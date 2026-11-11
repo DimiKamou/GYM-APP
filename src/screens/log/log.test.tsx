@@ -193,8 +193,8 @@ describe('the session on screen', () => {
 
     for (const block of current.blocks) {
       const exercise = exercises.find((candidate) => candidate.id === block.exerciseId)
-      expect(exercise?.nameEl).toBeTruthy()
-      expect(text).toContain(exercise?.nameEl as string)
+      expect(exercise?.nameEn).toBeTruthy()
+      expect(text).toContain(exercise?.nameEn as string)
       expect(block.sets.length).toBeGreaterThan(0)
       for (const set of block.sets) {
         // The row splits "72,5×8" into two tap targets; what it reads must still be exactly
@@ -218,7 +218,7 @@ describe('the session on screen', () => {
     const host = renderLog()
     await settle()
 
-    expect(textOf(host)).toContain(retired.nameEl ?? retired.nameEn ?? '∅')
+    expect(textOf(host)).toContain(retired.nameEn ?? retired.nameEl ?? '∅')
   })
 
   it('never renders the last-time number without its date and its author', async () => {

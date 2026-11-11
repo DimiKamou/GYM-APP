@@ -17,6 +17,8 @@ import { Spinner } from '@/ui/Spinner'
 
 export type ButtonVariant =
   | 'primary'
+  /** Orange, the 30: an action repeated on every row of a list, where purple would be ten 10s. */
+  | 'brand'
   | 'secondary'
   | 'quiet'
   | 'ghost'
@@ -28,6 +30,7 @@ export type ButtonSize = 'sm' | 'md' | 'lg'
 
 const VARIANT_CLASS: Record<ButtonVariant, string> = {
   primary: 'th-btn--primary',
+  brand: 'th-btn--brand',
   secondary: 'th-btn--secondary',
   quiet: 'th-btn--quiet',
   ghost: 'th-btn--ghost',
@@ -102,7 +105,8 @@ export const Button = forwardRef<HTMLButtonElement, ButtonProps>(function Button
       ) : icon ? (
         <Icon name={icon} size={glyphSize} strokeWidth={1.9} />
       ) : null}
-      {children}
+      {/* Wrapped so a label too long for a narrow button ends in "…" instead of overflowing it. */}
+      {iconOnly ? children : <span className="th-btn__label">{children}</span>}
       {trailingIcon && !iconOnly ? (
         <Icon name={trailingIcon} size={glyphSize} strokeWidth={1.9} />
       ) : null}

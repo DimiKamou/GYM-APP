@@ -58,17 +58,16 @@ import { MuscleChip, muscleGroupName } from '@/ui/MuscleChip'
  */
 
 /**
- * The name to show. Greek first because the UI is Greek; the other name is the fallback so a
- * catalogue row with only one of the two never renders as an empty button.
+ * The name to show: the English one, in either language, as on the Streamlit pilot — the gym's
+ * catalogue is written in English (`name_en`, one namespace for uniqueness) and the coaches say
+ * «Bench Press» on the floor. The Greek name is only the fallback for an old row without one.
  *
  * Exported here rather than in a shared module because the picker is the screen that owns
  * "what is this exercise called" — the block header renders the same string.
  */
-export function exerciseName(exercise: Exercise | undefined, locale: Locale): string {
+export function exerciseName(exercise: Exercise | undefined, _locale?: Locale): string {
   if (!exercise) return ''
-  const primary = locale === 'en' ? exercise.nameEn : exercise.nameEl
-  const secondary = locale === 'en' ? exercise.nameEl : exercise.nameEn
-  return primary ?? secondary ?? ''
+  return exercise.nameEn?.trim() || exercise.nameEl?.trim() || ''
 }
 
 const CATEGORIES: readonly ExerciseCategory[] = ['upper', 'lower', 'core', 'cardio', 'mobility']

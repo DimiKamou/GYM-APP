@@ -232,18 +232,9 @@ function Notice({ text, tone }: { text: string; tone: 'ok' | 'bad' }) {
   )
 }
 
-/**
- * Which name leads. Greek leads in the Greek UI even when an English name exists, because the
- * gym talks in Greek; the other language stays underneath rather than disappearing, so a coach
- * searching in either finds the row and recognises it.
- */
-function names(exercise: Exercise, locale: Locale): { primary: string; secondary: string | null } {
-  const el = exercise.nameEl?.trim() || null
-  const en = exercise.nameEn?.trim() || null
-  const [first, second] = locale === 'el' ? [el, en] : [en, el]
-  const primary = first ?? second ?? ''
-  const secondary = first && second ? second : null
-  return { primary, secondary }
+function names(exercise: Exercise, _locale?: Locale): { primary: string; secondary: string | null } {
+  // English only, as on the Streamlit pilot; Greek is the fallback for an old row with no name_en.
+  return { primary: exercise.nameEn?.trim() || exercise.nameEl?.trim() || '', secondary: null }
 }
 
 /**

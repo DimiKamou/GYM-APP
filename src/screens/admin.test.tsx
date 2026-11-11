@@ -269,7 +269,7 @@ describe('the exercise library', () => {
     expect(stored?.deletedAt).toBeNull()
 
     // A shared row offers no archive at all, and says why rather than failing silently.
-    const shared = buttonWithText(host, 'Πιέσεις Στήθους')
+    const shared = buttonWithText(host, 'Bench Press')
     await click(shared)
     expect(textOf(sheet())).toContain(i18n.t('library.sharedLocked'))
     expect(buttons(sheet()).some((b) => textOf(b).includes(i18n.t('library.archiveAction')))).toBe(
@@ -287,7 +287,7 @@ describe('the exercise library', () => {
     )
     await settle(2)
 
-    expect(textOf(host)).toContain('Πιέσεις Στήθους')
+    expect(textOf(host)).toContain('Bench Press')
   })
 })
 
