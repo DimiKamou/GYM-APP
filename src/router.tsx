@@ -25,6 +25,8 @@ import { AuthScreen } from '@/screens/AuthScreen'
 import { JoinScreen } from '@/screens/JoinScreen'
 import { AuthCallbackScreen } from '@/screens/AuthCallbackScreen'
 import { WelcomeScreen } from '@/screens/WelcomeScreen'
+import { ProgramsScreen } from '@/screens/ProgramsScreen'
+import { SharedProgressScreen } from '@/screens/SharedProgressScreen'
 import { AthleteHomeScreen } from '@/screens/me/AthleteHomeScreen'
 import { AthleteSessionScreen } from '@/screens/me/AthleteSessionScreen'
 import { AthleteAccountScreen } from '@/screens/me/AthleteAccountScreen'
@@ -96,6 +98,10 @@ function BootScreen() {
 function RequireAuth() {
   const { status } = useAuth()
   const location = useLocation()
+
+  // A progress link from the Streamlit client is `/?share=<token>`: the same page here, public.
+  const legacyShare = new URLSearchParams(location.search).get('share')
+  if (legacyShare) return <Navigate to={`/share/${encodeURIComponent(legacyShare)}`} replace />
 
   if (status === 'loading') return <BootScreen />
   if (status === 'ready') return <Outlet />
@@ -268,6 +274,8 @@ export const routes: RouteObject[] = [
           { path: 'join', element: <JoinScreen /> },
           { path: 'welcome', element: <WelcomeScreen /> },
           { path: 'auth/callback', element: <AuthCallbackScreen /> },
+          // Public: the token is the whole authorisation, read through shared_progress().
+          { path: 'share/:token', element: <SharedProgressScreen /> },
         ],
       },
       {
@@ -293,6 +301,7 @@ export const routes: RouteObject[] = [
               { path: 'athletes', element: <AthletesScreen /> },
               { path: 'calendar', element: <CalendarScreen /> },
               { path: 'library', element: <LibraryScreen /> },
+              { path: 'programs', element: <ProgramsScreen /> },
               { path: 'team', element: <TeamScreen /> },
               { path: 'settings', element: <SettingsScreen /> },
             ],

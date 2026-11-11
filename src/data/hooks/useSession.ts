@@ -25,7 +25,7 @@ import { useGymId } from '@/auth/useAuth'
 import { keys } from '@/data/keys'
 import { useRepo } from '@/data/repo/useRepo'
 import type { BlockExtras, NewSessionInput, NewSetInput, ProgressData, WriteState } from '@/data/repo/types'
-import type { Equipment, LastPerformance, Session, SessionTree, Uuid, WorkoutSet } from '@/domain/types'
+import type { Block, Equipment, LastPerformance, Session, SessionTree, Uuid, WorkoutSet } from '@/domain/types'
 
 const NONE = 'none'
 
@@ -140,7 +140,7 @@ export function useCreateSession(): UseMutationResult<WriteState, Error, CreateS
 export interface UpdateSessionVars {
   sessionId: Uuid
   athleteId: Uuid
-  patch: Partial<Pick<Session, 'title' | 'notes' | 'creditedTo' | 'localDate'>>
+  patch: Partial<Pick<Session, 'title' | 'notes' | 'creditedTo' | 'localDate' | 'athleteProgramId' | 'programStep'>>
 }
 
 export function useUpdateSession(): UseMutationResult<WriteState, Error, UpdateSessionVars> {
@@ -214,6 +214,9 @@ export function useAddBlock(): UseMutationResult<WriteState, Error, AddBlockVars
       repo.addBlock(gymId, vars.sessionId, vars.blockId, vars.exerciseId, vars.position, {
         equipment: vars.equipment,
         note: vars.note,
+        supersetId: vars.supersetId,
+        muscleGroupId: vars.muscleGroupId,
+        programItemId: vars.programItemId,
       }),
     onSettled(_state, _error, vars) {
       void client.invalidateQueries({ queryKey: keys.sessionTree(gymId, vars.sessionId) })
@@ -224,6 +227,24 @@ export function useAddBlock(): UseMutationResult<WriteState, Error, AddBlockVars
 export interface BlockRef {
   sessionId: Uuid
   blockId: Uuid
+}
+
+/** The tool or the muscle group of a block, changed in place (012). */
+export function useUpdateBlock(): UseMutationResult<
+  WriteState,
+  Error,
+  BlockRef & { patch: Partial<Pick<Block, 'equipment' | 'muscleGroupId' | 'supersetId'>> }
+> {
+  const gymId = useGymId()
+  const repo = useRepo()
+  const client = useQueryClient()
+  return useMutation({
+    mutationFn: (vars: BlockRef & { patch: Partial<Pick<Block, 'equipment' | 'muscleGroupId' | 'supersetId'>> }) =>
+      repo.updateBlock(gymId, vars.blockId, vars.patch),
+    onSettled(_state, _error, vars) {
+      void client.invalidateQueries({ queryKey: keys.sessionTree(gymId, vars.sessionId) })
+    },
+  })
 }
 
 export function useSetBlockExercise(): UseMutationResult<

@@ -57,10 +57,14 @@ import type {
   Uuid,
   WorkoutSet,
 } from '@/domain/types'
-import { ATHLETE_ACCOUNTS_MISSING } from '@/data/repo/types'
+import { ATHLETE_ACCOUNTS_MISSING, type ProgramStore, type ShareStore } from '@/data/repo/types'
+import { createSupabasePrograms, createSupabaseShares } from '@/data/repo/supabaseStores'
+
+type Stores = { programs: ProgramStore; shares: ShareStore }
 import type {
   AthleteRedeemOutcome,
   AthleteSide,
+  SchemaCaps,
   ExerciseMuscleInput,
   NewAppointmentInput,
   NewExerciseInput,
@@ -109,11 +113,11 @@ const APPOINTMENT_COLS = `id, gym_id, athlete_id, membership_id, date, time, dur
  */
 type Row = Record<string, unknown>
 
-function str(value: unknown): string {
+export function str(value: unknown): string {
   return typeof value === 'string' ? value : String(value ?? '')
 }
 
-function strOrNull(value: unknown): string | null {
+export function strOrNull(value: unknown): string | null {
   return typeof value === 'string' ? value : null
 }
 
@@ -122,7 +126,7 @@ function strOrNull(value: unknown): string | null {
  * `Number("72.5")` is fine while a silent `NaN` from anything else would poison every volume
  * total downstream. Anything that is not a finite number becomes null, which renders as "—".
  */
-function num(value: unknown): number | null {
+export function num(value: unknown): number | null {
   if (typeof value === 'number') return Number.isFinite(value) ? value : null
   if (typeof value === 'string' && value.trim() !== '') {
     const parsed = Number(value)
@@ -178,7 +182,7 @@ function toAthlete(row: Row): Athlete {
   }
 }
 
-function toExercise(row: Row): Exercise {
+export function toExercise(row: Row): Exercise {
   return {
     id: str(row.id),
     gymId: strOrNull(row.gym_id),
@@ -220,7 +224,7 @@ function toExerciseMuscle(row: Row): ExerciseMuscle {
   }
 }
 
-function toSession(row: Row): Session {
+export function toSession(row: Row): Session {
   return {
     id: str(row.id),
     gymId: str(row.gym_id),
@@ -234,11 +238,13 @@ function toSession(row: Row): Session {
     startedAt: str(row.started_at),
     finishedAt: strOrNull(row.finished_at),
     localDate: str(row.local_date),
+    athleteProgramId: strOrNull(row.athlete_program_id),
+    programStep: num(row.program_step),
     ...audit(row),
   }
 }
 
-function toBlock(row: Row): Block {
+export function toBlock(row: Row): Block {
   return {
     id: str(row.id),
     gymId: str(row.gym_id),
@@ -247,11 +253,14 @@ function toBlock(row: Row): Block {
     position: num(row.position) ?? 0,
     note: strOrNull(row.note),
     equipment: (row.equipment as Equipment | null) ?? null,
+    supersetId: strOrNull(row.superset_id),
+    muscleGroupId: strOrNull(row.muscle_group_id),
+    programItemId: strOrNull(row.program_item_id),
     ...audit(row),
   }
 }
 
-function toSet(row: Row): WorkoutSet {
+export function toSet(row: Row): WorkoutSet {
   return {
     id: str(row.id),
     gymId: str(row.gym_id),
@@ -366,6 +375,55 @@ function isMissingFunction(error: PostgrestError): boolean {
 }
 
 // ---------------------------------------------------------------------------
+// What the schema can hold yet
+// ---------------------------------------------------------------------------
+
+/**
+ * The app ships before the SQL (CLAUDE.md): a select naming a column 012–014 add is refused
+ * outright (42703) until the owner pastes them, and the screen reading it goes down with it.
+ * So the columns are asked about once a minute, as the Streamlit client does, and until they
+ * exist every read is the one from before them.
+ */
+const CAPS_TTL_MS = 60_000
+let capsCache: { at: number; value: SchemaCaps } | null = null
+const NO_CAPS: SchemaCaps = { blockGroups: false, programs: false, sharePeriods: false }
+
+async function hasColumns(table: string, columns: string): Promise<boolean> {
+  const { error } = await supabase.from(table).select(columns).limit(0)
+  if (!error) return true
+  if (['42703', '42P01', 'PGRST204', 'PGRST205'].includes(error.code ?? '')) return false
+  if (/does not exist|schema cache|could not find/i.test(error.message)) return false
+  throw new Error(error.message)
+}
+
+export async function schemaCaps(): Promise<SchemaCaps> {
+  if (capsCache && Date.now() - capsCache.at < CAPS_TTL_MS) return capsCache.value
+  try {
+    const [blockGroups, programItems, assignments, sharePeriods] = await Promise.all([
+      hasColumns('blocks', 'superset_id, muscle_group_id'),
+      hasColumns('blocks', 'program_item_id'),
+      hasColumns('athlete_programs', 'id'),
+      hasColumns('athlete_shares', 'period_days, from_date, to_date'),
+    ])
+    capsCache = { at: Date.now(), value: { blockGroups, programs: programItems && assignments, sharePeriods } }
+    return capsCache.value
+  } catch {
+    // Could not ask (no signal). "Not yet" is always a correct answer; it is not cached.
+    return capsCache?.value ?? NO_CAPS
+  }
+}
+
+async function blockCols(): Promise<string> {
+  const caps = await schemaCaps()
+  return `${BLOCK_COLS}${caps.blockGroups ? ', superset_id, muscle_group_id' : ''}${caps.programs ? ', program_item_id' : ''}`
+}
+
+async function sessionCols(): Promise<string> {
+  const caps = await schemaCaps()
+  return caps.programs ? `${SESSION_COLS}, athlete_program_id, program_step` : SESSION_COLS
+}
+
+// ---------------------------------------------------------------------------
 // Query plumbing
 // ---------------------------------------------------------------------------
 
@@ -450,11 +508,11 @@ async function direct(run: () => Promise<{ error: PostgrestError | null }>): Pro
 
 // ---------------------------------------------------------------------------
 
-export function createSupabaseRepo(): Repo & InviteRedeemer & AthleteSide {
+export function createSupabaseRepo(): Repo & InviteRedeemer & AthleteSide & Stores {
   async function liveSessions(gymId: Uuid, athleteId: Uuid, limit?: number): Promise<Session[]> {
     let query = supabase
       .from('sessions')
-      .select(SESSION_COLS)
+      .select(await sessionCols())
       .eq('gym_id', gymId)
       .eq('athlete_id', athleteId)
       .is('deleted_at', null)
@@ -469,7 +527,7 @@ export function createSupabaseRepo(): Repo & InviteRedeemer & AthleteSide {
     return rows(
       await supabase
         .from('blocks')
-        .select(BLOCK_COLS)
+        .select(await blockCols())
         .eq('gym_id', gymId)
         .in('session_id', sessionIds as string[])
         .is('deleted_at', null),
@@ -551,8 +609,10 @@ export function createSupabaseRepo(): Repo & InviteRedeemer & AthleteSide {
     )
   }
 
-  const repo: Repo & InviteRedeemer & AthleteSide = {
+  const repo: Repo & InviteRedeemer & AthleteSide & Stores = {
     kind: 'supabase',
+    programs: createSupabasePrograms(),
+    shares: createSupabaseShares(),
 
     // ---- reads ----
 
@@ -698,6 +758,10 @@ export function createSupabaseRepo(): Repo & InviteRedeemer & AthleteSide {
           exerciseId: b.exerciseId,
           position: b.position,
           deletedAt: b.deletedAt,
+          equipment: b.equipment,
+          supersetId: b.supersetId ?? null,
+          muscleGroupId: b.muscleGroupId ?? null,
+          note: b.note,
         })),
         sets,
         exercises,
@@ -712,7 +776,7 @@ export function createSupabaseRepo(): Repo & InviteRedeemer & AthleteSide {
       const session = first(
         await supabase
           .from('sessions')
-          .select(SESSION_COLS)
+          .select(await sessionCols())
           .eq('gym_id', gymId)
           .eq('id', sessionId)
           .is('deleted_at', null)
@@ -793,7 +857,7 @@ export function createSupabaseRepo(): Repo & InviteRedeemer & AthleteSide {
       const gymSessions = rows(
         await supabase
           .from('sessions')
-          .select(SESSION_COLS)
+          .select(await sessionCols())
           .eq('gym_id', gymId)
           .is('deleted_at', null)
           .order('local_date', { ascending: false })
@@ -892,6 +956,8 @@ export function createSupabaseRepo(): Repo & InviteRedeemer & AthleteSide {
           notes: patch.notes,
           credited_to: patch.creditedTo,
           local_date: patch.localDate,
+          athlete_program_id: patch.athleteProgramId,
+          program_step: patch.programStep,
         }),
       )
     },
@@ -917,12 +983,27 @@ export function createSupabaseRepo(): Repo & InviteRedeemer & AthleteSide {
           position,
           equipment: extras?.equipment,
           note: extras?.note,
+          // Ignored by apply_op() until 012/013 exist: it builds its column list from the
+          // live schema, so an early write loses the pairing and nothing else.
+          superset_id: extras?.supersetId,
+          muscle_group_id: extras?.muscleGroupId,
+          program_item_id: extras?.programItemId,
         }),
       )
     },
 
     setBlockExercise: (gymId, blockId, exerciseId, equipment) =>
       enqueue(gymId, 'blocks', blockId, defined({ exercise_id: exerciseId, equipment })),
+
+    updateBlock: (gymId, blockId, patch) =>
+      enqueue(
+        gymId,
+        'blocks',
+        blockId,
+        defined({ equipment: patch.equipment, muscle_group_id: patch.muscleGroupId, superset_id: patch.supersetId }),
+      ),
+
+    capabilities: () => schemaCaps(),
 
     deleteBlock: (gymId, blockId) => enqueueDelete(gymId, 'blocks', blockId),
 
@@ -1285,11 +1366,11 @@ export function createSupabaseRepo(): Repo & InviteRedeemer & AthleteSide {
         ),
       ])
       const sessions = rows(
-        await supabase.from('sessions').select(SESSION_COLS).eq('gym_id', gymId),
+        await supabase.from('sessions').select(await sessionCols()).eq('gym_id', gymId),
         toSession,
       )
       const [blocks, sets, notes, appointments] = await Promise.all([
-        rows(await supabase.from('blocks').select(BLOCK_COLS).eq('gym_id', gymId), toBlock),
+        rows(await supabase.from('blocks').select(await blockCols()).eq('gym_id', gymId), toBlock),
         rows(await supabase.from('sets').select(SET_COLS).eq('gym_id', gymId), toSet),
         rows(await supabase.from('notes').select(NOTE_COLS).eq('gym_id', gymId), toNote),
         rows(

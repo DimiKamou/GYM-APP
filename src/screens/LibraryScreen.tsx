@@ -1,4 +1,5 @@
 import { useState, type CSSProperties } from 'react'
+import { useNavigate } from 'react-router-dom'
 import { useTranslation } from 'react-i18next'
 
 import { newId } from '@/data/ids'
@@ -258,6 +259,7 @@ export function LibraryScreen() {
 }
 
 function LibraryBody() {
+  const navigate = useNavigate()
   const { t } = useTranslation()
   const locale = currentLocale()
   const toast = useToast()
@@ -368,6 +370,10 @@ function LibraryBody() {
 
   return (
     <Screen label={t('library.title')} header={header} footerSafeArea={false}>
+      {/* Programmes are written from the catalogue's exercises, so their door is here. */}
+      <Button variant="secondary" icon="note" onClick={() => navigate('/programs')}>
+        {t('programs.title')}
+      </Button>
       {/* Above the filters rather than in the header: it must be readable without a tap and
           without pushing the search field off the first screenful. A dead-lettered op turns it
           into a banner here, which is the first thing the eye lands on. */}

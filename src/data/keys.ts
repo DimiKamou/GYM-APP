@@ -69,6 +69,15 @@ export const keys = {
       ? (['gym', gymId, 'athletes', athleteId, 'last-performance', exerciseId] as const)
       : (['gym', gymId, 'athletes', athleteId, 'last-performance', exerciseId, equipment ?? 'default'] as const),
 
+  /** Which of 012–014 the database has; asked once a minute, like Streamlit's probes. */
+  capabilities: (gymId: Uuid) => ['gym', gymId, 'capabilities'] as const,
+  programs: (gymId: Uuid) => ['gym', gymId, 'programs'] as const,
+  assignment: (gymId: Uuid, athleteId: Uuid) => ['gym', gymId, 'programs', 'assignment', athleteId] as const,
+  programItems: (gymId: Uuid, ids: string) => ['gym', gymId, 'programs', 'items', ids] as const,
+  share: (gymId: Uuid, athleteId: Uuid) => ['gym', gymId, 'athletes', athleteId, 'share'] as const,
+  /** The public page: the token is the whole tenant, as in `shared_progress()`. */
+  shared: (token: Uuid) => ['shared', token] as const,
+
   appointments: (gymId: Uuid) => ['gym', gymId, 'appointments'] as const,
   appointmentsWeek: (gymId: Uuid, weekStart: LocalDate) =>
     ['gym', gymId, 'appointments', 'week', weekStart] as const,

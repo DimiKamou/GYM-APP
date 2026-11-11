@@ -272,7 +272,11 @@ export interface ExercisePickerProps {
   athleteId: Uuid | undefined
   locale: Locale
   /** The chosen exercise. The caller decides whether that adds a block or re-points one. */
-  onSelect: (exerciseId: Uuid) => void
+  /**
+   * `muscleGroupId` is the group the exercise was picked under — a section heading or the
+   * filter chip — so a Bench Press chosen under Τρικέφαλοι counts there (012). Null: its primary.
+   */
+  onSelect: (exerciseId: Uuid, muscleGroupId: Uuid | null) => void
 }
 
 const list: CSSProperties = { display: 'flex', flexDirection: 'column', gap: 6 }
@@ -429,9 +433,13 @@ export function ExercisePicker({ open, onClose, athleteId, locale, onSelect }: E
   )
   const category = categoryOverride ?? leadGroup?.region ?? 'upper'
 
-  function choose(exerciseId: Uuid) {
+  function choose(exerciseId: Uuid, underGroup: Uuid | null = null) {
+    const filter =
+      activeGroupId && index.byExercise.get(exerciseId)?.some((entry) => entry.group.id === activeGroupId)
+        ? activeGroupId
+        : null
     reset()
-    onSelect(exerciseId)
+    onSelect(exerciseId, underGroup ?? filter)
   }
 
   function reset() {
@@ -490,7 +498,7 @@ export function ExercisePicker({ open, onClose, athleteId, locale, onSelect }: E
     closeFiling()
   }
 
-  function row(exercise: Exercise, meta?: string) {
+  function row(exercise: Exercise, meta?: string, underGroup: Uuid | null = null) {
     // Only a gym's OWN exercise can be refiled, and only one that is filed nowhere is offered
     // the shortcut: the shared catalogue ships classified, and the Library is where a coach
     // rearranges a movement that already has a home.
@@ -504,7 +512,7 @@ export function ExercisePicker({ open, onClose, athleteId, locale, onSelect }: E
             type="button"
             className="th-tap"
             style={{ ...rowStyle, flex: '1 1 auto', minWidth: 0 }}
-            onClick={() => choose(exercise.id)}
+            onClick={() => choose(exercise.id, underGroup)}
           >
             <CategoryPill category={exercise.category} dotOnly />
             <span>{exerciseName(exercise, locale)}</span>
@@ -638,7 +646,7 @@ export function ExercisePicker({ open, onClose, athleteId, locale, onSelect }: E
                 entry.group
                   ? muscleGroupName(entry.group, locale)
                   : t('muscles.unclassified'),
-                entry.exercises.map((exercise) => row(exercise)),
+                entry.exercises.map((exercise) => row(exercise, undefined, entry.group?.id ?? null)),
                 entry.group?.id ?? 'unclassified',
               ),
             )

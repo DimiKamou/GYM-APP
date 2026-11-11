@@ -19,6 +19,12 @@ import type {
   Appointment,
   AppointmentType,
   Athlete,
+  AthleteProgram,
+  AthleteShare,
+  Block,
+  Program,
+  ProgramDay,
+  ProgramItem,
   AthleteAccess,
   AthleteIdentity,
   AthletePortal,
@@ -54,7 +60,16 @@ export interface RecentExercise {
 export interface ProgressData {
   sessions: Session[]
   sets: WorkoutSet[]
-  blocks: Array<{ id: Uuid; sessionId: Uuid; exerciseId: Uuid; position: number; deletedAt: string | null }>
+  /**
+   * The columns analytics reads, plus what a past workout is drawn and reloaded with: the
+   * block's own tool, its superset and the group it was logged for. Optional, so a fixture
+   * written before them still satisfies the type.
+   */
+  blocks: Array<
+    { id: Uuid; sessionId: Uuid; exerciseId: Uuid; position: number; deletedAt: string | null } & Partial<
+      Pick<Block, 'equipment' | 'supersetId' | 'muscleGroupId' | 'note'>
+    >
+  >
   exercises: Exercise[]
   /**
    * The muscle axis, optional so a repository that predates it still satisfies the type and
@@ -78,7 +93,25 @@ export interface BlockExtras {
   /** Omitted or `null` = the exercise's own equipment, which is what every old block means. */
   equipment?: Equipment | null
   note?: string | null
+  /** Shared with the other half of a superset (012). */
+  supersetId?: Uuid | null
+  /** The muscle group the coach logged it for (012). Null: the exercise's primary. */
+  muscleGroupId?: Uuid | null
+  /** The programme item it was started from (013), for its target. */
+  programItemId?: Uuid | null
 }
+
+/** What the server's schema can hold yet. The app ships before the paste (CLAUDE.md). */
+export interface SchemaCaps {
+  /** 012: blocks.superset_id and blocks.muscle_group_id. */
+  blockGroups: boolean
+  /** 013: programmes, athlete_programs, blocks.program_item_id, athlete_shares. */
+  programs: boolean
+  /** 014: athlete_shares.period_days / from_date / to_date. */
+  sharePeriods: boolean
+}
+
+export const ALL_CAPS: SchemaCaps = { blockGroups: true, programs: true, sharePeriods: true }
 
 export interface NewSetInput {
   id: Uuid
@@ -208,13 +241,17 @@ export interface Repo {
 
   // ---- writes ----
   createSession(gymId: Uuid, input: NewSessionInput): Promise<WriteState>
-  updateSession(gymId: Uuid, sessionId: Uuid, patch: Partial<Pick<Session, 'title' | 'notes' | 'creditedTo' | 'localDate'>>): Promise<WriteState>
+  updateSession(gymId: Uuid, sessionId: Uuid, patch: Partial<Pick<Session, 'title' | 'notes' | 'creditedTo' | 'localDate' | 'athleteProgramId' | 'programStep'>>): Promise<WriteState>
   finishSession(gymId: Uuid, sessionId: Uuid): Promise<WriteState>
   deleteSession(gymId: Uuid, sessionId: Uuid): Promise<WriteState>
 
   addBlock(gymId: Uuid, sessionId: Uuid, blockId: Uuid, exerciseId: Uuid, position: number, extras?: BlockExtras): Promise<WriteState>
   /** Retargets the block. `equipment` omitted leaves the block's own implement as it was. */
   setBlockExercise(gymId: Uuid, blockId: Uuid, exerciseId: Uuid, equipment?: Equipment | null): Promise<WriteState>
+  /** The tool and the muscle group of a block, changed in place; omitted fields stay. */
+  updateBlock(gymId: Uuid, blockId: Uuid, patch: Partial<Pick<Block, 'equipment' | 'muscleGroupId' | 'supersetId'>>): Promise<WriteState>
+  /** Which of 012–014 the database has. Local: all of them. */
+  capabilities(gymId: Uuid): Promise<SchemaCaps>
   deleteBlock(gymId: Uuid, blockId: Uuid): Promise<WriteState>
 
   addSet(gymId: Uuid, input: NewSetInput): Promise<WriteState>
@@ -304,4 +341,78 @@ export function athleteSideOf(repo: Repo): AthleteSide | null {
     typeof candidate.getMyAthlete === 'function'
     ? (candidate as AthleteSide)
     : null
+}
+
+// ---------------------------------------------------------------------------
+// Programmes and share links (013/014). Online-only, owner-written (shares: any member),
+// like the team writes: a privilege-shaped write is never replayed from a pocket.
+// ---------------------------------------------------------------------------
+
+export type ProgramDayTree = ProgramDay & { items: ProgramItem[] }
+export type ProgramTree = Program & { days: ProgramDayTree[] }
+
+export interface NewProgramItemInput {
+  exerciseId: Uuid
+  equipment?: Equipment | null
+  muscleGroupId?: Uuid | null
+  sets: number
+  reps?: number | null
+  seconds?: number | null
+  loadKg?: number | null
+  note?: string | null
+}
+
+/** A share link's period (014). Rolling `periodDays`, or a fixed `fromDate`–`toDate`. */
+export type SharePeriod =
+  | { periodDays: number; fromDate: null; toDate: null }
+  | { periodDays: null; fromDate: LocalDate; toDate: LocalDate }
+
+export interface ProgramStore {
+  list(gymId: Uuid): Promise<ProgramTree[]>
+  assignment(gymId: Uuid, athleteId: Uuid): Promise<AthleteProgram | null>
+  /** The step of the order the athlete's latest workout under this assignment was. */
+  lastStep(gymId: Uuid, athleteId: Uuid, assignmentId: Uuid): Promise<number | null>
+  /** Empty with Ημέρα 1, or a copy of another programme; assigned at once if none is. */
+  createForAthlete(gymId: Uuid, athleteId: Uuid, name: string, copyOf?: ProgramTree | null): Promise<Uuid>
+  rename(gymId: Uuid, programId: Uuid, name: string): Promise<WriteState>
+  addDay(gymId: Uuid, program: ProgramTree, name?: string): Promise<WriteState>
+  addItem(gymId: Uuid, day: ProgramDayTree, input: NewProgramItemInput): Promise<WriteState>
+  updateItem(gymId: Uuid, itemId: Uuid, patch: Partial<NewProgramItemInput>): Promise<WriteState>
+  remove(gymId: Uuid, table: 'programs' | 'program_days' | 'program_items', id: Uuid): Promise<WriteState>
+  restore(gymId: Uuid, table: 'programs' | 'program_days' | 'program_items', id: Uuid): Promise<WriteState>
+  assign(gymId: Uuid, athleteId: Uuid, programId: Uuid, sequence: number[]): Promise<WriteState>
+  unassign(gymId: Uuid, assignmentId: Uuid): Promise<WriteState>
+  /** The prescriptions some blocks came from, deleted ones included. */
+  itemsByIds(gymId: Uuid, ids: readonly Uuid[]): Promise<ProgramItem[]>
+}
+
+export interface ShareStore {
+  active(gymId: Uuid, athleteId: Uuid): Promise<AthleteShare | null>
+  create(gymId: Uuid, athleteId: Uuid, period: SharePeriod | null): Promise<{ state: WriteState; token?: Uuid }>
+  setPeriod(gymId: Uuid, token: Uuid, period: SharePeriod): Promise<WriteState>
+  revoke(gymId: Uuid, token: Uuid): Promise<WriteState>
+  /** `shared_progress(token)`: anon may call it; null for a revoked or unknown link. */
+  fetch(token: Uuid): Promise<SharedProgress | null>
+}
+
+/** What the public share page draws: one athlete, their period, and the rows to draw it from. */
+export interface SharedProgress {
+  athleteName: string
+  gymName: string
+  period: { periodDays: number | null; fromDate: LocalDate | null; toDate: LocalDate | null } | null
+  sessions: Session[]
+  blocks: Block[]
+  sets: WorkoutSet[]
+  exercises: Exercise[]
+  exerciseMuscles: Array<{ exerciseId: Uuid; muscleGroupId: Uuid; role: MuscleRole }>
+  muscleGroups: Array<{ id: Uuid; nameEl: string; nameEn: string | null }>
+  members: Array<{ id: Uuid; displayName: string }>
+}
+
+export function programStoreOf(repo: Repo): ProgramStore | null {
+  return (repo as Repo & { programs?: ProgramStore }).programs ?? null
+}
+
+export function shareStoreOf(repo: Repo): ShareStore | null {
+  return (repo as Repo & { shares?: ShareStore }).shares ?? null
 }

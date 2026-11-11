@@ -26,6 +26,10 @@ import { HistoryList } from '@/screens/athlete/HistoryList'
 import { NoteComposer, NoteFeed } from '@/screens/athlete/NoteComposer'
 import { AthleteSheet } from '@/screens/athlete/AthleteSheet'
 import { AthleteAccessCard } from '@/screens/athlete/AthleteAccessCard'
+import { ProgramCard } from '@/screens/athlete/ProgramCard'
+import { ShareCard } from '@/screens/athlete/ShareCard'
+import { MonthCalendar, RecentWorkouts } from '@/screens/history/HistoryViews'
+import { useHistory } from '@/screens/history/workouts'
 import { PrintSheet, type PrintVariant } from '@/screens/athlete/PrintSheet'
 import { ProgressSection } from '@/screens/progress/ProgressSection'
 import { todayIn } from '@/screens/calendar/WeekStrip'
@@ -123,6 +127,7 @@ export function AthleteDetailScreen() {
   const progress = useProgressData(athleteId)
   const notes = useNotes(athleteId)
   const team = useTeam()
+  const { history } = useHistory(athleteId)
 
   const createSession = useCreateSession()
   const addBlock = useAddBlock()
@@ -287,6 +292,10 @@ export function AthleteDetailScreen() {
         }
       />
 
+      {history ? (
+        <RecentWorkouts workouts={history.workouts} ctx={history.ctx} names={history.names} label={t('history.lastThree')} />
+      ) : null}
+
       <div style={statsGrid} data-testid="stats">
         <Card>
           <span className="num display" style={statValue}>
@@ -318,6 +327,17 @@ export function AthleteDetailScreen() {
         />
       </section>
 
+      {history && history.workouts.length > 0 ? (
+        <section style={section} aria-label={t('history.calendar')}>
+          <h2 style={sectionHeading}>{t('history.calendar')}</h2>
+          <Card>
+            <MonthCalendar workouts={history.workouts} ctx={history.ctx} names={history.names} today={todayIn(timeZone)} />
+          </Card>
+        </section>
+      ) : null}
+
+      <ProgramCard athlete={athlete.data ?? briefing.data.athlete} />
+
       <section style={section} aria-label={t('notes.title')}>
         <h2 style={sectionHeading}>{t('notes.title')}</h2>
         <NoteComposer athleteId={athleteId} />
@@ -325,6 +345,8 @@ export function AthleteDetailScreen() {
       </section>
 
       <ProgressSection athleteId={athleteId} />
+
+      <ShareCard athlete={athlete.data ?? briefing.data.athlete} />
 
       <AthleteAccessCard athlete={athlete.data ?? briefing.data.athlete} />
 

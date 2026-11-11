@@ -23,6 +23,7 @@ export * from '@/data/hooks/useNotes'
 export * from '@/data/hooks/useAppointments'
 export * from '@/data/hooks/useTeam'
 export * from '@/data/hooks/useAthleteAccount'
+export * from '@/data/hooks/usePrograms'
 export { useRepo, useRepoKind, RepoProvider } from '@/data/repo/useRepo'
 
 /** What a soft delete hands back: how it went, and how to take it back. */
