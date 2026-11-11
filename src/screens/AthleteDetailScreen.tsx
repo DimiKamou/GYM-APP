@@ -20,7 +20,7 @@ import { sessionSets, sessionVolume } from '@/domain/analytics'
 import { formatVolume } from '@/domain/format'
 import { currentLocale } from '@/i18n'
 import type { Uuid } from '@/domain/types'
-import { afterSheetClosed, Button, Card, EmptyState, Icon, Screen, Sheet, Spinner } from '@/ui'
+import { afterSheetClosed, Button, Card, EmptyState, Icon, Screen, Segmented, Sheet, Spinner } from '@/ui'
 import { BriefingCard } from '@/screens/athlete/BriefingCard'
 import { HistoryList } from '@/screens/athlete/HistoryList'
 import { NoteComposer, NoteFeed } from '@/screens/athlete/NoteComposer'
@@ -28,7 +28,7 @@ import { AthleteSheet } from '@/screens/athlete/AthleteSheet'
 import { AthleteAccessCard } from '@/screens/athlete/AthleteAccessCard'
 import { ProgramCard } from '@/screens/athlete/ProgramCard'
 import { ShareCard } from '@/screens/athlete/ShareCard'
-import { MonthCalendar, RecentWorkouts } from '@/screens/history/HistoryViews'
+import { MonthCalendar } from '@/screens/history/HistoryViews'
 import { useHistory } from '@/screens/history/workouts'
 import { PrintSheet, type PrintVariant } from '@/screens/athlete/PrintSheet'
 import { ProgressSection } from '@/screens/progress/ProgressSection'
@@ -39,8 +39,9 @@ import { todayIn } from '@/screens/calendar/WeekStrip'
  *
  * The order of this screen IS the design. The briefing card is first and alone above the fold:
  * name and coach, the pinned warnings, the last note verbatim, one line of what was actually
- * lifted last time and by whom, and two ways to start. The three stat tiles and the whole
- * Progress section come after it, because at 08:29 with the athlete walking over, "sessions /
+ * lifted last time and by whom, and two ways to start. Notes come straight after it — they are
+ * what the covering coach writes before walking away. The three stat tiles, the history (a list,
+ * or the month for spotting gaps) and the whole Progress section come after that, because at 08:29 with the athlete walking over, "sessions /
  * sets / volume" answers a question nobody is asking.
  *
  * "Επανάληψη" copies the last session's EXERCISES into a new one and none of its sets. Copying
@@ -51,6 +52,13 @@ import { todayIn } from '@/screens/calendar/WeekStrip'
  * desk action — a coach prints the sheet before the day starts, or when a phone has died — and
  * the bottom third of this screen is where a thumb lands all session long.
  */
+
+const historyHead: CSSProperties = {
+  display: 'flex',
+  alignItems: 'center',
+  justifyContent: 'space-between',
+  gap: 12,
+}
 
 const backButton: CSSProperties = {
   display: 'flex',
@@ -133,6 +141,7 @@ export function AthleteDetailScreen() {
   const addBlock = useAddBlock()
   const [starting, setStarting] = useState(false)
   const [editing, setEditing] = useState(false)
+  const [historyView, setHistoryView] = useState<'list' | 'month'>('list')
 
   const [printChoice, setPrintChoice] = useState(false)
   const [printVariant, setPrintVariant] = useState<PrintVariant>('filled')
@@ -292,9 +301,11 @@ export function AthleteDetailScreen() {
         }
       />
 
-      {history ? (
-        <RecentWorkouts workouts={history.workouts} ctx={history.ctx} names={history.names} label={t('history.lastThree')} />
-      ) : null}
+      <section style={section} aria-label={t('notes.title')}>
+        <h2 style={sectionHeading}>{t('notes.title')}</h2>
+        <NoteComposer athleteId={athleteId} />
+        <NoteFeed athleteId={athleteId} notes={notes.data ?? []} />
+      </section>
 
       <div style={statsGrid} data-testid="stats">
         <Card>
@@ -318,33 +329,37 @@ export function AthleteDetailScreen() {
       </div>
 
       <section style={section} aria-label={t('athlete.history')}>
-        <h2 style={sectionHeading}>{t('athlete.history')}</h2>
-        <HistoryList
-          sessions={sessions.data ?? []}
-          progress={progress.data}
-          memberships={team.data ?? []}
-          onOpen={(sessionId) => navigate(`/log/${sessionId}`)}
-        />
-      </section>
-
-      {history && history.workouts.length > 0 ? (
-        <section style={section} aria-label={t('history.calendar')}>
-          <h2 style={sectionHeading}>{t('history.calendar')}</h2>
+        <div style={historyHead}>
+          <h2 style={sectionHeading}>{t('athlete.history')}</h2>
+          {history && history.workouts.length > 0 ? (
+            <Segmented
+              label={t('history.view')}
+              value={historyView}
+              options={[
+                { value: 'list', label: t('history.viewList') },
+                { value: 'month', label: t('history.viewMonth') },
+              ]}
+              onChange={setHistoryView}
+            />
+          ) : null}
+        </div>
+        {historyView === 'month' && history ? (
           <Card>
             <MonthCalendar workouts={history.workouts} ctx={history.ctx} names={history.names} today={todayIn(timeZone)} />
           </Card>
-        </section>
-      ) : null}
-
-      <ProgramCard athlete={athlete.data ?? briefing.data.athlete} />
-
-      <section style={section} aria-label={t('notes.title')}>
-        <h2 style={sectionHeading}>{t('notes.title')}</h2>
-        <NoteComposer athleteId={athleteId} />
-        <NoteFeed athleteId={athleteId} notes={notes.data ?? []} />
+        ) : (
+          <HistoryList
+            sessions={sessions.data ?? []}
+            progress={progress.data}
+            memberships={team.data ?? []}
+            onOpen={(sessionId) => navigate(`/log/${sessionId}`)}
+          />
+        )}
       </section>
 
       <ProgressSection athleteId={athleteId} />
+
+      <ProgramCard athlete={athlete.data ?? briefing.data.athlete} />
 
       <ShareCard athlete={athlete.data ?? briefing.data.athlete} />
 

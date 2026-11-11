@@ -278,6 +278,9 @@ export const en: Translation = {
   },
 
   history: {
+    view: 'History view',
+    viewList: 'List',
+    viewMonth: 'Month',
     calendar: 'Calendar',
     inProgress: 'in progress',
     lastThree: 'Last 3 workouts',
@@ -365,7 +368,7 @@ export const en: Translation = {
     empty: 'No athletes yet',
     emptyHint: 'Tap + to add the first one.',
     lastSession: 'Last session',
-    noPrevious: 'No previous sessions',
+    noPrevious: 'Never',
     open: 'Open',
     noMatches: 'No matches',
     noMatchesHint: 'Try part of the surname. Search ignores accents.',
@@ -402,7 +405,7 @@ export const en: Translation = {
   },
 
   log: {
-    addSuperset: 'Superset (2 exercises)',
+    addSuperset: 'Super set',
     doneExercise: 'Done with this exercise',
     forGroup: 'For which muscle group',
     fromOld: 'From {{day}}',

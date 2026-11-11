@@ -75,13 +75,15 @@ Android Studio (it brings the SDK and JDK 21). `npm run native:android` builds, 
 the project. Run it on a real phone first: sign in as a trainer, log a set offline, come back
 online, sign in as an athlete with Google.
 
-### 3.2 Icons and splash — after the visual pass
-The native projects still carry Capacitor's default icon. Once the design pass settles the mark:
+### 3.2 Icons and splash
+Generated from the PH mark in `public/icons/icon.svg`; the sources are in `assets/`. After
+changing them:
 
 ```bash
-# assets/icon-only.png 1024², assets/icon-foreground.png + icon-background.png (adaptive),
-# assets/splash.png 2732², assets/splash-dark.png
-npx @capacitor/assets generate --android --ios
+npx @capacitor/assets generate --android --ios \
+  --iconBackgroundColor '#5E7355' --iconBackgroundColorDark '#5E7355' \
+  --splashBackgroundColor '#F4F0E7' --splashBackgroundColorDark '#161922'
+git checkout android/app/src/main/AndroidManifest.xml   # the tool reformats it; keep ours
 ```
 
 ### 3.3 Version

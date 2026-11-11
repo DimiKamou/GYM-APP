@@ -317,6 +317,9 @@ export const el = {
   },
 
   history: {
+    view: 'Προβολή ιστορικού',
+    viewList: 'Λίστα',
+    viewMonth: 'Μήνας',
     calendar: 'Ημερολόγιο',
     inProgress: 'σε εξέλιξη',
     lastThree: 'Τελευταίες 3 προπονήσεις',
@@ -404,7 +407,7 @@ export const el = {
     empty: 'Κανένας αθλητής ακόμα',
     emptyHint: 'Πάτα + για να προσθέσεις τον πρώτο.',
     lastSession: 'Τελευταία',
-    noPrevious: 'Καμία προηγούμενη προπόνηση',
+    noPrevious: 'Ποτέ',
     open: 'Άνοιγμα',
     noMatches: 'Καμία αντιστοιχία',
     /** Says out loud that accents are optional — half the roster is typed without them. */
@@ -442,7 +445,7 @@ export const el = {
   },
 
   log: {
-    addSuperset: 'Super set (2 ασκήσεις)',
+    addSuperset: 'Super set',
     doneExercise: 'Τέλος άσκησης',
     forGroup: 'Για ποια μυϊκή ομάδα',
     fromOld: 'Από {{day}}',

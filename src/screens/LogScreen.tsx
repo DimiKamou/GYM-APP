@@ -894,7 +894,9 @@ function LogScreenBody() {
           renderBlocks()
         )}
 
-        <div style={{ display: 'grid', gridTemplateColumns: caps.blockGroups ? '1fr 1fr' : '1fr', gap: 8 }}>
+        {/* minmax(0, …): a grid track's floor is otherwise its content, and the longer label pushed
+            the second button off a 360px screen. */}
+        <div style={{ display: 'grid', gridTemplateColumns: caps.blockGroups ? 'minmax(0, 3fr) minmax(0, 2fr)' : '1fr', gap: 8 }}>
           <Button variant="secondary" block icon="plus" onClick={() => setPicker({ blockId: null })}>
             {t('log.addExercise')}
           </Button>
