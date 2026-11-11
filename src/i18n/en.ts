@@ -102,6 +102,7 @@ export const en: Translation = {
     otpHint: 'No password: we email you a 6-digit code. It is also the way in if you forgot your password.',
     continueWithGoogle: 'Continue with Google',
     continueWithMicrosoft: 'Continue with Microsoft',
+    continueWithApple: 'Continue with Apple',
     providerFailed: 'Signing in with {{provider}} did not start.',
     modeLabel: 'Log in or sign up',
     modeSignIn: 'Log in',

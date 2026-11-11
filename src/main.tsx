@@ -3,6 +3,9 @@ import { createRoot } from 'react-dom/client'
 
 import { App } from '@/App'
 import { registerServiceWorker } from '@/pwa/serviceWorker'
+import { registerLiveUpdates } from '@/native/liveUpdate'
+import { registerNativeLinks } from '@/native/links'
+import { router } from '@/router'
 
 // Fonts first (an @font-face order nothing depends on), then reset, then tokens: the theme
 // files must win on `body`, and the reset's `:focus-visible` outline resolves `--th-accent`
@@ -21,3 +24,5 @@ createRoot(rootEl).render(
 )
 
 registerServiceWorker()
+registerLiveUpdates()
+registerNativeLinks((to, options) => router.navigate(to, options))

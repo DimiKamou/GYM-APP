@@ -16,7 +16,8 @@ feature is.
   recovery.** Trainers keep the username + password the Streamlit pilot gave them (`src/auth/username.ts`
   makes Streamlit's mapping). OAuth is PKCE to `/auth/callback` and is **hidden in an iOS home-screen
   app**, where the redirect finishes in Safari and leaves the installed app signed out — the original
-  reason there was no OAuth. Android's Play Store build is a TWA and shares Chrome's storage, so it is fine.
+  reason there was no OAuth. The store apps (Capacitor) open the provider in the system browser sheet and
+  come back on `gr.powerhouse.app://auth/callback` (`src/native/`); there Apple is offered too (App Review 4.8).
 - **Two staff roles**, `owner` and `trainer`. The four-role matrix was cut. Adding `manager` is one migration.
 - **An athlete account is not a membership** (015). `app.my_gym()` is null for it, so all 44 policies refuse
   it; it reads only through `my_athlete()` / `my_athlete_portal()`, which build every object column by
@@ -28,8 +29,11 @@ feature is.
 - **Daylight is the default theme, Slate is its dark pair.** Both are pure token files.
 - **Soft delete everywhere, undo instead of confirm.** No DELETE policy exists in the schema. Confirm dialogs
   survive only for removing an athlete or a trainer.
-- **The service worker ships** (Play Store build). A new build waits for a tap on the update banner, and
+- **The service worker ships** on the web. A new build waits for a tap on the update banner, and
   the button waits while the outbox holds writes. `sw.js` must stay `no-cache` in `firebase.json`.
+- **The store apps are Capacitor** (`android/`, `ios/`, `STORES.md`), the build served from the phone.
+  No service worker there; Capgo live updates reach the same banner under the same rule. Native edits
+  in `android/` and `ios/` are hand-made — never regenerate those folders without carrying them over.
 - **The brand is PowerHouse, for now.** It is `brand.name` in `src/i18n/`, the manifest, `index.html`
   and the icons. Storage keys stay `trainhub.*` — renaming one signs everyone out and orphans the outbox.
 
@@ -54,6 +58,9 @@ the whole app.
 
 **Wrap every `localStorage` / IndexedDB access in try/catch.** In private mode and locked-down browsers the
 accessor itself throws, not just the read.
+
+**Links the app hands out are built from `publicOrigin()`, never `window.location.origin`.** In the
+store apps the origin is the phone (`https://localhost`); an invite built from it opens nothing.
 
 **The staff's free text never reaches an athlete.** `notes`, `sessions.notes`, `blocks.note` and
 `sets.note` are written for the next coach. `my_athlete_portal()` leaves them out by name, and the local

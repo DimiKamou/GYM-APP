@@ -16,6 +16,17 @@ export function ProviderLogo({ provider, size = 20 }: { provider: OAuthProvider;
       </svg>
     )
   }
+  if (provider === 'apple') {
+    // Apple's guidelines want the mark in the button's own text colour, so it follows the theme.
+    return (
+      <svg width={size} height={size} viewBox="0 0 814 1000" aria-hidden="true" focusable="false">
+        <path
+          fill="currentColor"
+          d="M788 341c-6 4-108 62-108 190 0 148 130 200 134 202-1 3-21 72-69 142-43 62-88 124-156 124s-86-40-165-40c-77 0-104 41-166 41s-106-57-156-127C44 791 0 671 0 557c0-183 119-280 236-280 62 0 114 41 153 41 37 0 95-43 166-43 27 0 124 2 188 66zM554 159c29-35 50-83 50-131 0-7-1-14-2-19-48 2-104 32-138 72-27 30-52 79-52 128 0 7 1 15 2 17 3 1 8 1 13 1 43 0 97-29 127-68z"
+        />
+      </svg>
+    )
+  }
   return (
     <svg width={size} height={size} viewBox="0 0 21 21" aria-hidden="true" focusable="false">
       <rect x="1" y="1" width="9" height="9" fill="#F25022" />

@@ -21,12 +21,15 @@
 
 import { useSyncExternalStore } from 'react'
 
+import { isNative } from '@/native/platform'
+
 type Apply = () => void
 
 let pending: Apply | null = null
 const listeners = new Set<() => void>()
 
-function announce(apply: Apply | null): void {
+/** Also how the store apps' live updates (src/native/liveUpdate.ts) reach the same banner. */
+export function announce(apply: Apply | null): void {
   pending = apply
   for (const listener of listeners) listener()
 }
@@ -44,6 +47,9 @@ export function useUpdateReady(): Apply | null {
 const UPDATE_INTERVAL_MS = 30 * 60_000
 
 export function registerServiceWorker(): void {
+  // The store apps serve the build from the device and update through Capgo; a worker there
+  // would be a second cache of the same files, fighting the bundle swap.
+  if (isNative) return
   if (import.meta.env.DEV || typeof window === 'undefined' || !('serviceWorker' in navigator)) return
 
   const offer = (worker: ServiceWorker) =>

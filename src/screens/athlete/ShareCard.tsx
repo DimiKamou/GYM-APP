@@ -8,6 +8,7 @@ import { formatDate } from '@/domain/format'
 import type { Athlete, AthleteShare } from '@/domain/types'
 import { currentLocale } from '@/i18n'
 import { Button, Card, Field, Input, Segmented } from '@/ui'
+import { publicOrigin } from '@/native/platform'
 
 /**
  * «Κοινοποίηση προόδου»: a read-only link to this athlete's progress for a period the coach
@@ -25,7 +26,7 @@ const DAYS: Record<Exclude<PeriodKind, 'custom'>, number> = { '1m': 30, '3m': 91
 const mutedText: CSSProperties = { margin: 0, fontSize: 'var(--th-text-sm)', color: 'var(--th-muted)', lineHeight: 1.45 }
 
 export function shareLink(token: string): string {
-  const origin = typeof window === 'undefined' ? '' : window.location.origin
+  const origin = publicOrigin()
   return `${origin}/share/${token}`
 }
 

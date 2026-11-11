@@ -381,7 +381,11 @@ export function AuthScreen() {
               <Button key={which} variant="secondary" block disabled={busy} onClick={() => void provider(which)}>
                 <span style={providerLabel}>
                   <ProviderLogo provider={which} />
-                  {which === 'google' ? t('auth.continueWithGoogle') : t('auth.continueWithMicrosoft')}
+                  {which === 'google'
+                    ? t('auth.continueWithGoogle')
+                    : which === 'apple'
+                      ? t('auth.continueWithApple')
+                      : t('auth.continueWithMicrosoft')}
                 </span>
               </Button>
             ))}

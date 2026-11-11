@@ -13,6 +13,7 @@ import { formatDate } from '@/domain/format'
 import { currentLocale } from '@/i18n'
 import type { Athlete } from '@/domain/types'
 import { Button, Card, Field, Input, Sheet } from '@/ui'
+import { publicOrigin } from '@/native/platform'
 
 /**
  * "Can this athlete see their own sheet?" — on the athlete's page, where the question comes up.
@@ -48,7 +49,7 @@ const bodyText: CSSProperties = {
 const mutedText: CSSProperties = { ...bodyText, color: 'var(--th-muted)' }
 
 function linkFor(secret: string): string {
-  const origin = typeof window === 'undefined' ? '' : window.location.origin
+  const origin = publicOrigin()
   // The fragment, never the query string: a `?invite=` link puts a bearer token in access logs.
   return `${origin}/welcome#invite=${encodeURIComponent(secret)}`
 }

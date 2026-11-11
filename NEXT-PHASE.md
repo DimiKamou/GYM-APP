@@ -77,7 +77,7 @@ policy για κάθε ενοικιαστή. Πριν μπει τρίτος, α�
 2. **Supabase:** Google και Azure providers, Redirect URL `/auth/callback`, πρότυπο
    email επιβεβαίωσης με `{{ .Token }}`, deploy του `delete-account`
    (`supabase/README.md` §10).
-3. **Play Store:** `android/README.md`, βήμα προς βήμα. Η πολιτική απορρήτου
+3. **Play Store / App Store:** `STORES.md`, βήμα προς βήμα. Η πολιτική απορρήτου
    (`public/privacy.html`) είναι προσχέδιο με `[κενά]`.
 4. **Δεν το έχει χρησιμοποιήσει ακόμα άνθρωπος.** Τα σφάλματα του πιλότου βγήκαν από
    πραγματικά κινητά· το ίδιο θα γίνει κι εδώ. Πρώτα internal testing με τους

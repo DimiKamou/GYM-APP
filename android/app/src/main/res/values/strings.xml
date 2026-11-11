@@ -1,0 +1,7 @@
+<?xml version='1.0' encoding='utf-8'?>
+<resources>
+    <string name="app_name">PowerHouse</string>
+    <string name="title_activity_main">PowerHouse</string>
+    <string name="package_name">gr.powerhouse.app</string>
+    <string name="custom_url_scheme">gr.powerhouse.app</string>
+</resources>

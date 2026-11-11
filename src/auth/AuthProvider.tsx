@@ -9,6 +9,8 @@ import { demoAthleteIdentity, demoIdentity } from '@/data/repo/seed'
 import { isSupabaseConfigured, missingSupabaseEnv, supabase } from '@/data/supabase'
 import { emailForIdentifier } from '@/auth/username'
 import type { AthleteIdentity, Gym, Membership, Uuid } from '@/domain/types'
+import { isNative, NATIVE_CALLBACK, publicOrigin } from '@/native/platform'
+import { openInAppBrowser } from '@/native/links'
 
 /**
  * Who is holding the phone, and which panel they get.
@@ -22,8 +24,12 @@ import type { AthleteIdentity, Gym, Membership, Uuid } from '@/domain/types'
  *    invent a password for their gym. The redirect is PKCE and comes back to `/auth/callback`.
  *    It is HIDDEN in an iOS home-screen app: there the redirect completes in Safari, whose
  *    storage the installed app does not share, and the athlete comes back signed out — the
- *    reason the first version of this file had no OAuth at all. Android's installed app (the
- *    Play Store build is a Trusted Web Activity) runs in Chrome's own storage and is fine.
+ *    reason the first version of this file had no OAuth at all. The store apps (Capacitor) are
+ *    different again: the provider page opens in the system browser sheet and comes back to
+ *    the app's own scheme (`NATIVE_CALLBACK`), where `src/native/links.ts` routes the code to
+ *    the same `/auth/callback` screen. The PKCE verifier never left the app's storage.
+ *  - **Apple** — offered beside them in the store apps: App Review refuses an iPhone app that
+ *    offers Google sign-in without Sign in with Apple (guideline 4.8).
  *  - **Email and password sign-up** — an athlete with neither. When the project confirms
  *    addresses, the six-digit code in that email finishes it, inside the app.
  *  - **Email code** — kept as the recovery path for anyone with a real address.
@@ -57,7 +63,7 @@ export type AuthStatus =
   | 'error'
 
 /** Supabase's provider ids. `azure` is Microsoft: Outlook, Hotmail, Live and work accounts. */
-export type OAuthProvider = 'google' | 'azure'
+export type OAuthProvider = 'google' | 'azure' | 'apple'
 
 /** Which side of the demo gym the app is showing, when there is no server. */
 export type DemoPersona = 'staff' | 'athlete'
@@ -386,8 +392,9 @@ function availableProviders(): OAuthProvider[] {
   const listed = raw
     .split(',')
     .map((part) => part.trim().toLowerCase())
-    .filter((part): part is OAuthProvider => part === 'google' || part === 'azure')
+    .filter((part): part is OAuthProvider => part === 'google' || part === 'azure' || part === 'apple')
   if (listed.length === 0) return []
+  if (isNative) return listed
   const iosStandalone =
     typeof navigator !== 'undefined' && (navigator as Navigator & { standalone?: boolean }).standalone === true
   return iosStandalone ? [] : listed
@@ -405,7 +412,12 @@ function guard(): void {
 }
 
 function callbackUrl(): string {
-  return `${window.location.origin}/auth/callback`
+  return isNative ? NATIVE_CALLBACK : `${window.location.origin}/auth/callback`
+}
+
+/** An emailed link opens in the phone's browser, never inside the store app. */
+function emailCallbackUrl(): string {
+  return `${publicOrigin()}/auth/callback`
 }
 
 export function AuthProvider({ children }: { children: ReactNode }): JSX.Element {
@@ -519,7 +531,7 @@ export function AuthProvider({ children }: { children: ReactNode }): JSX.Element
           // What redeem_invite() names a new member by, and what the Team screen shows.
           data: { full_name: fullName.trim() },
           // Only used when the project sends a link rather than a code.
-          emailRedirectTo: callbackUrl(),
+          emailRedirectTo: emailCallbackUrl(),
         },
       })
       if (error) throw new AuthActionError(error.message, error.code ?? null)
@@ -530,16 +542,20 @@ export function AuthProvider({ children }: { children: ReactNode }): JSX.Element
 
   const signInWithProvider = useCallback(async (provider: OAuthProvider) => {
     guard()
-    const { error } = await supabase.auth.signInWithOAuth({
+    const { data, error } = await supabase.auth.signInWithOAuth({
       provider,
       options: {
         redirectTo: callbackUrl(),
         // Microsoft does not send the address unless asked, and an account with no address
         // cannot be matched to the link it was invited on.
-        scopes: provider === 'azure' ? 'email' : undefined,
+        scopes: provider === 'azure' ? 'email' : provider === 'apple' ? 'name email' : undefined,
+        // Google refuses sign-in inside an embedded webview, so the store apps open the page
+        // in the system browser sheet themselves instead of navigating the webview to it.
+        skipBrowserRedirect: isNative,
       },
     })
     if (error) throw new AuthActionError(error.message, error.code ?? null)
+    if (isNative && data.url) await openInAppBrowser(data.url)
   }, [])
 
   const completeOAuth = useCallback(async (code: string) => {

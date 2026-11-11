@@ -1,7 +1,7 @@
 # TrainHub — PowerHouse
 
-A web app that replaces the shared paper PT sheet at a gym. Installable from a URL, and on Google Play
-as the same web app in a Trusted Web Activity (`android/README.md`) — no second codebase, no iOS/Android
+A web app that replaces the shared paper PT sheet at a gym. Installable from a URL, and on Google Play and the
+App Store as the same build inside a Capacitor shell (`STORES.md`) — no second codebase, no iOS/Android
 split. Branded **PowerHouse** for the gym it is built for.
 
 Two panels: the **staff** log and read the sheet; each **athlete**, invited by a link from the owner,

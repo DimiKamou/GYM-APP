@@ -130,6 +130,7 @@ export const el = {
     otpHint: 'Χωρίς κωδικό πρόσβασης: σου στέλνουμε 6ψήφιο κωδικό στο email. Είναι και ο τρόπος να μπεις αν ξέχασες τον κωδικό σου.',
     continueWithGoogle: 'Συνέχεια με Google',
     continueWithMicrosoft: 'Συνέχεια με Microsoft',
+    continueWithApple: 'Συνέχεια με Apple',
     providerFailed: 'Η σύνδεση με {{provider}} δεν ξεκίνησε.',
     modeLabel: 'Σύνδεση ή εγγραφή',
     modeSignIn: 'Σύνδεση',
