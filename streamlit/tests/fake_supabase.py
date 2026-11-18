@@ -101,9 +101,10 @@ def _shared_progress(store: dict[str, list[dict[str, Any]]], params: dict[str, A
         "from": first.isoformat(),
         "to": last.isoformat(),
         "period_days": share.get("period_days"),
-        "sessions": [dict(r) for r in sessions],
-        "blocks": [dict(r) for r in blocks],
-        "sets": [dict(r) for r in sets],
+        # 016: the staff's free text is not in a share link.
+        "sessions": [{k: v for k, v in r.items() if k != "notes"} for r in sessions],
+        "blocks": [{k: v for k, v in r.items() if k != "note"} for r in blocks],
+        "sets": [{k: v for k, v in r.items() if k != "note"} for r in sets],
         "exercises": exercises,
         "links": [dict(r) for r in live(store.get("exercise_muscles", [])) if r.get("exercise_id") in eids],
         "groups": [dict(r) for r in live(store.get("muscle_groups", []))],

@@ -20,6 +20,7 @@ import type {
   AppointmentType,
   Athlete,
   AthleteProgram,
+  PortalProgram,
   AthleteShare,
   Block,
   Program,
@@ -332,6 +333,11 @@ export interface AthleteSide {
   getMyAthlete(): Promise<AthleteIdentity | null>
   getAthletePortal(): Promise<AthletePortal | null>
   redeemAthleteInvite(secret: string): Promise<AthleteRedeemOutcome>
+  /**
+   * `my_athlete_program()` (016). Null when there is no programme; 'unavailable' on a database
+   * before 016, where the tab is simply not drawn.
+   */
+  getMyProgram?(): Promise<PortalProgram | null | 'unavailable'>
 }
 
 export function athleteSideOf(repo: Repo): AthleteSide | null {

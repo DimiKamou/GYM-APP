@@ -460,6 +460,40 @@ export interface AthletePortal {
   exercises: Exercise[]
 }
 
+/**
+ * The programme an athlete follows, as `my_athlete_program()` (016) returns it: names and
+ * targets only. The owner's remarks (`programs.notes`, `program_items.note`) are not in it.
+ */
+export interface PortalProgramItem {
+  id: Uuid
+  position: number
+  exerciseId: Uuid
+  nameEn: string | null
+  nameEl: string | null
+  equipment: Equipment | null
+  sets: number
+  reps: number | null
+  loadKg: number | null
+  seconds: number | null
+}
+
+export interface PortalProgramDay {
+  id: Uuid
+  position: number
+  name: string | null
+  items: PortalProgramItem[]
+}
+
+export interface PortalProgram {
+  id: Uuid
+  name: string
+  /** Day positions in training order, e.g. [1, 2, 1]. */
+  sequence: number[]
+  /** The step of `sequence` the athlete's last workout trained, or null before the first. */
+  lastStep: number | null
+  days: PortalProgramDay[]
+}
+
 /** What the staff see about one athlete's account — `athlete_access()`. */
 export interface AthleteAccess {
   linked: boolean

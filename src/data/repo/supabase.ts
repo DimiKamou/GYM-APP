@@ -40,6 +40,7 @@ import type {
   AthleteAccess,
   AthleteIdentity,
   AthletePortal,
+  PortalProgram,
   Block,
   Briefing,
   Equipment,
@@ -367,6 +368,33 @@ function toAthleteAccess(raw: Row | null): AthleteAccess {
     linkedAt: strOrNull(raw?.linked_at),
     email: strOrNull(raw?.email),
     pendingExpires: strOrNull(raw?.pending_expires),
+  }
+}
+
+function toPortalProgram(row: Row): PortalProgram {
+  const days = Array.isArray(row.days) ? (row.days as Row[]) : []
+  return {
+    id: str(row.id),
+    name: str(row.name),
+    sequence: Array.isArray(row.sequence) ? (row.sequence as unknown[]).map((n) => num(n) ?? 0) : [],
+    lastStep: row.last_step === null || row.last_step === undefined ? null : num(row.last_step),
+    days: days.map((d) => ({
+      id: str(d.id),
+      position: num(d.position) ?? 0,
+      name: strOrNull(d.name),
+      items: (Array.isArray(d.items) ? (d.items as Row[]) : []).map((i) => ({
+        id: str(i.id),
+        position: num(i.position) ?? 0,
+        exerciseId: str(i.exercise_id),
+        nameEn: strOrNull(i.name_en),
+        nameEl: strOrNull(i.name_el),
+        equipment: (strOrNull(i.equipment) as PortalProgram['days'][number]['items'][number]['equipment']) ?? null,
+        sets: num(i.sets) ?? 1,
+        reps: num(i.reps),
+        loadKg: num(i.load_kg),
+        seconds: num(i.seconds),
+      })),
+    })),
   }
 }
 
@@ -1311,6 +1339,16 @@ export function createSupabaseRepo(): Repo & InviteRedeemer & AthleteSide & Stor
       const { data, error } = await supabase.rpc('my_athlete_portal')
       if (error) throw new Error(isMissingFunction(error) ? ATHLETE_ACCOUNTS_MISSING : error.message)
       return data ? toAthletePortal(data as Row) : null
+    },
+
+    async getMyProgram(): Promise<PortalProgram | null | 'unavailable'> {
+      const { data, error } = await supabase.rpc('my_athlete_program')
+      if (error) {
+        if (isMissingFunction(error)) return 'unavailable'
+        throw new Error(error.message)
+      }
+      const program = (data as Row | null)?.program as Row | null | undefined
+      return program ? toPortalProgram(program) : null
     },
 
     async redeemAthleteInvite(secret): Promise<AthleteRedeemOutcome> {

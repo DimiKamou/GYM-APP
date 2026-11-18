@@ -9,7 +9,7 @@ import { AuthContext, type AuthContextValue } from '@/auth/AuthProvider'
 import { RepoProvider } from '@/data/repo/useRepo'
 import { createLocalRepo } from '@/data/repo/local'
 import { buildSeed, SEED_IDS } from '@/data/repo/seed'
-import { athleteSideOf, type Repo } from '@/data/repo/types'
+import { athleteSideOf, programStoreOf, type Repo } from '@/data/repo/types'
 import type { OutboxStorage } from '@/data/outbox'
 import { i18n } from '@/i18n'
 import { routes } from '@/router'
@@ -228,6 +228,40 @@ describe('the two panels', () => {
     expect(host.querySelectorAll('li').length).toBeGreaterThan(0)
     // Read-only: nothing on this screen can add or change a set.
     expect(textOf(host)).not.toContain(i18n.t('log.addSet'))
+  })
+})
+
+describe('the athlete’s programme (016)', () => {
+  it('shows the order of days, the next one, and the targets — and not the owner’s remark', async () => {
+    const repo = seededRepo()
+    const store = programStoreOf(repo)
+    if (!store) throw new Error('local repo has no programmes')
+    const exercise = (await repo.listExercises(SEED_IDS.gym))[0]
+    await store.createForAthlete(SEED_IDS.gym, nikos, 'Δύναμη Α')
+    const [program] = await store.list(SEED_IDS.gym)
+    await store.addItem(SEED_IDS.gym, program.days[0], {
+      exerciseId: exercise.id,
+      sets: 3,
+      reps: 12,
+      loadKg: 20,
+      note: 'ΜΥΣΤΙΚΟ-ΙΔΙΟΚΤΗΤΗ',
+    })
+
+    const { host } = mount('/me?tab=program', auth('athlete'), repo)
+    await settle()
+
+    const text = textOf(host)
+    expect(text).toContain('Δύναμη Α')
+    expect(text).toContain(exercise.nameEn ?? '∅')
+    expect(text).toMatch(/3×12 · 20\skg/)
+    expect(text).toContain(i18n.t('portal.programNext'))
+    expect(text).not.toContain('ΜΥΣΤΙΚΟ')
+  })
+
+  it('says so when there is no programme yet', async () => {
+    const { host } = mount('/me?tab=program', auth('athlete'), seededRepo())
+    await settle()
+    expect(textOf(host)).toContain(i18n.t('portal.programNone'))
   })
 })
 

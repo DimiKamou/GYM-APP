@@ -39,7 +39,8 @@ for pair in "006_adopt_catalogue.sql:trainhub-ασκησεις-δικες-μου
             "012_block_superset_group.sql:trainhub-super-set-και-μυικη-ομαδα.sql" \
             "013_programs_shares_small_bar.sql:trainhub-προγραμματα-κοινοποιηση-μικρη-μπαρα.sql" \
             "014_share_period.sql:trainhub-κοινοποιηση-περιοδος.sql" \
-            "015_athlete_accounts.sql:trainhub-αθλητες-στην-εφαρμογη.sql"; do
+            "015_athlete_accounts.sql:trainhub-αθλητες-στην-εφαρμογη.sql" \
+            "016_private_notes_athlete_program.sql:trainhub-σημειωσεις-ιδιωτικες-προγραμμα-αθλητη.sql"; do
   migration="${pair%%:*}"; copy="${pair##*:}"
   if ! cmp -s "$HERE/../migrations/$migration" "$HERE/../../$copy"; then
     echo "ΛΑΘΟΣ: το $copy δεν είναι ίδιο με το $migration — αντέγραψέ το ξανά"

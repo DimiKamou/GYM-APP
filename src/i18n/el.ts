@@ -233,6 +233,10 @@ export const el = {
 
   /** The athlete's own panel. */
   portal: {
+    programNone: 'Ο προπονητής σου δεν σου έχει δώσει πρόγραμμα ακόμα.',
+    programOrder: 'Σειρά ημερών',
+    programNext: 'Επόμενη',
+    programEmptyDay: 'Χωρίς ασκήσεις ακόμα.',
     title: 'Το πρόγραμμά μου',
     account: 'Λογαριασμός',
     gym: 'Γυμναστήριο',

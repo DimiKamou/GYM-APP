@@ -19,7 +19,7 @@ import { useAuth, useGymId } from '@/auth/useAuth'
 import { keys } from '@/data/keys'
 import { useRepo } from '@/data/repo/useRepo'
 import { athleteSideOf, type AthleteRedeemOutcome, type WriteState } from '@/data/repo/types'
-import type { AthleteAccess, AthletePortal, Uuid } from '@/domain/types'
+import type { AthleteAccess, AthletePortal, PortalProgram, Uuid } from '@/domain/types'
 
 /** False when the repository has no athlete accounts at all: the card is hidden, not broken. */
 export function useAthleteAccountsSupported(): boolean {
@@ -80,6 +80,20 @@ export function useRevokeAthleteAccess(): UseMutationResult<WriteState, Error, U
 }
 
 /** The athlete's own sheet. Only ever enabled for a signed-in athlete. */
+/** The athlete's own programme (016). 'unavailable' before 016, and in a repo without it. */
+export function useMyProgram(): UseQueryResult<PortalProgram | null | 'unavailable'> {
+  const { athlete } = useAuth()
+  const repo = useRepo()
+  return useQuery({
+    queryKey: keys.athleteProgram(athlete?.athleteId ?? 'none'),
+    queryFn: async () => {
+      const side = athleteSideOf(repo)
+      return side?.getMyProgram ? side.getMyProgram() : 'unavailable'
+    },
+    enabled: athlete !== null,
+  })
+}
+
 export function useAthletePortal(): UseQueryResult<AthletePortal | null> {
   const { athlete } = useAuth()
   const repo = useRepo()

@@ -2999,6 +2999,12 @@ def test_a_shared_link_shows_progress_without_signing_in() -> None:
     check("with its QR code", len(at.get("image")) >= 1, str(len(at.get("image"))))
     token = shares[0]["token"]
     check("the address carries the token", any(token in str(c.value) for c in at.code), str([c.value for c in at.code]))
+    # Free text written for the next coach (016): it must not reach a link that a parent can forward.
+    for row in state.STORE["sessions"]:
+        if row.get("athlete_id") == athlete["id"]:
+            row["notes"] = "ΜΥΣΤΙΚΟ-ΠΡΟΠΟΝΗΤΗ"
+    for row in state.STORE["blocks"]:
+        row["note"] = "ΜΥΣΤΙΚΟ-ΜΠΛΟΚ"
 
     page = AppTest.from_file(SHARED_DRIVER, default_timeout=60)
     page.session_state["share_token"] = token
@@ -3007,6 +3013,7 @@ def test_a_shared_link_shows_progress_without_signing_in() -> None:
     check("the athlete's page opens", athlete["full_name"] in [t.value for t in page.title], str([t.value for t in page.title]))
     check("with the workouts", "Τελευταίες προπονήσεις" in texts(page) and "Πιέσεις Στήθους" in texts(page),
           texts(page)[:600])
+    check("and without the staff's notes", "ΜΥΣΤΙΚΟ" not in texts(page), texts(page)[:600])
 
     press(at, f"athlete_share_revoke_{athlete['id']}")
     from lib import share

@@ -197,6 +197,10 @@ export const en: Translation = {
   },
 
   portal: {
+    programNone: 'Your coach has not given you a programme yet.',
+    programOrder: 'Order of days',
+    programNext: 'Next',
+    programEmptyDay: 'No exercises yet.',
     title: 'My programme',
     account: 'Account',
     gym: 'Gym',
