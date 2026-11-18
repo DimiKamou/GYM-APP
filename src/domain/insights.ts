@@ -13,7 +13,7 @@ import {
   type AnalyticsData,
 } from '@/domain/analytics'
 import { shiftLocalDate, weekdayOf } from '@/domain/calendar'
-import type { LocalDate, Session, Uuid } from '@/domain/types'
+import type { LocalDate, Session, Uuid, WorkoutSet } from '@/domain/types'
 
 export interface WeekCount {
   weekStart: LocalDate
@@ -62,8 +62,12 @@ export function weekStreak(sessions: readonly Session[], athleteId: Uuid, today:
   return streak
 }
 
+/** What a record is measured in: kilos (estimated 1RM), reps, seconds held, or metres covered. */
+export type RecordMeasure = 'kg' | 'reps' | 'seconds' | 'meters'
+
 export interface PersonalRecord {
   exerciseId: Uuid
+  measure: RecordMeasure
   /** Kilos: the estimated 1RM. Bodyweight: the most reps in one set. */
   weighted: boolean
   value: number
@@ -74,6 +78,43 @@ export interface PersonalRecord {
   authorId: Uuid | null
   /** How many sessions of this exercise the record was chosen from. */
   sessions: number
+}
+
+/**
+ * A plank, a run, a row: no load and no reps, so the best day is the longest time — or, for
+ * work logged only in metres, the longest distance. Same tie rule as the lifts.
+ */
+function enduranceRecord(
+  data: AnalyticsData,
+  athleteId: Uuid,
+  exerciseId: Uuid,
+): Pick<PersonalRecord, 'measure' | 'value' | 'sessionId' | 'date' | 'sessions'> | null {
+  const blocksBySession = new Map<Uuid, Uuid[]>()
+  for (const block of data.blocks) {
+    if (block.deletedAt !== null || block.exerciseId !== exerciseId) continue
+    blocksBySession.set(block.sessionId, [...(blocksBySession.get(block.sessionId) ?? []), block.id])
+  }
+  const setsByBlock = new Map<Uuid, WorkoutSet[]>()
+  for (const set of data.sets) {
+    if (set.deletedAt !== null) continue
+    setsByBlock.set(set.blockId, [...(setsByBlock.get(set.blockId) ?? []), set])
+  }
+  let seconds: { value: number; session: Session } | null = null
+  let meters: { value: number; session: Session } | null = null
+  let count = 0
+  for (const session of athleteSessionsAsc(data.sessions, athleteId)) {
+    const sets = (blocksBySession.get(session.id) ?? []).flatMap((id) => setsByBlock.get(id) ?? [])
+    if (sets.length === 0) continue
+    count += 1
+    for (const set of sets) {
+      if ((set.seconds ?? 0) > (seconds?.value ?? 0)) seconds = { value: set.seconds ?? 0, session }
+      if ((set.meters ?? 0) > (meters?.value ?? 0)) meters = { value: set.meters ?? 0, session }
+    }
+  }
+  const best = seconds ? { ...seconds, measure: 'seconds' as const } : meters ? { ...meters, measure: 'meters' as const } : null
+  return best
+    ? { measure: best.measure, value: best.value, sessionId: best.session.id, date: best.session.localDate, sessions: count }
+    : null
 }
 
 /** The best session per exercise, newest record first. Ties go to the earlier day: that is when it was set. */
@@ -88,12 +129,26 @@ export function personalRecords(data: AnalyticsData, athleteId: Uuid): PersonalR
       const bestValue = best ? (trend.weighted ? best.oneRm : best.topReps) : -1
       if (value > bestValue) best = point
     }
-    // A plank or a run has neither a load nor reps: its best is in seconds or metres, which
-    // this list does not rank yet. "0 reps" would be a record nobody set.
-    if (!best || (trend.weighted ? best.oneRm : best.topReps) <= 0) continue
+    if (!best) continue
+    if ((trend.weighted ? best.oneRm : best.topReps) <= 0) {
+      // Neither a load nor reps: ranked by time or distance instead — never "0 reps".
+      const endurance = enduranceRecord(data, athleteId, usage.exerciseId)
+      if (!endurance || endurance.value <= 0) continue
+      const held = sessionById.get(endurance.sessionId)
+      records.push({
+        exerciseId: usage.exerciseId,
+        weighted: false,
+        topKg: 0,
+        topReps: 0,
+        authorId: held ? sessionAuthorId(held) : null,
+        ...endurance,
+      })
+      continue
+    }
     const session = sessionById.get(best.sessionId)
     records.push({
       exerciseId: usage.exerciseId,
+      measure: trend.weighted ? 'kg' : 'reps',
       weighted: trend.weighted,
       value: trend.weighted ? best.oneRm : best.topReps,
       topKg: best.topKg,

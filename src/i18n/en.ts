@@ -693,6 +693,8 @@ export const en: Translation = {
   },
 
   insights: {
+    longestTime: 'Longest time',
+    longestDistance: 'Longest distance',
     tabsLabel: 'Athlete sections',
     tabHistory: 'History',
     tabProgress: 'Progress',
@@ -709,7 +711,7 @@ export const en: Translation = {
     frequencyHint: 'The last 12 weeks; the last bar is the current one.',
     weekSessions: 'Week of {{date}}: {{count}}',
     recordsTitle: 'Personal records',
-    recordsHint: 'Each exercise’s best day: estimated 1RM when loaded, reps when not.',
+    recordsHint: 'Each exercise’s best day: estimated 1RM when loaded, reps when not, time or distance for endurance work.',
     recordsEmpty: 'No records yet',
     recordSet: '{{kg}} × {{reps}}',
     recordFrom: 'from {{count}} workouts',

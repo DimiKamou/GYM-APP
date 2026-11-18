@@ -57,13 +57,26 @@ describe('personal records', () => {
     expect(records[0].exerciseId).toBe('pullup')
   })
 
-  it('leaves out work with neither load nor reps, rather than calling 0 a record', () => {
-    const plank: AnalyticsData = {
+  it('ranks a hold by its longest time and a run by its longest distance, never "0 reps"', () => {
+    const timed = (id: string, blockId: string, seconds: number | null, meters: number | null) =>
+      ({ ...set(id, blockId, null, 0), reps: null, seconds, meters }) as unknown as WorkoutSet
+    const more: AnalyticsData = {
       ...data,
-      blocks: [...data.blocks, block('b5', 's3', 'plank')],
-      sets: [...data.sets, set('x5', 'b5', null, 0)],
-      exercises: [...data.exercises, exercise('plank')],
+      blocks: [...data.blocks, block('b5', 's1', 'plank'), block('b6', 's3', 'plank'), block('b7', 's2', 'row')],
+      sets: [...data.sets, timed('x5', 'b5', 60, null), timed('x6', 'b6', 45, null), timed('x7', 'b7', null, 2000)],
+      exercises: [...data.exercises, exercise('plank'), exercise('row')],
     }
-    expect(personalRecords(plank, A).some((r) => r.exerciseId === 'plank')).toBe(false)
+    const records = personalRecords(more, A)
+    expect(records.find((r) => r.exerciseId === 'plank')).toMatchObject({ measure: 'seconds', value: 60, date: '2026-10-01', sessions: 2 })
+    expect(records.find((r) => r.exerciseId === 'row')).toMatchObject({ measure: 'meters', value: 2000, authorId: 'mem-nikos' })
+    expect(records.find((r) => r.exerciseId === 'bench')).toMatchObject({ measure: 'kg' })
+
+    const empty: AnalyticsData = {
+      ...data,
+      blocks: [...data.blocks, block('b8', 's3', 'nothing')],
+      sets: [...data.sets, set('x8', 'b8', null, 0)],
+      exercises: [...data.exercises, exercise('nothing')],
+    }
+    expect(personalRecords(empty, A).some((r) => r.exerciseId === 'nothing')).toBe(false)
   })
 })

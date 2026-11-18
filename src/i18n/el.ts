@@ -758,6 +758,8 @@ export const el = {
   },
 
   insights: {
+    longestTime: 'Μεγ. χρόνος',
+    longestDistance: 'Μεγ. απόσταση',
     tabsLabel: 'Ενότητες αθλητή',
     tabHistory: 'Ιστορικό',
     tabProgress: 'Πρόοδος',
@@ -774,7 +776,7 @@ export const el = {
     frequencyHint: 'Οι τελευταίες 12 εβδομάδες· η τελευταία στήλη είναι η τρέχουσα.',
     weekSessions: 'Εβδομάδα {{date}}: {{count}}',
     recordsTitle: 'Προσωπικά ρεκόρ',
-    recordsHint: 'Η καλύτερη μέρα κάθε άσκησης: εκτιμώμενο 1RM με βάρος, επαναλήψεις χωρίς.',
+    recordsHint: 'Η καλύτερη μέρα κάθε άσκησης: εκτιμώμενο 1RM με βάρος, επαναλήψεις χωρίς, χρόνος ή απόσταση για αντοχή.',
     recordsEmpty: 'Κανένα ρεκόρ ακόμα',
     recordSet: '{{kg}} × {{reps}}',
     recordFrom: 'από {{count}} προπονήσεις',
