@@ -710,6 +710,15 @@ export function createLocalRepo(
     listAthleteSessions: (gymId, athleteId) =>
       read((db) => (gymOf(db, gymId) ? athleteSessionsDesc(db, athleteId) : [])),
 
+    listGymSessions: (gymId, from) =>
+      read((db) =>
+        gymOf(db, gymId)
+          ? live(db.sessions)
+              .filter((s) => s.localDate >= from)
+              .sort((a, b) => compareSessions(b, a))
+          : [],
+      ),
+
     listNotes: (gymId, athleteId) =>
       read((db) =>
         gymOf(db, gymId)

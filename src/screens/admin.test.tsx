@@ -154,7 +154,8 @@ function buttons(scope: ParentNode): HTMLButtonElement[] {
 }
 
 function buttonWithText(scope: ParentNode, text: string): HTMLButtonElement {
-  const found = buttons(scope).find((button) => textOf(button).includes(text))
+  // The label a sighted coach reads, or the name an icon-only button gives assistive tech.
+  const found = buttons(scope).find((button) => `${textOf(button)} ${button.getAttribute('aria-label') ?? ''}`.includes(text))
   if (!found) throw new Error(`no button reading "${text}"`)
   return found
 }
@@ -301,16 +302,16 @@ describe('the team screen', () => {
     await settle()
 
     expect(textOf(host)).toContain(i18n.t('team.ownerOnlyHint'))
-    expect(buttonWithText(host, i18n.t('team.inviteShort')).disabled).toBe(true)
+    expect(buttonWithText(host, i18n.t('team.invite')).disabled).toBe(true)
     // Never hidden: a trainer who cannot find the button asks for the owner's password.
-    expect(buttons(host).some((b) => textOf(b).includes(i18n.t('team.inviteShort')))).toBe(true)
+    expect(buttons(host).some((b) => (b.getAttribute('aria-label') ?? '').includes(i18n.t('team.invite')))).toBe(true)
   })
 
   it('shows the invite link once, in the fragment, with the warning that it cannot return', async () => {
     const host = render(<TeamScreen />)
     await settle()
 
-    await click(buttonWithText(host, i18n.t('team.inviteShort')))
+    await click(buttonWithText(host, i18n.t('team.invite')))
     typeInto(fieldInput(sheet(), i18n.t('team.inviteEmail')), 'nea@ironlab.gr')
     await click(buttonWithText(sheet(), i18n.t('team.sendInvite')))
     await settle()

@@ -92,3 +92,4 @@ export function useUndoableSetDelete(): UndoableDelete<SetRef> {
     restore: (ref) => restore.mutateAsync(ref),
   })
 }
+export * from '@/data/hooks/useGym'

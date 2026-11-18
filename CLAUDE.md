@@ -19,6 +19,8 @@ feature is.
   reason there was no OAuth. The store apps (Capacitor) open the provider in the system browser sheet and
   come back on `gr.powerhouse.app://auth/callback` (`src/native/`); there Apple is offered too (App Review 4.8).
 - **Two staff roles**, `owner` and `trainer`. The four-role matrix was cut. Adding `manager` is one migration.
+  The owner's bar has **Πίνακας** (`/dashboard`) in Ομάδα's place; team management is a tab of it, and
+  the route redirects a trainer. A trainer's bar is unchanged.
 - **An athlete account is not a membership** (015). `app.my_gym()` is null for it, so all 44 policies refuse
   it; it reads only through `my_athlete()` / `my_athlete_portal()`, which build every object column by
   column. Never give athletes access by adding a role to `memberships` or a permissive policy to a table —
@@ -142,7 +144,8 @@ run: 005, 007 and 008 had none, the gym's database never got 008, and every
 screen that reads `blocks.equipment` was refused until a catch-up paste
 (`trainhub-προηγουμενες-αλλαγες.sql`).
 
-**The one door for anon is `shared_progress(token)`.** A shared progress link
+**The one door for anon is `shared_progress(token)`.** Since 016 it leaves out `notes` / `note` by name;
+re-adding a column there sends it to whoever a parent forwards the link to. A shared progress link
 (`?share=<token>`, drawn in `app.py` before the gate) reads through that SECURITY
 DEFINER function and nothing else; no table has an anon grant or policy. Widen
 what it returns and you widen what a forwarded link shows to anyone who has it.

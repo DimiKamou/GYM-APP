@@ -1070,3 +1070,28 @@
   text-transform: uppercase;
   color: var(--th-muted);
 }
+
+/* The same strip over routes (LibraryTabs): NavLink stamps aria-current on the open one. */
+.th-tabs__link {
+  position: relative;
+  text-decoration: none;
+}
+
+.th-tabs__link[aria-current='page'] {
+  color: var(--th-ink);
+}
+
+.th-tabs__link[aria-current='page'] svg {
+  color: var(--th-brand);
+}
+
+.th-tabs__underline {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  height: 3px;
+  border-radius: 3px 3px 0 0;
+  background: var(--th-brand);
+  box-shadow: 0 0 12px color-mix(in srgb, var(--th-brand) 60%, transparent);
+}

@@ -1,16 +1,15 @@
 import { useMemo, useState, type CSSProperties } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { useTranslation } from 'react-i18next'
-import { useQueries, useQueryClient } from '@tanstack/react-query'
+import { useQueryClient } from '@tanstack/react-query'
 
 import { useGymId } from '@/auth/useAuth'
 import { keys } from '@/data/keys'
-import { useAthletes, useRepo } from '@/data/hooks'
-import { compareSessions } from '@/domain/analytics'
+import { useAthletes, useLastSessionDates, useRepo } from '@/data/hooks'
 import { formatDate } from '@/domain/format'
 import { matches } from '@/domain/text'
 import { currentLocale } from '@/i18n'
-import type { Athlete, LocalDate, Session, Uuid } from '@/domain/types'
+import type { Athlete } from '@/domain/types'
 import { afterSheetClosed, Avatar, Button, Card, EmptyState, Icon, Input, Screen, Spinner } from '@/ui'
 import { AthleteSheet } from '@/screens/athlete/AthleteSheet'
 
@@ -100,30 +99,7 @@ export function AthletesScreen() {
   const roster = useAthletes()
   const athletes = useMemo(() => roster.data ?? [], [roster.data])
 
-  /**
-   * The last session per athlete, one query each.
-   *
-   * The repository has no roster-with-last-session read, and inventing one here would mean a
-   * screen reaching past the contract. Each entry shares the key the detail screen uses, so
-   * opening an athlete costs no second fetch. If a gym's roster ever outgrows one screen this
-   * is the place a single server-side view pays for itself.
-   */
-  const sessionQueries = useQueries({
-    queries: athletes.map((athlete) => ({
-      queryKey: keys.athleteSessions(gymId, athlete.id),
-      queryFn: () => repo.listAthleteSessions(gymId, athlete.id),
-      staleTime: 60_000,
-    })),
-  })
-
-  // Not memoised: `useQueries` hands back a fresh array every render, so a memo keyed on it
-  // would recompute anyway and only look like it did not.
-  const lastSessionByAthlete = new Map<Uuid, LocalDate | null>()
-  athletes.forEach((athlete, index) => {
-    const result = sessionQueries[index]
-    if (!result || result.data === undefined) return
-    lastSessionByAthlete.set(athlete.id, latestDate(result.data))
-  })
+  const lastSessionByAthlete = useLastSessionDates(athletes)
 
   const filtered = useMemo(
     () => athletes.filter((athlete) => matches(athlete.fullName, search)),
@@ -246,11 +222,3 @@ export function AthletesScreen() {
  * Supabase one orders on the server, and a roster that trusts either would print the wrong
  * date the day one of them changes.
  */
-function latestDate(sessions: readonly Session[]): LocalDate | null {
-  let latest: Session | null = null
-  for (const session of sessions) {
-    if (session.deletedAt !== null) continue
-    if (!latest || compareSessions(session, latest) > 0) latest = session
-  }
-  return latest ? latest.localDate : null
-}

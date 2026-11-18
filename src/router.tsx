@@ -14,6 +14,7 @@ import { useTranslation } from 'react-i18next'
 import { useAuth } from '@/auth/useAuth'
 import { Screen } from '@/ui/Screen'
 import { TabBar } from '@/ui/TabBar'
+import { DashboardScreen } from '@/screens/DashboardScreen'
 import { AthletesScreen } from '@/screens/AthletesScreen'
 import { AthleteDetailScreen } from '@/screens/AthleteDetailScreen'
 import { LogScreen } from '@/screens/LogScreen'
@@ -299,6 +300,7 @@ export const routes: RouteObject[] = [
             element: <TabsLayout />,
             children: [
               { index: true, element: <Navigate to="/athletes" replace /> },
+              { path: 'dashboard', element: <DashboardScreen /> },
               { path: 'athletes', element: <AthletesScreen /> },
               { path: 'calendar', element: <CalendarScreen /> },
               { path: 'library', element: <LibraryScreen /> },

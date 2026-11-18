@@ -49,6 +49,7 @@ export const en: Translation = {
   },
 
   nav: {
+    dashboard: 'Dashboard',
     athletes: 'Athletes',
     calendar: 'Calendar',
     library: 'Library',
@@ -507,6 +508,7 @@ export const en: Translation = {
   },
 
   library: {
+    sections: 'Library sections',
     title: 'Exercise library',
     add: 'New exercise',
     category: 'Category',
@@ -549,10 +551,13 @@ export const en: Translation = {
   },
 
   team: {
+    tabsLabel: 'Team sections',
+    tabMembers: 'Members',
+    tabInvites: 'Invites',
+    tabActivity: 'Activity',
     title: 'Team',
     roster: 'Roster',
     invite: 'Invite trainer',
-    inviteShort: 'Invite',
     inviteEmail: 'Trainer email',
     sendInvite: 'Send invite',
     pendingInvites: 'Pending invites',
@@ -690,6 +695,31 @@ export const en: Translation = {
     resetConfirmWord: 'RESET',
     resetTypeHint: 'Type “{{word}}” to confirm.',
     resetMismatch: 'That word does not match.',
+  },
+
+  dashboard: {
+    pendingInvites_one: '{{count}} pending invite',
+    pendingInvites_other: '{{count}} pending invites',
+    manageTeam: 'Manage the team',
+    title: 'Dashboard',
+    tabsLabel: 'Dashboard sections',
+    tabOverview: 'Overview',
+    tabAthletes: 'Athletes',
+    tabTeam: 'Team',
+    weekVs: 'This week · prev {{count}}',
+    activeAthletes: 'Active athletes (30 d)',
+    today: 'Appointments today',
+    drifting: 'Worth a phone call',
+    gymWeeks: 'Gym workouts per week',
+    driftHint: 'Athletes with no workout for {{days}}+ days. Longest absence first.',
+    daysAgo_one: '{{count}} day',
+    daysAgo_other: '{{count}} days',
+    lastOn: 'last {{date}}',
+    never: 'No workout yet',
+    allGood: 'Every athlete trained in the last two weeks.',
+    teamTitle: 'The team, last 30 days',
+    teamHint: 'Who wrote the workouts, as every sheet says it.',
+    noActivity: 'No workouts this month',
   },
 
   insights: {

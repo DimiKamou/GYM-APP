@@ -71,6 +71,7 @@ export const el = {
   },
 
   nav: {
+    dashboard: 'Πίνακας',
     athletes: 'Αθλητές',
     calendar: 'Ημερολόγιο',
     library: 'Ασκήσεις',
@@ -551,6 +552,7 @@ export const el = {
   },
 
   library: {
+    sections: 'Ενότητες βιβλιοθήκης',
     title: 'Βιβλιοθήκη ασκήσεων',
     add: 'Νέα άσκηση',
     category: 'Κατηγορία',
@@ -600,10 +602,13 @@ export const el = {
   },
 
   team: {
+    tabsLabel: 'Ενότητες ομάδας',
+    tabMembers: 'Μέλη',
+    tabInvites: 'Προσκλήσεις',
+    tabActivity: 'Δραστηριότητα',
     title: 'Ομάδα',
     roster: 'Σύνθεση',
     invite: 'Πρόσκληση προπονητή',
-    inviteShort: 'Πρόσκληση',
     inviteEmail: 'Email προπονητή',
     sendInvite: 'Αποστολή',
     pendingInvites: 'Εκκρεμείς προσκλήσεις',
@@ -755,6 +760,31 @@ export const el = {
     resetConfirmWord: 'ΕΠΑΝΑΦΟΡΑ',
     resetTypeHint: 'Γράψε «{{word}}» για να επιβεβαιώσεις.',
     resetMismatch: 'Η λέξη δεν ταιριάζει.',
+  },
+
+  dashboard: {
+    pendingInvites_one: '{{count}} εκκρεμής πρόσκληση',
+    pendingInvites_other: '{{count}} εκκρεμείς προσκλήσεις',
+    manageTeam: 'Διαχείριση ομάδας',
+    title: 'Πίνακας',
+    tabsLabel: 'Ενότητες πίνακα',
+    tabOverview: 'Επισκόπηση',
+    tabAthletes: 'Αθλητές',
+    tabTeam: 'Ομάδα',
+    weekVs: 'Εβδομάδα · πριν {{count}}',
+    activeAthletes: 'Ενεργοί αθλητές (30 ημ.)',
+    today: 'Ραντεβού σήμερα',
+    drifting: 'Χρειάζονται ένα τηλέφωνο',
+    gymWeeks: 'Προπονήσεις γυμναστηρίου ανά εβδομάδα',
+    driftHint: 'Αθλητές χωρίς προπόνηση για {{days}}+ ημέρες. Η μεγαλύτερη απουσία πρώτη.',
+    daysAgo_one: '{{count}} ημέρα',
+    daysAgo_other: '{{count}} ημέρες',
+    lastOn: 'τελευταία {{date}}',
+    never: 'Καμία προπόνηση ακόμα',
+    allGood: 'Όλοι οι αθλητές προπονήθηκαν τις τελευταίες δύο εβδομάδες.',
+    teamTitle: 'Η ομάδα, τελευταίες 30 ημέρες',
+    teamHint: 'Ποιος έγραψε τις προπονήσεις, όπως το λέει κάθε φύλλο.',
+    noActivity: 'Καμία προπόνηση αυτόν τον μήνα',
   },
 
   insights: {

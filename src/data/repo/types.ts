@@ -195,6 +195,8 @@ export interface Repo {
   /** The five-second read: pinned warnings, the latest note, and the last session in one line. */
   getBriefing(gymId: Uuid, athleteId: Uuid): Promise<Briefing | null>
   listAthleteSessions(gymId: Uuid, athleteId: Uuid): Promise<Session[]>
+  /** Every live session in the gym from `from` on: the owner's dashboard and the team's activity. */
+  listGymSessions(gymId: Uuid, from: LocalDate): Promise<Session[]>
   listNotes(gymId: Uuid, athleteId: Uuid): Promise<Array<Note & { authorName: string | null }>>
   getProgressData(gymId: Uuid, athleteId: Uuid): Promise<ProgressData>
 

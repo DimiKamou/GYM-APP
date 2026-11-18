@@ -12,6 +12,7 @@ import { currentLocale } from '@/i18n'
 import { Button, Card, Chip, EmptyState, Field, Icon, Input, Screen, Segmented, Sheet, Spinner, ToastProvider, useToast } from '@/ui'
 import { ExercisePicker, exerciseName } from '@/screens/log/ExercisePicker'
 import { dayLabel } from '@/screens/log/StartFrom'
+import { LibraryTabs } from '@/screens/library/LibraryTabs'
 
 /**
  * Προγράμματα (013): the owner writes a programme FOR one athlete (#31) — numbered days, each a
@@ -86,9 +87,7 @@ function ProgramsBody() {
         {t('programs.title')}
       </h1>
       {isOwner && caps.programs ? (
-        <Button variant="primary" icon="plus" onClick={() => setCreating(true)}>
-          {t('programs.new')}
-        </Button>
+        <Button variant="primary" icon="plus" aria-label={t('programs.new')} onClick={() => setCreating(true)} />
       ) : null}
     </div>
   )
@@ -96,6 +95,7 @@ function ProgramsBody() {
   if (!caps.programs) {
     return (
       <Screen label={t('programs.title')} header={header}>
+        <LibraryTabs />
         <EmptyState icon="note" title={t('programs.notInstalled')} description={t('programs.notInstalledHint')} />
       </Screen>
     )
@@ -104,6 +104,7 @@ function ProgramsBody() {
   if (programs.isPending) {
     return (
       <Screen label={t('programs.title')} header={header}>
+        <LibraryTabs />
         <Spinner label={t('common.loading')} />
       </Screen>
     )
@@ -111,6 +112,7 @@ function ProgramsBody() {
 
   return (
     <Screen label={t('programs.title')} header={header}>
+      <LibraryTabs />
       {focus ? (
         <Button variant="ghost" icon="back" onClick={() => navigate('/programs')}>
           {t('programs.allAthletes')}

@@ -31,6 +31,7 @@ export const keys = {
   gymProfile: (gymId: Uuid) => ['gym', gymId, 'profile'] as const,
 
   team: (gymId: Uuid) => ['gym', gymId, 'team'] as const,
+  gymSessions: (gymId: Uuid, from: LocalDate) => ['gym', gymId, 'sessions', from] as const,
   invites: (gymId: Uuid) => ['gym', gymId, 'invites'] as const,
 
   athletes: (gymId: Uuid) => ['gym', gymId, 'athletes'] as const,

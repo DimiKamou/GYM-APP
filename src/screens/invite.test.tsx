@@ -183,7 +183,8 @@ function buttons(scope: ParentNode): HTMLButtonElement[] {
 }
 
 function buttonWithText(scope: ParentNode, text: string): HTMLButtonElement {
-  const found = buttons(scope).find((button) => textOf(button).includes(text))
+  // The label a sighted coach reads, or the name an icon-only button gives assistive tech.
+  const found = buttons(scope).find((button) => `${textOf(button)} ${button.getAttribute('aria-label') ?? ''}`.includes(text))
   if (!found) throw new Error(`no button reading "${text}"`)
   return found
 }
@@ -227,7 +228,7 @@ function sheet(): HTMLElement {
 async function mintThroughTheUi(email: string): Promise<string> {
   const host = render(<TeamScreen />)
   await settle()
-  await click(buttonWithText(host, i18n.t('team.inviteShort')))
+  await click(buttonWithText(host, i18n.t('team.invite')))
   typeInto(fieldInput(sheet(), i18n.t('team.inviteEmail')), email)
   await click(buttonWithText(sheet(), i18n.t('team.sendInvite')))
   await settle()
@@ -427,6 +428,14 @@ describe('the pending list', () => {
   it('lets an owner revoke, and shows a trainer the same actions disabled with a reason', async () => {
     const ownerView = render(<TeamScreen />)
     await settle()
+    // Pending invites have their own tab, its count beside the name.
+    const invitesTab = Array.from(ownerView.querySelectorAll<HTMLElement>('[role="tab"]')).find((el) =>
+      textOf(el).includes(i18n.t('team.tabInvites')),
+    )
+    expect(textOf(invitesTab)).toMatch(/\d/)
+    if (!invitesTab) throw new Error('no invites tab')
+    await click(invitesTab)
+    await settle()
     expect(textOf(ownerView)).toContain('lena@ironlab.gr')
 
     await click(buttonWithText(ownerView, i18n.t('team.revoke')))
@@ -441,7 +450,7 @@ describe('the pending list', () => {
     await settle()
     // Visible and dead, never hidden: a trainer who cannot find the button assumes the app is
     // broken and asks the owner for their password.
-    const inviteButton = buttonWithText(trainerView, i18n.t('team.inviteShort'))
+    const inviteButton = buttonWithText(trainerView, i18n.t('team.invite'))
     expect(inviteButton.disabled).toBe(true)
     expect(inviteButton.getAttribute('title')).toBe(i18n.t('team.ownerOnly'))
     expect(textOf(trainerView)).toContain(i18n.t('team.ownerOnlyHint'))

@@ -749,6 +749,20 @@ export function createSupabaseRepo(): Repo & InviteRedeemer & AthleteSide & Stor
       return liveSessions(gymId, athleteId)
     },
 
+    async listGymSessions(gymId, from) {
+      return rows(
+        await supabase
+          .from('sessions')
+          .select(await sessionCols())
+          .eq('gym_id', gymId)
+          .gte('local_date', from)
+          .is('deleted_at', null)
+          .order('local_date', { ascending: false })
+          .order('started_at', { ascending: false }),
+        toSession,
+      )
+    },
+
     async listNotes(gymId, athleteId) {
       const [members, noteRows] = await Promise.all([
         team(gymId),
