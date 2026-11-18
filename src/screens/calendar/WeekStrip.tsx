@@ -179,10 +179,10 @@ export function WeekStrip({
 
         const style: CSSProperties = { ...dayBase }
         if (isSelected) {
-          style.background = 'var(--th-accent)'
-          style.color = 'var(--th-accent-ink)'
+          style.background = 'var(--th-brand)'
+          style.color = 'var(--th-brand-ink)'
         } else if (isToday) {
-          style.borderColor = 'var(--th-accent)'
+          style.borderColor = 'var(--th-brand)'
           style.color = 'var(--th-ink)'
         } else if (date < today) {
           // A day already worked is still reachable, just no longer the thing being decided.

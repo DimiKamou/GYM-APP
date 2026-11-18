@@ -110,6 +110,19 @@
   width: 100%;
 }
 
+/* Only a full-width button may shorten its label: it is the one whose width is set by its
+   column, not by its words. An inline button keeps its whole label. */
+.th-btn--block .th-btn__label {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* A label long enough to wrap squeezed the glyph to a dot: flex shrinks an svg like any box. */
+.th-btn svg {
+  flex: 0 0 auto;
+}
+
 .th-btn--icon {
   padding: 0;
   width: 44px;
@@ -128,6 +141,20 @@
 
 .th-btn--primary:hover:not([aria-disabled='true']):not(:disabled) {
   filter: brightness(1.06);
+}
+
+.th-btn--brand {
+  background: var(--th-brand-soft);
+  color: var(--th-ink);
+  border-color: var(--th-brand);
+}
+
+.th-btn--brand svg {
+  color: var(--th-brand);
+}
+
+.th-btn--brand:hover:not([aria-disabled='true']):not(:disabled) {
+  filter: brightness(1.12);
 }
 
 .th-btn--secondary {
@@ -300,8 +327,9 @@
 }
 
 .th-chip--selected {
-  background: var(--th-accent-soft);
-  border-color: var(--th-accent);
+  /* Purple, the 30: a selection is structure. Orange is kept for the one action per screen. */
+  background: var(--th-brand-soft);
+  border-color: var(--th-brand);
   color: var(--th-ink);
 }
 
@@ -378,9 +406,9 @@
 }
 
 .th-seg__item[aria-checked='true'] {
-  background: var(--th-surface);
+  background: var(--th-brand-soft);
   color: var(--th-ink);
-  box-shadow: var(--th-shadow-soft);
+  box-shadow: inset 0 0 0 1px var(--th-brand), var(--th-shadow-soft);
 }
 
 /* ---------------------------------------------------------------------------
@@ -890,4 +918,155 @@
   .th-spinner {
     animation-duration: 2400ms;
   }
+}
+
+/* ---------------------------------------------------------------------------
+   Tabs — in-screen. The strip sticks to the top of the scroller and bleeds to its edges; the
+   indicator is the screen's one orange mark, so it moves rather than jumps.
+   --------------------------------------------------------------------------- */
+
+.th-tabs {
+  position: sticky;
+  top: 0;
+  z-index: 5;
+  margin: 0 calc(-1 * var(--th-screen-pad));
+  padding: 6px var(--th-screen-pad) 0;
+  background: color-mix(in srgb, var(--th-bg) 86%, transparent);
+  -webkit-backdrop-filter: blur(14px);
+  backdrop-filter: blur(14px);
+  border-bottom: 1px solid var(--th-line);
+}
+
+.th-tabs__strip {
+  position: relative;
+  display: flex;
+  gap: 4px;
+  overflow-x: auto;
+  scrollbar-width: none;
+}
+
+.th-tabs__strip::-webkit-scrollbar {
+  display: none;
+}
+
+.th-tabs__tab {
+  /* Grows to share the row when the tabs fit; scrolls when they do not. */
+  flex: 1 0 auto;
+  justify-content: center;
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  min-height: 46px;
+  padding: 0 12px;
+  border-radius: var(--th-r-sm) var(--th-r-sm) 0 0;
+  font-size: var(--th-text-sm);
+  font-weight: 650;
+  color: var(--th-muted);
+  white-space: nowrap;
+  transition: color var(--th-dur-fast) var(--th-ease-standard),
+    background-color var(--th-dur-fast) var(--th-ease-standard);
+}
+
+.th-tabs__tab[aria-selected='true'] {
+  color: var(--th-ink);
+}
+
+.th-tabs__tab[aria-selected='true'] svg {
+  color: var(--th-brand);
+}
+
+.th-tabs__tab:active {
+  background: var(--th-surface-2);
+}
+
+.th-tabs__badge {
+  min-width: 20px;
+  height: 20px;
+  padding: 0 6px;
+  border-radius: var(--th-r-pill);
+  background: var(--th-brand-soft);
+  color: var(--th-ink);
+  font-size: var(--th-text-xs);
+  font-weight: 700;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.th-tabs__indicator {
+  position: absolute;
+  left: 0;
+  bottom: 0;
+  height: 3px;
+  border-radius: 3px 3px 0 0;
+  background: var(--th-brand);
+  box-shadow: 0 0 12px color-mix(in srgb, var(--th-brand) 60%, transparent);
+  transition: transform var(--th-dur-sheet) var(--th-ease-sheet), width var(--th-dur-sheet) var(--th-ease-sheet);
+  pointer-events: none;
+}
+
+.th-tabpanel {
+  display: flex;
+  flex-direction: column;
+  gap: var(--th-gap);
+  touch-action: pan-y;
+  animation: th-tab-in var(--th-dur-enter) var(--th-ease-standard) both;
+}
+
+.th-tabpanel--prev {
+  animation-name: th-tab-in-prev;
+}
+
+@keyframes th-tab-in {
+  from {
+    opacity: 0;
+    transform: translateX(28px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+@keyframes th-tab-in-prev {
+  from {
+    opacity: 0;
+    transform: translateX(-28px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .th-tabpanel,
+  .th-tabpanel--prev {
+    animation: none;
+  }
+  .th-tabs__indicator {
+    transition: none;
+  }
+}
+
+/* A stat tile with a figure, a label and an optional trend line under it. */
+.th-stat {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.th-stat__value {
+  font-family: var(--th-font-display);
+  font-weight: var(--th-display-weight);
+  letter-spacing: var(--th-display-tracking);
+  font-size: var(--th-text-xl);
+  line-height: 1.05;
+}
+
+.th-stat__label {
+  font-size: var(--th-text-xs);
+  letter-spacing: var(--th-label-tracking);
+  text-transform: uppercase;
+  color: var(--th-muted);
 }

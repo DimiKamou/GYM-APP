@@ -1,4 +1,5 @@
 import { useState, type CSSProperties } from 'react'
+import { useNavigate } from 'react-router-dom'
 import { useTranslation } from 'react-i18next'
 
 import { newId } from '@/data/ids'
@@ -59,10 +60,11 @@ import { SyncStatus } from '@/ui/SyncStatus'
  *
  * Two things about it are load-bearing rather than cosmetic.
  *
- * **The Greek name is the required one.** The prototype's "add exercise" wrote only `nameEn`,
- * so every movement a trainer added was English-only forever in a Greek UI — and there is no
- * edit path in the schema to go back and fix it. Here `nameEl` is what the form asks for first
- * and refuses to save without; English is the courtesy field underneath it.
+ * **One name, in English.** The gym's own list (011) names every exercise in English — the
+ * owner's list was written that way, and one language is one namespace for "is this a
+ * duplicate". So the form asks for that one name, the way the Streamlit pilot does, and leaves
+ * `name_el` NULL. Asking for a Greek name here as well would split the catalogue into two
+ * naming conventions that the uniqueness index then checks separately.
  *
  * **Archive, never delete.** Three months of blocks point at these rows. A tombstone would
  * leave a coach reading a session that names an exercise nothing can resolve, so the only
@@ -230,18 +232,9 @@ function Notice({ text, tone }: { text: string; tone: 'ok' | 'bad' }) {
   )
 }
 
-/**
- * Which name leads. Greek leads in the Greek UI even when an English name exists, because the
- * gym talks in Greek; the other language stays underneath rather than disappearing, so a coach
- * searching in either finds the row and recognises it.
- */
-function names(exercise: Exercise, locale: Locale): { primary: string; secondary: string | null } {
-  const el = exercise.nameEl?.trim() || null
-  const en = exercise.nameEn?.trim() || null
-  const [first, second] = locale === 'el' ? [el, en] : [en, el]
-  const primary = first ?? second ?? ''
-  const secondary = first && second ? second : null
-  return { primary, secondary }
+function names(exercise: Exercise, _locale?: Locale): { primary: string; secondary: string | null } {
+  // English only, as on the Streamlit pilot; Greek is the fallback for an old row with no name_en.
+  return { primary: exercise.nameEn?.trim() || exercise.nameEl?.trim() || '', secondary: null }
 }
 
 /**
@@ -257,6 +250,7 @@ export function LibraryScreen() {
 }
 
 function LibraryBody() {
+  const navigate = useNavigate()
   const { t } = useTranslation()
   const locale = currentLocale()
   const toast = useToast()
@@ -367,6 +361,10 @@ function LibraryBody() {
 
   return (
     <Screen label={t('library.title')} header={header} footerSafeArea={false}>
+      {/* Programmes are written from the catalogue's exercises, so their door is here. */}
+      <Button variant="secondary" icon="note" onClick={() => navigate('/programs')}>
+        {t('programs.title')}
+      </Button>
       {/* Above the filters rather than in the header: it must be readable without a tap and
           without pushing the search field off the first screenful. A dead-lettered op turns it
           into a banner here, which is the first thing the eye lands on. */}
@@ -621,8 +619,7 @@ interface CreateExerciseSheetProps {
   /** Resolves false when the write was refused, so the sheet stays open with the typed name. */
   onCreate: (input: {
     id: Uuid
-    nameEl: string
-    nameEn: string | null
+    nameEn: string
     category: ExerciseCategory
     equipment: Equipment
     defaultSetKind: SetKind
@@ -639,7 +636,6 @@ function CreateExerciseSheet({
   onCreate,
 }: CreateExerciseSheetProps) {
   const { t } = useTranslation()
-  const [nameEl, setNameEl] = useState('')
   const [nameEn, setNameEn] = useState('')
   const [category, setCategory] = useState<ExerciseCategory>('upper')
   const [equipment, setEquipment] = useState<Equipment>('barbell')
@@ -648,7 +644,6 @@ function CreateExerciseSheet({
   const [error, setError] = useState<string | null>(null)
 
   function reset() {
-    setNameEl('')
     setNameEn('')
     setCategory('upper')
     setEquipment('barbell')
@@ -658,15 +653,14 @@ function CreateExerciseSheet({
   }
 
   async function submit() {
-    const el = nameEl.trim()
-    if (el === '') {
-      setError(t('library.nameElRequired'))
+    const name = nameEn.trim()
+    if (name === '') {
+      setError(t('library.nameRequired'))
       return
     }
     const created = await onCreate({
       id: newId(),
-      nameEl: el,
-      nameEn: nameEn.trim() === '' ? null : nameEn.trim(),
+      nameEn: name,
       category,
       equipment,
       defaultSetKind: setKind,
@@ -693,21 +687,16 @@ function CreateExerciseSheet({
         </Button>
       }
     >
-      {/* Greek first and required: the prototype asked for English and left every
-          trainer-added movement unreadable in the UI the gym actually uses. */}
-      <Field label={t('library.nameEl')} required error={error ?? undefined}>
+      <Field label={t('library.name')} hint={t('library.nameHint')} required error={error ?? undefined}>
         <Input
-          value={nameEl}
+          value={nameEn}
           onChange={(event) => {
-            setNameEl(event.target.value)
+            setNameEn(event.target.value)
             if (error) setError(null)
           }}
           autoComplete="off"
+          autoCapitalize="words"
         />
-      </Field>
-
-      <Field label={t('library.nameEn')} hint={t('common.optional')}>
-        <Input value={nameEn} onChange={(event) => setNameEn(event.target.value)} autoComplete="off" />
       </Field>
 
       {/* Optional, deliberately: a movement filed nowhere is still better than one nobody

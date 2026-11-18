@@ -25,7 +25,7 @@ export { Keypad, type KeypadProps, type KeypadSuggestion } from '@/ui/Keypad'
 export { Placeholder, type PlaceholderProps } from '@/ui/Placeholder'
 export { Screen, type ScreenProps } from '@/ui/Screen'
 export { Segmented, type SegmentedOption, type SegmentedProps } from '@/ui/Segmented'
-export { Sheet, type SheetProps } from '@/ui/Sheet'
+export { afterSheetClosed, Sheet, type SheetProps } from '@/ui/Sheet'
 export { Spinner, type SpinnerProps } from '@/ui/Spinner'
 export { Stepper, type StepperProps } from '@/ui/Stepper'
 export { SwipeRow, type SwipeRowProps } from '@/ui/SwipeRow'
@@ -38,3 +38,4 @@ export {
   type ToastApi,
   type ToastOptions,
 } from '@/ui/Toast'
+export { Tabs, useTabParam, type TabDef, type TabsProps } from '@/ui/Tabs'

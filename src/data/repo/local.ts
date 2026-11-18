@@ -18,12 +18,20 @@
  */
 
 import { lastPerformance as lastPerformanceOf } from '@/domain/analytics'
+import { shiftLocalDate } from '@/domain/calendar'
 import { formatSet } from '@/domain/format'
 import { matches, normalizeText, sameName } from '@/domain/text'
 import { newId } from '@/data/ids'
 import { createIdbStorage, type OutboxStorage } from '@/data/outbox'
 import { buildSeed, localDateIn, SEED_IDS, type SeedData } from '@/data/repo/seed'
 import type {
+  AthleteIdentity,
+  AthletePortal,
+  AthleteProgram,
+  AthleteShare,
+  Program,
+  ProgramDay,
+  ProgramItem,
   Block,
   Briefing,
   Exercise,
@@ -45,7 +53,14 @@ import type {
 // layer. The capability lives there because `Repo` cannot carry it: every method on that
 // interface takes the gym id a joiner does not have yet.
 import type { InviteRedeemer, RedeemOutcome } from '@/data/hooks/useTeam'
+import { ALL_CAPS } from '@/data/repo/types'
 import type {
+  ProgramStore,
+  ProgramTree,
+  SharedProgress,
+  ShareStore,
+  AthleteRedeemOutcome,
+  AthleteSide,
   ExerciseMuscleInput,
   NewAppointmentInput,
   NewExerciseInput,
@@ -81,7 +96,29 @@ interface LocalDb extends SeedData {
    * written before invites were redeemable here has none, and an absent map is an empty one.
    */
   inviteTokens?: Record<string, Uuid>
+  /**
+   * Athlete accounts in the demo, by athlete: who is connected and since when. There is no
+   * auth user to point at, so the address is all a link records — the Team screen of a real
+   * gym shows no more.
+   */
+  athleteLinks?: Record<Uuid, { linkedAt: Timestamp; email: string }>
+  /** `digest(secret) -> pending athlete link`, with the same once-only property as above. */
+  athleteInviteTokens?: Record<
+    string,
+    { athleteId: Uuid; email: string | null; expiresAt: Timestamp; revokedAt: Timestamp | null; acceptedAt: Timestamp | null }
+  >
+  /** Whose sheet "see it as the athlete" opens. The last athlete to redeem a link here. */
+  portalAthleteId?: Uuid
+  /** 013/014, kept flat like the server's tables. Absent on a record from before them. */
+  programs?: Program[]
+  programDays?: ProgramDay[]
+  programItems?: ProgramItem[]
+  athletePrograms?: AthleteProgram[]
+  shares?: AthleteShare[]
 }
+
+/** The demo's athlete before anyone has redeemed a link: the one with the longest history. */
+const DEFAULT_PORTAL_ATHLETE = SEED_IDS.athletes.nikos
 
 export interface LocalRepoOptions {
   /** Injected by tests so no IndexedDB is needed. */
@@ -122,7 +159,7 @@ function compareSessions(a: Session, b: Session): number {
 
 function exerciseName(exercise: Exercise | undefined): string | null {
   if (!exercise) return null
-  return exercise.nameEl ?? exercise.nameEn ?? null
+  return exercise.nameEn ?? exercise.nameEl ?? null
 }
 
 interface Measurable {
@@ -217,7 +254,9 @@ function resilient(storage: OutboxStorage): OutboxStorage {
 
 // ---------------------------------------------------------------------------
 
-export function createLocalRepo(options: LocalRepoOptions = {}): Repo & InviteRedeemer {
+export function createLocalRepo(
+  options: LocalRepoOptions = {},
+): Repo & InviteRedeemer & AthleteSide & { programs: ProgramStore; shares: ShareStore } {
   const storage = resilient(options.storage ?? createIdbStorage())
   const now = options.now ?? (() => new Date())
   const acting = options.actingMembershipId ?? SEED_IDS.owner
@@ -312,12 +351,280 @@ export function createLocalRepo(options: LocalRepoOptions = {}): Repo & InviteRe
     return localDateIn(db.gym.timezone, at)
   }
 
+  /**
+   * What `my_athlete_portal()` returns, built from the local store with the same allow-list:
+   * the staff's free text is nulled, other athletes are absent, and every exercise a block
+   * names is included whether or not it is still in the catalogue.
+   */
+  function portalOf(db: LocalDb, athleteId: Uuid): AthletePortal | null {
+    const athlete = live(db.athletes).find((a) => a.id === athleteId)
+    if (!athlete) return null
+    const sessions = athleteSessionsDesc(db, athleteId).map((s) => ({ ...s, notes: null }))
+    const sessionIds = new Set(sessions.map((s) => s.id))
+    const blocks = live(db.blocks)
+      .filter((b) => sessionIds.has(b.sessionId))
+      .map((b) => ({ ...b, note: null }))
+    const blockIds = new Set(blocks.map((b) => b.id))
+    const sets = live(db.sets)
+      .filter((x) => blockIds.has(x.blockId))
+      .map((x) => ({ ...x, note: null }))
+    const exerciseIds = new Set(blocks.map((b) => b.exerciseId))
+    const staffIds = new Set<Uuid>(
+      [athlete.coachMembershipId, ...sessions.flatMap((s) => [s.loggedBy, s.creditedTo])].filter(
+        (id): id is Uuid => Boolean(id),
+      ),
+    )
+    return {
+      gym: { id: db.gym.id, name: db.gym.name, timezone: db.gym.timezone, displayUnit: db.gym.displayUnit },
+      athlete: {
+        id: athlete.id,
+        gymId: athlete.gymId,
+        fullName: athlete.fullName,
+        coachMembershipId: athlete.coachMembershipId,
+        planPhase: athlete.planPhase,
+        planFocus: athlete.planFocus,
+      },
+      staff: db.memberships
+        .filter((m) => staffIds.has(m.id))
+        .map((m) => ({ id: m.id, displayName: m.displayName })),
+      sessions,
+      blocks,
+      sets,
+      exercises: db.exercises.filter((e) => exerciseIds.has(e.id)),
+    }
+  }
+
   // -------------------------------------------------------------------------
   // Reads
   // -------------------------------------------------------------------------
 
-  const repo: Repo & InviteRedeemer = {
+  // -------------------------------------------------------------------------
+  // Programmes and links — the server's rules, minus the network
+  // -------------------------------------------------------------------------
+
+  function isOwner(db: LocalDb): boolean {
+    return live(db.memberships).some((m) => m.id === acting && m.role === 'owner' && m.status === 'active')
+  }
+
+  function treeOf(db: LocalDb, gymId: Uuid): ProgramTree[] {
+    const days = live(db.programDays ?? [])
+    const items = live(db.programItems ?? [])
+    return live(db.programs ?? [])
+      .filter((p) => p.gymId === gymId)
+      .map((p) => ({
+        ...p,
+        days: days
+          .filter((d) => d.programId === p.id)
+          .sort(byPosition)
+          .map((d) => ({ ...d, items: items.filter((i) => i.dayId === d.id).sort(byPosition) })),
+      }))
+  }
+
+  /** Owner-only, as 013's RESTRICTIVE policies are. */
+  function ownerWrite(gymId: Uuid, fn: (db: LocalDb, at: Timestamp) => boolean | void): Promise<WriteState> {
+    return write(gymId, (db, at) => (isOwner(db) ? fn(db, at) : false))
+  }
+
+  function assignmentOf(db: LocalDb, athleteId: Uuid): AthleteProgram | null {
+    return live(db.athletePrograms ?? []).find((a) => a.athleteId === athleteId) ?? null
+  }
+
+  function assignIn(db: LocalDb, gymId: Uuid, athleteId: Uuid, programId: Uuid, sequence: number[], at: Timestamp): void {
+    const current = assignmentOf(db, athleteId)
+    if (current) current.deletedAt = at
+    db.athletePrograms = [
+      ...(db.athletePrograms ?? []),
+      { id: newId(), gymId, athleteId, programId, sequence, createdAt: at, deletedAt: null, createdBy: acting },
+    ]
+  }
+
+  const programs: ProgramStore = {
+    list: (gymId) => read((db) => treeOf(db, gymId)),
+    assignment: (_gymId, athleteId) => read((db) => assignmentOf(db, athleteId)),
+    lastStep: (_gymId, athleteId, assignmentId) =>
+      read((db) => {
+        const latest = athleteSessionsDesc(db, athleteId).find((s) => s.athleteProgramId === assignmentId)
+        return latest?.programStep ?? null
+      }),
+    createForAthlete: (gymId, athleteId, name, copyOf) =>
+      serialize(async () => {
+        const db = await load()
+        if (db.gym.id !== gymId || !isOwner(db)) throw new Error('only the owner writes programmes')
+        const at = now().toISOString()
+        const programId = newId()
+        db.programs = [
+          ...(db.programs ?? []),
+          { id: programId, gymId, name: name.trim().slice(0, 120), athleteId, notes: null, createdAt: at, updatedAt: at, deletedAt: null, createdBy: acting },
+        ]
+        const days = copyOf?.days.length ? copyOf.days : [{ position: 1, name: null, items: [] as ProgramItem[] }]
+        for (const day of days) {
+          const dayId = newId()
+          db.programDays = [
+            ...(db.programDays ?? []),
+            { id: dayId, gymId, programId, position: day.position, name: day.name, createdAt: at, deletedAt: null, createdBy: acting },
+          ]
+          db.programItems = [
+            ...(db.programItems ?? []),
+            ...day.items.map((item) => ({ ...item, id: newId(), gymId, dayId, createdAt: at, deletedAt: null, createdBy: acting })),
+          ]
+        }
+        if (!assignmentOf(db, athleteId)) assignIn(db, gymId, athleteId, programId, days.map((d) => d.position), at)
+        await save(db)
+        return programId
+      }),
+    rename: (gymId, programId, name) =>
+      ownerWrite(gymId, (db, at) => {
+        const program = live(db.programs ?? []).find((p) => p.id === programId)
+        if (!program) return false
+        program.name = name.trim()
+        touch(program, at)
+      }),
+    addDay: (gymId, program, name) =>
+      ownerWrite(gymId, (db, at) => {
+        const position = Math.max(0, ...program.days.map((d) => d.position)) + 1
+        db.programDays = [
+          ...(db.programDays ?? []),
+          { id: newId(), gymId, programId: program.id, position, name: name?.trim() || null, createdAt: at, deletedAt: null, createdBy: acting },
+        ]
+        const current = program.athleteId ? assignmentOf(db, program.athleteId) : null
+        const plain = Array.from({ length: position - 1 }, (_, i) => i + 1)
+        if (current && current.programId === program.id && current.sequence.join() === plain.join()) {
+          current.sequence = [...plain, position]
+        }
+      }),
+    addItem: (gymId, day, input) =>
+      ownerWrite(gymId, (db, at) => {
+        const position = Math.max(-1, ...day.items.map((i) => i.position)) + 1
+        db.programItems = [
+          ...(db.programItems ?? []),
+          {
+            id: newId(),
+            gymId,
+            dayId: day.id,
+            position,
+            exerciseId: input.exerciseId,
+            equipment: input.equipment ?? null,
+            muscleGroupId: input.muscleGroupId ?? null,
+            sets: input.sets,
+            reps: input.reps ?? null,
+            seconds: input.seconds ?? null,
+            loadKg: input.loadKg ?? null,
+            note: input.note ?? null,
+            createdAt: at,
+            deletedAt: null,
+            createdBy: acting,
+          },
+        ]
+      }),
+    updateItem: (gymId, itemId, patch) =>
+      ownerWrite(gymId, (db) => {
+        const item = live(db.programItems ?? []).find((i) => i.id === itemId)
+        if (!item) return false
+        Object.assign(item, Object.fromEntries(Object.entries(patch).filter(([, v]) => v !== undefined)))
+      }),
+    remove: (gymId, table, id) =>
+      ownerWrite(gymId, (db, at) => {
+        const rows = table === 'programs' ? db.programs : table === 'program_days' ? db.programDays : db.programItems
+        const row = (rows ?? []).find((r) => r.id === id)
+        if (!row) return false
+        row.deletedAt = at
+      }),
+    restore: (gymId, table, id) =>
+      ownerWrite(gymId, (db) => {
+        const rows = table === 'programs' ? db.programs : table === 'program_days' ? db.programDays : db.programItems
+        const row = (rows ?? []).find((r) => r.id === id)
+        if (!row) return false
+        row.deletedAt = null
+      }),
+    assign: (gymId, athleteId, programId, sequence) =>
+      ownerWrite(gymId, (db, at) => {
+        if (sequence.length === 0) return false
+        assignIn(db, gymId, athleteId, programId, sequence, at)
+      }),
+    unassign: (gymId, assignmentId) =>
+      ownerWrite(gymId, (db, at) => {
+        const row = live(db.athletePrograms ?? []).find((a) => a.id === assignmentId)
+        if (!row) return false
+        row.deletedAt = at
+      }),
+    itemsByIds: (_gymId, ids) => read((db) => (db.programItems ?? []).filter((i) => ids.includes(i.id))),
+  }
+
+  const shares: ShareStore = {
+    active: (gymId, athleteId) =>
+      read((db) =>
+        (db.shares ?? [])
+          .filter((s) => s.gymId === gymId && s.athleteId === athleteId && s.revokedAt === null)
+          .sort((a, b) => b.createdAt.localeCompare(a.createdAt))[0] ?? null,
+      ),
+    create: (gymId, athleteId, period) =>
+      serialize(async () => {
+        const db = await load()
+        if (db.gym.id !== gymId) return { state: 'failed' as const }
+        const token = newId()
+        db.shares = [
+          ...(db.shares ?? []),
+          {
+            token,
+            gymId,
+            athleteId,
+            createdAt: now().toISOString(),
+            revokedAt: null,
+            createdBy: acting,
+            periodDays: period?.periodDays ?? null,
+            fromDate: period?.fromDate ?? null,
+            toDate: period?.toDate ?? null,
+          },
+        ]
+        await save(db)
+        return { state: 'saved' as const, token }
+      }),
+    setPeriod: (gymId, token, period) =>
+      write(gymId, (db) => {
+        const share = (db.shares ?? []).find((s) => s.token === token)
+        if (!share) return false
+        Object.assign(share, period)
+      }),
+    revoke: (gymId, token) =>
+      write(gymId, (db, at) => {
+        const share = (db.shares ?? []).find((s) => s.token === token && s.revokedAt === null)
+        if (!share) return false
+        share.revokedAt = at
+      }),
+    fetch: (token) =>
+      read((db): SharedProgress | null => {
+        const share = (db.shares ?? []).find((s) => s.token === token && s.revokedAt === null)
+        const athlete = share ? live(db.athletes).find((a) => a.id === share.athleteId) : undefined
+        if (!share || !athlete) return null
+        const today = localDateNow(db)
+        const from = share.fromDate ?? shiftLocalDate(today, -(share.periodDays ?? 400))
+        const to = share.toDate ?? today
+        const sessions = athleteSessionsDesc(db, athlete.id).filter((s) => s.localDate >= from && s.localDate <= to)
+        const ids = new Set(sessions.map((s) => s.id))
+        const blocks = live(db.blocks).filter((b) => ids.has(b.sessionId))
+        const blockIds = new Set(blocks.map((b) => b.id))
+        const exerciseIds = new Set(blocks.map((b) => b.exerciseId))
+        return {
+          athleteName: athlete.fullName,
+          gymName: db.gym.name,
+          period: { periodDays: share.periodDays ?? null, fromDate: from, toDate: to },
+          sessions,
+          blocks,
+          sets: live(db.sets).filter((x) => blockIds.has(x.blockId) && x.doneAt !== null),
+          exercises: db.exercises.filter((e) => exerciseIds.has(e.id)),
+          exerciseMuscles: live(db.exerciseMuscles)
+            .filter((m) => exerciseIds.has(m.exerciseId))
+            .map((m) => ({ exerciseId: m.exerciseId, muscleGroupId: m.muscleGroupId, role: m.role })),
+          muscleGroups: live(db.muscleGroups).map((g) => ({ id: g.id, nameEl: g.nameEl, nameEn: g.nameEn })),
+          members: db.memberships.map((m) => ({ id: m.id, displayName: m.displayName })),
+        }
+      }),
+  }
+
+  const repo: Repo & InviteRedeemer & AthleteSide & { programs: ProgramStore; shares: ShareStore } = {
     kind: 'local',
+    programs,
+    shares,
 
     getGym: (gymId) => read((db) => gymOf(db, gymId)),
 
@@ -428,6 +735,10 @@ export function createLocalRepo(options: LocalRepoOptions = {}): Repo & InviteRe
             exerciseId: b.exerciseId,
             position: b.position,
             deletedAt: b.deletedAt,
+          equipment: b.equipment,
+          supersetId: b.supersetId ?? null,
+          muscleGroupId: b.muscleGroupId ?? null,
+          note: b.note,
           })),
           sets: live(db.sets).filter((s) => blockIds.has(s.blockId)),
           exercises: live(db.exercises),
@@ -454,7 +765,7 @@ export function createLocalRepo(options: LocalRepoOptions = {}): Repo & InviteRe
         live(db.exercises)
           // The shared catalogue (`gymId === null`) plus this gym's own additions.
           .filter((e) => (e.gymId === null || e.gymId === gymId) && e.mergedIntoId === null)
-          .sort((a, b) => (a.nameEl ?? a.nameEn ?? '').localeCompare(b.nameEl ?? b.nameEn ?? '', 'el')),
+          .sort((a, b) => (a.nameEn ?? a.nameEl ?? '').localeCompare(b.nameEn ?? b.nameEl ?? '', 'en')),
       ),
 
     listMuscleGroups: (gymId) =>
@@ -584,6 +895,9 @@ export function createLocalRepo(options: LocalRepoOptions = {}): Repo & InviteRe
           position,
           note: extras?.note ?? null,
           equipment: extras?.equipment ?? null,
+          supersetId: extras?.supersetId ?? null,
+          muscleGroupId: extras?.muscleGroupId ?? null,
+          programItemId: extras?.programItemId ?? null,
           createdAt: at,
           updatedAt: at,
           deletedAt: null,
@@ -599,6 +913,19 @@ export function createLocalRepo(options: LocalRepoOptions = {}): Repo & InviteRe
         if (equipment !== undefined) block.equipment = equipment
         touch(block, at)
       }),
+
+    updateBlock: (gymId, blockId, patch) =>
+      write(gymId, (db, at) => {
+        const block = live(db.blocks).find((b) => b.id === blockId)
+        if (!block) return false
+        if (patch.equipment !== undefined) block.equipment = patch.equipment
+        if (patch.muscleGroupId !== undefined) block.muscleGroupId = patch.muscleGroupId
+        if (patch.supersetId !== undefined) block.supersetId = patch.supersetId
+        touch(block, at)
+      }),
+
+    // The demo's store is shaped by this build, so it always holds what 012–014 add.
+    capabilities: async () => ALL_CAPS,
 
     deleteBlock: (gymId, blockId) =>
       write(gymId, (db, at) => {
@@ -700,8 +1027,9 @@ export function createLocalRepo(options: LocalRepoOptions = {}): Repo & InviteRe
 
     createExercise: (gymId, input: NewExerciseInput) =>
       write(gymId, (db, at) => {
-        const nameEl = input.nameEl.trim()
-        if (nameEl === '') return false
+        const nameEl = input.nameEl?.trim() || null
+        const nameEn = input.nameEn?.trim() || null
+        if (!nameEl && !nameEn) return false
         // The server's `exercises_gym_el_uniq` / `_en_uniq`: one name per gym among LIVE
         // rows, archived and merged ones included. Refused here for the same reason the
         // Supabase repository refuses it before queueing — an exercise that only fails once
@@ -709,7 +1037,7 @@ export function createLocalRepo(options: LocalRepoOptions = {}): Repo & InviteRe
         const taken = live(db.exercises).some(
           (e) =>
             e.gymId === gymId &&
-            (sameName(e.nameEl, nameEl) || sameName(e.nameEn, input.nameEn)),
+            (sameName(e.nameEl, nameEl) || sameName(e.nameEn, nameEn)),
         )
         if (taken) return false
         db.exercises.push({
@@ -717,7 +1045,7 @@ export function createLocalRepo(options: LocalRepoOptions = {}): Repo & InviteRe
           // Non-null: this is the gym's own addition, not an edit to the shared catalogue.
           gymId,
           nameEl,
-          nameEn: input.nameEn ?? null,
+          nameEn,
           category: input.category,
           equipment: input.equipment,
           // What the server stores for the same input: the form never asks for a constraint.
@@ -1064,6 +1392,105 @@ export function createLocalRepo(options: LocalRepoOptions = {}): Repo & InviteRe
         const invite = db.invites.find((i) => i.id === inviteId)
         if (!invite) return false
         invite.revokedAt = at
+      }),
+
+    // ---- athlete accounts — the same rules as 015, so the demo teaches the real flow ----
+
+    createAthleteInvite: (gymId, athleteId, email) =>
+      serialize(async (): Promise<{ state: WriteState; secret?: string }> => {
+        const db = await load()
+        if (db.gym.id !== gymId) return { state: 'failed' }
+        const self = live(db.memberships).find((m) => m.id === acting)
+        if (!self || self.role !== 'owner') return { state: 'failed' }
+        if (!live(db.athletes).some((a) => a.id === athleteId)) return { state: 'failed' }
+        const at = now().toISOString()
+        const tokens = { ...(db.athleteInviteTokens ?? {}) }
+        // One live link per athlete: a new one is how a link sent to the wrong chat is fixed.
+        for (const pending of Object.values(tokens)) {
+          if (pending.athleteId === athleteId && pending.acceptedAt === null) pending.revokedAt ??= at
+        }
+        const secret = newId().replace(/-/g, '')
+        tokens[digest(secret)] = {
+          athleteId,
+          email: email?.trim().toLowerCase() || null,
+          expiresAt: new Date(now().getTime() + 14 * 24 * 60 * 60_000).toISOString(),
+          revokedAt: null,
+          acceptedAt: null,
+        }
+        db.athleteInviteTokens = tokens
+        await save(db)
+        return { state: 'saved', secret }
+      }),
+
+    getExercisesByIds: (gymId, ids) =>
+      read((db) => (gymOf(db, gymId) ? db.exercises.filter((e) => ids.includes(e.id)) : [])),
+
+    getAthleteAccess: (gymId, athleteId) =>
+      read((db) => {
+        const link = gymOf(db, gymId) ? db.athleteLinks?.[athleteId] : undefined
+        const pending = Object.values(db.athleteInviteTokens ?? {})
+          .filter(
+            (t) =>
+              t.athleteId === athleteId &&
+              t.revokedAt === null &&
+              t.acceptedAt === null &&
+              Date.parse(t.expiresAt) > now().getTime(),
+          )
+          .map((t) => t.expiresAt)
+          .sort()
+        return {
+          linked: Boolean(link),
+          linkedAt: link?.linkedAt ?? null,
+          email: link?.email ?? null,
+          pendingExpires: pending[pending.length - 1] ?? null,
+        }
+      }),
+
+    revokeAthleteAccess: (gymId, athleteId) =>
+      write(gymId, (db, at) => {
+        const self = live(db.memberships).find((m) => m.id === acting)
+        if (!self || self.role !== 'owner') return false
+        const links = { ...(db.athleteLinks ?? {}) }
+        delete links[athleteId]
+        db.athleteLinks = links
+        for (const pending of Object.values(db.athleteInviteTokens ?? {})) {
+          if (pending.athleteId === athleteId && pending.acceptedAt === null) pending.revokedAt ??= at
+        }
+      }),
+
+    getMyAthlete: () =>
+      read((db): AthleteIdentity | null => {
+        const athlete = live(db.athletes).find((a) => a.id === (db.portalAthleteId ?? DEFAULT_PORTAL_ATHLETE))
+        return athlete
+          ? { gymId: db.gym.id, gymName: db.gym.name, athleteId: athlete.id, fullName: athlete.fullName }
+          : null
+      }),
+
+    getAthletePortal: () =>
+      read((db): AthletePortal | null => portalOf(db, db.portalAthleteId ?? DEFAULT_PORTAL_ATHLETE)),
+
+    redeemAthleteInvite: (secret) =>
+      serialize(async (): Promise<AthleteRedeemOutcome> => {
+        const db = await load()
+        const pending = db.athleteInviteTokens?.[digest(secret.trim())]
+        if (
+          !pending ||
+          pending.revokedAt !== null ||
+          pending.acceptedAt !== null ||
+          Date.parse(pending.expiresAt) <= now().getTime() ||
+          !live(db.athletes).some((a) => a.id === pending.athleteId)
+        ) {
+          return { ok: false }
+        }
+        const at = now().toISOString()
+        pending.acceptedAt = at
+        db.athleteLinks = {
+          ...(db.athleteLinks ?? {}),
+          [pending.athleteId]: { linkedAt: at, email: pending.email ?? 'demo@athlete.local' },
+        }
+        db.portalAthleteId = pending.athleteId
+        await save(db)
+        return { ok: true, gymId: db.gym.id, athleteId: pending.athleteId }
       }),
 
     updateMember: (gymId, membershipId, patch) =>

@@ -87,7 +87,7 @@ test.describe('recording one set', () => {
     await tap('Προσθήκη άσκησης', page.getByRole('button', { name: /Προσθήκη άσκησης/ }).first())
     await tap(
       'the exercise',
-      page.locator('[role="dialog"] button').filter({ hasText: /Πιέσεις Στήθους/ }).first(),
+      page.locator('[role="dialog"] button').filter({ hasText: /Bench Press/ }).first(),
     )
     await tap('Προσθήκη σετ', page.getByRole('button', { name: /^Προσθήκη σετ$/ }).first())
 
@@ -153,7 +153,7 @@ test.describe('recording one set', () => {
     await page.waitForTimeout(900)
     await page.getByRole('button', { name: /Προσθήκη άσκησης/ }).first().click()
     await page.waitForTimeout(600)
-    await page.locator('[role="dialog"] button').filter({ hasText: /Πιέσεις Στήθους/ }).first().click()
+    await page.locator('[role="dialog"] button').filter({ hasText: /Bench Press/ }).first().click()
     await page.waitForTimeout(600)
     await page.getByRole('button', { name: /^Προσθήκη σετ$/ }).first().click()
     await page.waitForTimeout(600)

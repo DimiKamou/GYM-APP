@@ -12,16 +12,36 @@ feature is.
 
 - **Supabase is the source of truth from commit one.** A persisted read cache plus a write outbox, not a
   replication engine. A full local-first sync layer was considered and rejected as the largest schedule risk.
-- **Email OTP, not Google OAuth.** An OAuth redirect from a standalone home-screen app returns to Safari and
-  leaves the installed app signed out. OTP also doubles as the lockout recovery path.
-- **Two roles**, `owner` and `trainer`. The four-role matrix was cut. Adding `manager` is one migration.
+- **Sign-in: password for trainers, Google / Microsoft / email sign-up for athletes, email code as
+  recovery.** Trainers keep the username + password the Streamlit pilot gave them (`src/auth/username.ts`
+  makes Streamlit's mapping). OAuth is PKCE to `/auth/callback` and is **hidden in an iOS home-screen
+  app**, where the redirect finishes in Safari and leaves the installed app signed out — the original
+  reason there was no OAuth. The store apps (Capacitor) open the provider in the system browser sheet and
+  come back on `gr.powerhouse.app://auth/callback` (`src/native/`); there Apple is offered too (App Review 4.8).
+- **Two staff roles**, `owner` and `trainer`. The four-role matrix was cut. Adding `manager` is one migration.
+- **An athlete account is not a membership** (015). `app.my_gym()` is null for it, so all 44 policies refuse
+  it; it reads only through `my_athlete()` / `my_athlete_portal()`, which build every object column by
+  column. Never give athletes access by adding a role to `memberships` or a permissive policy to a table —
+  either opens every athlete's sheet and every staff note in the gym.
 - **Assignment is a filter, never a fence.** Any active member may log for any athlete in the gym. Fencing by
   assignment stops work when a coach covers a sick colleague, and the workaround is a shared login.
 - **Greek is the default locale.** English is the fallback.
-- **Daylight is the default theme, Slate is its dark pair.** Both are pure token files.
+- **PowerHouse Night (dark) is the default theme, Day its light pair.** Pure token files; the ids stay
+  `slate` / `daylight` because stored preferences say so. 60-30-10: black 60, orange 30 (`--th-brand*`:
+  tabs, selections, avatars, charts), purple 10 (`--th-accent*`: the primary action only). A second purple
+  thing on one screen is a bug.
+- **Screens with more than one subject are tabs** (`Tabs` + `useTabParam` in `src/ui/`), `?tab=` replaced,
+  never pushed. The athlete's briefing card stays above the tabs: the five-second read is never a tab away.
 - **Soft delete everywhere, undo instead of confirm.** No DELETE policy exists in the schema. Confirm dialogs
   survive only for removing an athlete or a trainer.
-- **No service worker until M5.** See README.
+- **The service worker ships** on the web. A new build waits for a tap on the update banner, and
+  the button waits while the outbox holds writes. `sw.js` must stay `no-cache` in `firebase.json`.
+- **The store apps are Capacitor** (`android/`, `ios/`, `STORES.md`), the build served from the phone.
+  No service worker there; Capgo live updates reach the same banner under the same rule. Native edits
+  in `android/` and `ios/` are hand-made — never regenerate those folders without carrying them over.
+- **The brand is PowerHouse, for now.** It is `brand.name` in `src/i18n/`, the manifest, `index.html`
+  and the icons. The badge is `public/brand/logo.svg`, redrawn from the gym's own; every icon, splash and
+  store graphic is rendered from it, so no phone depends on the font its lettering is set in. Storage keys stay `trainhub.*` — renaming one signs everyone out and orphans the outbox.
 
 ## Traps
 
@@ -44,6 +64,16 @@ the whole app.
 
 **Wrap every `localStorage` / IndexedDB access in try/catch.** In private mode and locked-down browsers the
 accessor itself throws, not just the read.
+
+**Links the app hands out are built from `publicOrigin()`, never `window.location.origin`.** In the
+store apps the origin is the phone (`https://localhost`); an invite built from it opens nothing.
+
+**The staff's free text never reaches an athlete.** `notes`, `sessions.notes`, `blocks.note` and
+`sets.note` are written for the next coach. `my_athlete_portal()` leaves them out by name, and the local
+repository's `portalOf()` nulls them. A new free-text column is staff-only until someone decides otherwise.
+
+**`.well-known/` must deploy.** Firebase's default `**/.*` ignore rule drops it, and without
+`assetlinks.json` the Play Store app shows a browser URL bar. It is removed from `firebase.json`; keep it out.
 
 **Notes are append-only.** There is no UPDATE policy on `notes.body`. That is what keeps them safe under
 last-write-wins — otherwise a trainer holding a stale athlete row republishes old notes over a colleague's.

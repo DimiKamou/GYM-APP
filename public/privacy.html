@@ -1,0 +1,113 @@
+<!doctype html>
+<!--
+  DRAFT. Every [bracketed] value must be filled in before this is published, and the whole text
+  read by whoever answers for the gym's data (an accountant or a lawyer who does GDPR) — it is a
+  starting point written from what the app actually stores, not legal advice.
+  Google Play links to this page from the store listing; it has to load without JavaScript and
+  without signing in, which is why it is a static file and not a route of the app.
+-->
+<html lang="el">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>PowerHouse — Πολιτική απορρήτου</title>
+    <meta name="robots" content="index, follow" />
+    <style>
+      :root { --bg: #F4F0E7; --ink: #25231D; --muted: #847F70; --line: #E9E3D5; --accent: #5E7355; }
+      @media (prefers-color-scheme: dark) {
+        :root { --bg: #161922; --ink: #E6E9EF; --muted: #888E9D; --line: #292E3A; --accent: #84A0D6; }
+      }
+      body { margin: 0; background: var(--bg); color: var(--ink); font: 16px/1.6 system-ui, -apple-system, 'Segoe UI', sans-serif; }
+      main { max-width: 680px; margin: 0 auto; padding: 32px 16px 64px; }
+      h1 { font-size: 28px; line-height: 1.2; margin: 0 0 4px; }
+      h2 { font-size: 19px; margin: 32px 0 8px; }
+      p, li { color: var(--ink); }
+      .muted { color: var(--muted); font-size: 14px; }
+      hr { border: 0; border-top: 1px solid var(--line); margin: 48px 0; }
+      a { color: var(--accent); }
+    </style>
+  </head>
+  <body>
+    <main>
+      <h1>Πολιτική απορρήτου</h1>
+      <p class="muted">Εφαρμογή PowerHouse · Τελευταία ενημέρωση: [ΗΜΕΡΟΜΗΝΙΑ]</p>
+
+      <h2>Ποιος είναι υπεύθυνος</h2>
+      <p>
+        Υπεύθυνος επεξεργασίας είναι το γυμναστήριο <strong>[ΕΠΩΝΥΜΙΑ]</strong>, [ΔΙΕΥΘΥΝΣΗ], ΑΦΜ [ΑΦΜ].
+        Επικοινωνία για ό,τι αφορά τα δεδομένα σου: <a href="mailto:[EMAIL]">[EMAIL]</a>.
+      </p>
+
+      <h2>Τι δεδομένα κρατάμε</h2>
+      <ul>
+        <li><strong>Για τους αθλητές:</strong> ονοματεπώνυμο, στοιχεία επικοινωνίας και ημερομηνία γέννησης όπου τα έχει καταχωρίσει το γυμναστήριο, το πρόγραμμά σου, και κάθε προπόνηση: ασκήσεις, σετ, κιλά, επαναλήψεις, χρόνοι, αποστάσεις. Οι προπονητές μπορεί να καταγράφουν και σημειώσεις για την προπόνησή σου, όπως έναν τραυματισμό που πρέπει να προσέξουν.</li>
+        <li><strong>Για το προσωπικό:</strong> όνομα, όνομα χρήστη ή email, ρόλος, και ποιος κατέγραψε κάθε προπόνηση.</li>
+        <li><strong>Για τον λογαριασμό:</strong> το email με το οποίο συνδέεσαι και, αν μπαίνεις με Google ή Microsoft, ότι συνδέθηκες με αυτόν τον τρόπο. Δεν παίρνουμε τον κωδικό σου από αυτούς.</li>
+      </ul>
+      <p>Δεν υπάρχουν διαφημίσεις, δεν υπάρχουν εργαλεία παρακολούθησης ή στατιστικών, και τα δεδομένα δεν πωλούνται ούτε δίνονται σε κανέναν για δικό του σκοπό.</p>
+
+      <h2>Γιατί</h2>
+      <p>
+        Για να μπορεί κάθε προπονητής του γυμναστηρίου να συνεχίσει την προπόνησή σου από εκεί που την άφησε ο προηγούμενος,
+        και για να βλέπεις εσύ το πρόγραμμα και την πρόοδό σου. Νομική βάση: η σύμβαση με το γυμναστήριο για την προπόνησή σου,
+        και για ό,τι αφορά την υγεία σου (π.χ. ένας τραυματισμός) η ρητή συγκατάθεσή σου. [ΝΑ ΕΛΕΓΧΘΕΙ]
+      </p>
+
+      <h2>Πού αποθηκεύονται</h2>
+      <ul>
+        <li>Η βάση δεδομένων φιλοξενείται από τη Supabase σε κέντρο δεδομένων της Ευρωπαϊκής Ένωσης (Φρανκφούρτη).</li>
+        <li>Τα αρχεία της εφαρμογής (όχι τα δεδομένα σου) σερβίρονται από το Firebase Hosting της Google.</li>
+        <li>Αν επιλέξεις σύνδεση με Google ή Microsoft, ισχύουν και οι δικοί τους όροι για τη σύνδεση.</li>
+      </ul>
+
+      <h2>Πόσο καιρό</h2>
+      <p>
+        Όσο είσαι μέλος του γυμναστηρίου, και [ΧΡΟΝΙΚΟ ΔΙΑΣΤΗΜΑ] μετά. Αν διαγράψεις τον λογαριασμό σου, η σύνδεσή σου
+        διαγράφεται αμέσως. Το ιστορικό των προπονήσεων είναι αρχείο του γυμναστηρίου και διαγράφεται όταν το ζητήσεις από το γυμναστήριο.
+      </p>
+
+      <h2>Τα δικαιώματά σου</h2>
+      <p>
+        Μπορείς να ζητήσεις πρόσβαση, διόρθωση, διαγραφή, περιορισμό ή φορητότητα των δεδομένων σου, ή να αντιταχθείς στην επεξεργασία τους,
+        στο <a href="mailto:[EMAIL]">[EMAIL]</a>. Απαντάμε μέσα σε έναν μήνα. Έχεις επίσης δικαίωμα καταγγελίας στην
+        <a href="https://www.dpa.gr">Αρχή Προστασίας Δεδομένων Προσωπικού Χαρακτήρα</a>.
+      </p>
+
+      <h2>Διαγραφή λογαριασμού</h2>
+      <p>Μέσα στην εφαρμογή: Λογαριασμός → Διαγραφή λογαριασμού. Ή ακολούθησε τα βήματα στη σελίδα <a href="/delete-account">διαγραφής λογαριασμού</a>.</p>
+
+      <h2>Ασφάλεια</h2>
+      <p>Η επικοινωνία με την εφαρμογή είναι κρυπτογραφημένη (HTTPS). Κάθε γυμναστήριο βλέπει μόνο τα δικά του δεδομένα, και κάθε αθλητής μόνο τα δικά του.</p>
+
+      <hr />
+
+      <h1 lang="en">Privacy policy</h1>
+      <div lang="en">
+        <p class="muted">PowerHouse app · Last updated: [DATE]</p>
+        <h2>Who is responsible</h2>
+        <p>The controller is the gym <strong>[LEGAL NAME]</strong>, [ADDRESS], VAT [VAT NUMBER]. Contact for anything about your data: <a href="mailto:[EMAIL]">[EMAIL]</a>.</p>
+        <h2>What we keep</h2>
+        <ul>
+          <li><strong>Athletes:</strong> name; contact details and date of birth where the gym recorded them; your programme; every session — exercises, sets, loads, repetitions, times, distances. Coaches may also record notes about your training, such as an injury to be careful with.</li>
+          <li><strong>Staff:</strong> name, username or email, role, and who logged each session.</li>
+          <li><strong>Your account:</strong> the email you sign in with and, if you use Google or Microsoft, that you signed in that way. We never receive your password from them.</li>
+        </ul>
+        <p>No advertising, no tracking or analytics tools, and the data is not sold or given to anyone for their own purposes.</p>
+        <h2>Why</h2>
+        <p>So that every coach at the gym can continue your training where the last one left it, and so you can see your programme and progress. Legal basis: your contract with the gym and, for anything about your health (an injury, for instance), your explicit consent. [TO BE REVIEWED]</p>
+        <h2>Where it is stored</h2>
+        <ul>
+          <li>The database is hosted by Supabase in a European Union data centre (Frankfurt).</li>
+          <li>The app's files (not your data) are served by Google's Firebase Hosting.</li>
+          <li>If you sign in with Google or Microsoft, their terms also apply to that sign-in.</li>
+        </ul>
+        <h2>For how long</h2>
+        <p>For as long as you are a member of the gym, and [PERIOD] after. Deleting your account removes your sign-in immediately; your training history is the gym's record and is deleted when you ask the gym.</p>
+        <h2>Your rights</h2>
+        <p>You can request access, correction, deletion, restriction or portability of your data, or object to its processing, at <a href="mailto:[EMAIL]">[EMAIL]</a>. We answer within one month. You can also complain to the Hellenic Data Protection Authority (<a href="https://www.dpa.gr">dpa.gr</a>).</p>
+        <h2>Deleting your account</h2>
+        <p>In the app: Account → Delete account. Or follow the steps on the <a href="/delete-account">account deletion page</a>.</p>
+      </div>
+    </main>
+  </body>
+</html>

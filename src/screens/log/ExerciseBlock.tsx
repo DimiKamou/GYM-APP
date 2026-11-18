@@ -4,8 +4,9 @@ import { useTranslation } from 'react-i18next'
 import { useLastPerformance } from '@/data/hooks'
 import { blockEquipment } from '@/domain/analytics'
 import { formatLastPerformance, type Locale } from '@/domain/format'
-import type { Block, Exercise, SetKind, Uuid, WorkoutSet } from '@/domain/types'
-import { Button, Card, CategoryPill, Icon } from '@/ui'
+import { setsSummary } from '@/domain/recap'
+import type { Block, Equipment, Exercise, SetKind, Uuid, WorkoutSet } from '@/domain/types'
+import { Button, Card, CategoryPill, Chip, Icon, Segmented } from '@/ui'
 import { exerciseName } from '@/screens/log/ExercisePicker'
 import { SetRow, type SetField } from '@/screens/log/SetRow'
 
@@ -36,6 +37,21 @@ export interface ExerciseBlockProps {
   onEditSet: (set: WorkoutSet, field: SetField) => void
   onDeleteSet: (set: WorkoutSet) => void
   onRemove: () => void
+  /** The groups this exercise trains, primary first; chips appear when there is a choice (012). */
+  groups?: ReadonlyArray<{ id: Uuid; name: string }>
+  onSetGroup?: (groupId: Uuid | null) => void
+  onSetTool?: (equipment: Equipment) => void
+  /** The whole day's sets the last time, «60×12, 65×10, 70×8», on this exercise and tool. */
+  lastDay?: string | null
+  /** What the programme prescribes for this block (013): «3×12 · 60 kg». */
+  target?: string | null
+  /** «Από Πέμ 27 Αυγ: 60×12, 65×10» — the old day this block was loaded from. */
+  fromOld?: string | null
+  /** For an empty block: what its first set measures. */
+  measure?: 'reps' | 'time'
+  onMeasure?: (measure: 'reps' | 'time') => void
+  folded?: boolean
+  onToggleFold?: () => void
 }
 
 const head: CSSProperties = { display: 'flex', alignItems: 'center', gap: 8 }
@@ -102,6 +118,16 @@ export function ExerciseBlock({
   onEditSet,
   onDeleteSet,
   onRemove,
+  groups = [],
+  onSetGroup,
+  onSetTool,
+  lastDay,
+  target,
+  fromOld,
+  measure,
+  onMeasure,
+  folded = false,
+  onToggleFold,
 }: ExerciseBlockProps) {
   const { t } = useTranslation()
   // Excluding this session is what stops "last time" from showing the set the coach just
@@ -114,6 +140,25 @@ export function ExerciseBlock({
   // history lookup runs on the fallback — and a barbell 80×8 printed with no implement beside
   // it is exactly the bare number a coach loads the wrong bar from.
   const implement = blockEquipment(block, exercise)
+  // A choice of tools is asked, never guessed: nothing is preselected for «Bench Press», and
+  // 40 kg of dumbbells must never read as 40 kg on the bar (CLAUDE.md).
+  const tools = exercise?.equipmentOptions && exercise.equipmentOptions.length >= 2 ? exercise.equipmentOptions : []
+  const groupChoice = groups.length >= 2 && onSetGroup
+  const chosenGroup = block.muscleGroupId ?? groups[0]?.id ?? null
+
+  if (folded) {
+    return (
+      <Card onClick={onToggleFold} ariaLabel={`${name} — ${t('log.unfold')}`}>
+        <span style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+          <Icon name="check" size={18} />
+          <strong style={{ flex: '1 1 auto' }}>{name}</strong>
+          <span className="num" style={{ color: 'var(--th-muted)', fontSize: 'var(--th-text-sm)' }}>
+            {setsSummary(block.sets, locale)}
+          </span>
+        </span>
+      </Card>
+    )
+  }
 
   return (
     <Card>
@@ -160,6 +205,56 @@ export function ExerciseBlock({
         )}
       </p>
 
+      {lastDay ? (
+        <p className="num" style={{ ...lastLine, color: 'var(--th-ink)', fontWeight: 700 }}>
+          {lastDay}
+        </p>
+      ) : null}
+
+      {target ? (
+        <p className="num" style={{ ...lastLine, color: 'var(--th-brand)', fontWeight: 600 }}>
+          {t('log.target')}: {target}
+        </p>
+      ) : null}
+
+      {fromOld ? <p className="num" style={lastLine}>{fromOld}</p> : null}
+
+      {tools.length > 0 && onSetTool ? (
+        <div role="group" aria-label={t('log.tool')} style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
+          {tools.map((tool) => (
+            <Chip key={tool} selected={block.equipment === tool} onClick={() => onSetTool(tool)}>
+              {t(`equipmentTypes.${tool}`)}
+            </Chip>
+          ))}
+        </div>
+      ) : null}
+
+      {groupChoice ? (
+        <div role="group" aria-label={t('log.forGroup')} style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
+          {groups.map((group, i) => (
+            <Chip
+              key={group.id}
+              selected={chosenGroup === group.id}
+              onClick={() => onSetGroup?.(i === 0 ? null : group.id)}
+            >
+              {group.name}
+            </Chip>
+          ))}
+        </div>
+      ) : null}
+
+      {!hasSets && onMeasure ? (
+        <Segmented
+          label={t('log.measure')}
+          value={measure ?? 'reps'}
+          options={[
+            { value: 'reps', label: t('log.measureReps') },
+            { value: 'time', label: t('log.measureTime') },
+          ]}
+          onChange={onMeasure}
+        />
+      ) : null}
+
       {/* Written by whoever logged the workout, about this workout — the pilot client lets a
           coach write it; here it is read, because a covering coach must not miss "πονάει ο
           ώμος, πήγαμε ελαφρύ" just because they hold a different phone. */}
@@ -195,6 +290,13 @@ export function ExerciseBlock({
           {t('log.sameAsPrevious')}
         </Button>
       </div>
+
+      {/* Folds the card to one line; moving on to the next exercise folds it by itself. */}
+      {hasSets && onToggleFold ? (
+        <Button variant="ghost" icon="check" onClick={onToggleFold}>
+          {t('log.doneExercise')}
+        </Button>
+      ) : null}
     </Card>
   )
 }

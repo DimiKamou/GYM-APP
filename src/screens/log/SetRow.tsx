@@ -35,7 +35,8 @@ export const PRIMARY_FIELD: Record<SetKind, SetField> = {
 export const FIELD_SEQUENCE: Record<SetKind, readonly SetField[]> = {
   weight_reps: ['load', 'reps'],
   bodyweight: ['reps'],
-  duration: ['seconds'],
+  // The time first, then the kilos the athlete held — optional, so the pad offers "none".
+  duration: ['seconds', 'load'],
   distance: ['meters'],
 }
 
@@ -77,6 +78,11 @@ function segments(set: WorkoutSet, locale: Locale): Segment[] {
       { text: '×' },
       { text: String(set.reps), field: 'reps' },
     ]
+  }
+  if (set.kind === 'duration' && hasLoad && (set.loadKg ?? 0) > 0 && set.seconds !== null) {
+    const full = formatSet(set, set.kind, locale)
+    const [kilos, time] = full.split(' × ')
+    return [{ text: kilos, field: 'load' }, { text: ' × ' }, { text: time, field: 'seconds' }]
   }
   return [{ text: formatSet(set, set.kind, locale), field: PRIMARY_FIELD[set.kind] }]
 }
@@ -176,6 +182,18 @@ export function SetRow({ set, index, exerciseName, locale, onEdit, onDelete }: S
             {t('log.rpe')} {set.rpe}
           </span>
         ) : null}
+
+        {/* Beside the set as well as behind the swipe: the owner asked for a cross on the row,
+            and a swipe is a gesture nobody finds by looking. Undo, not confirm, either way. */}
+        <button
+          type="button"
+          className="th-tap"
+          onClick={onDelete}
+          aria-label={`${t('common.delete')} — ${label}`}
+          style={{ ...valueButton, marginLeft: set.rpe !== null ? 0 : 'auto', fontSize: 'var(--th-text-md)', color: 'var(--th-muted)' }}
+        >
+          ✕
+        </button>
       </div>
     </SwipeRow>
   )

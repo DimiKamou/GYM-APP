@@ -58,17 +58,16 @@ import { MuscleChip, muscleGroupName } from '@/ui/MuscleChip'
  */
 
 /**
- * The name to show. Greek first because the UI is Greek; the other name is the fallback so a
- * catalogue row with only one of the two never renders as an empty button.
+ * The name to show: the English one, in either language, as on the Streamlit pilot — the gym's
+ * catalogue is written in English (`name_en`, one namespace for uniqueness) and the coaches say
+ * «Bench Press» on the floor. The Greek name is only the fallback for an old row without one.
  *
  * Exported here rather than in a shared module because the picker is the screen that owns
  * "what is this exercise called" — the block header renders the same string.
  */
-export function exerciseName(exercise: Exercise | undefined, locale: Locale): string {
+export function exerciseName(exercise: Exercise | undefined, _locale?: Locale): string {
   if (!exercise) return ''
-  const primary = locale === 'en' ? exercise.nameEn : exercise.nameEl
-  const secondary = locale === 'en' ? exercise.nameEl : exercise.nameEn
-  return primary ?? secondary ?? ''
+  return exercise.nameEn?.trim() || exercise.nameEl?.trim() || ''
 }
 
 const CATEGORIES: readonly ExerciseCategory[] = ['upper', 'lower', 'core', 'cardio', 'mobility']
@@ -272,7 +271,11 @@ export interface ExercisePickerProps {
   athleteId: Uuid | undefined
   locale: Locale
   /** The chosen exercise. The caller decides whether that adds a block or re-points one. */
-  onSelect: (exerciseId: Uuid) => void
+  /**
+   * `muscleGroupId` is the group the exercise was picked under — a section heading or the
+   * filter chip — so a Bench Press chosen under Τρικέφαλοι counts there (012). Null: its primary.
+   */
+  onSelect: (exerciseId: Uuid, muscleGroupId: Uuid | null) => void
 }
 
 const list: CSSProperties = { display: 'flex', flexDirection: 'column', gap: 6 }
@@ -361,7 +364,6 @@ const filingPanel: CSSProperties = {
 export function ExercisePicker({ open, onClose, athleteId, locale, onSelect }: ExercisePickerProps) {
   const { t } = useTranslation()
   const [query, setQuery] = useState('')
-  const [nameEn, setNameEn] = useState('')
   /** Null means "the coach has not overridden it", so the chosen group's region can lead. */
   const [categoryOverride, setCategoryOverride] = useState<ExerciseCategory | null>(null)
   const [setKind, setSetKind] = useState<SetKind>('weight_reps')
@@ -430,14 +432,17 @@ export function ExercisePicker({ open, onClose, athleteId, locale, onSelect }: E
   )
   const category = categoryOverride ?? leadGroup?.region ?? 'upper'
 
-  function choose(exerciseId: Uuid) {
+  function choose(exerciseId: Uuid, underGroup: Uuid | null = null) {
+    const filter =
+      activeGroupId && index.byExercise.get(exerciseId)?.some((entry) => entry.group.id === activeGroupId)
+        ? activeGroupId
+        : null
     reset()
-    onSelect(exerciseId)
+    onSelect(exerciseId, underGroup ?? filter)
   }
 
   function reset() {
     setQuery('')
-    setNameEn('')
     setCategoryOverride(null)
     setActiveGroupId(null)
     setCreateLinks(null)
@@ -457,8 +462,8 @@ export function ExercisePicker({ open, onClose, athleteId, locale, onSelect }: E
   }
 
   async function create() {
-    const nameEl = query.trim()
-    if (nameEl === '') return
+    const name = query.trim()
+    if (name === '') return
     const id = newId()
     // The id is minted here, so the block can point at it without waiting for the write —
     // which on the local repository is instant and on a queued write may be hours. The muscle
@@ -466,8 +471,8 @@ export function ExercisePicker({ open, onClose, athleteId, locale, onSelect }: E
     // to classify the movement at all.
     const state = await createExercise.mutateAsync({
       id,
-      nameEl,
-      nameEn: nameEn.trim() === '' ? null : nameEn.trim(),
+      // The gym's list is named in English (011); what the coach typed is that one name.
+      nameEn: name,
       category,
       equipment: 'other',
       defaultSetKind: setKind,
@@ -492,7 +497,7 @@ export function ExercisePicker({ open, onClose, athleteId, locale, onSelect }: E
     closeFiling()
   }
 
-  function row(exercise: Exercise, meta?: string) {
+  function row(exercise: Exercise, meta?: string, underGroup: Uuid | null = null) {
     // Only a gym's OWN exercise can be refiled, and only one that is filed nowhere is offered
     // the shortcut: the shared catalogue ships classified, and the Library is where a coach
     // rearranges a movement that already has a home.
@@ -506,7 +511,7 @@ export function ExercisePicker({ open, onClose, athleteId, locale, onSelect }: E
             type="button"
             className="th-tap"
             style={{ ...rowStyle, flex: '1 1 auto', minWidth: 0 }}
-            onClick={() => choose(exercise.id)}
+            onClick={() => choose(exercise.id, underGroup)}
           >
             <CategoryPill category={exercise.category} dotOnly />
             <span>{exerciseName(exercise, locale)}</span>
@@ -640,7 +645,7 @@ export function ExercisePicker({ open, onClose, athleteId, locale, onSelect }: E
                 entry.group
                   ? muscleGroupName(entry.group, locale)
                   : t('muscles.unclassified'),
-                entry.exercises.map((exercise) => row(exercise)),
+                entry.exercises.map((exercise) => row(exercise, undefined, entry.group?.id ?? null)),
                 entry.group?.id ?? 'unclassified',
               ),
             )
@@ -661,16 +666,10 @@ export function ExercisePicker({ open, onClose, athleteId, locale, onSelect }: E
               {t('picker.noMatches')} — {t('picker.addCustomHint')}
             </p>
 
-            {/* The Greek name is what the coach just typed, so it is already correct and is
-                not asked for again. English is the optional courtesy, never the required one. */}
-            <Field label={t('library.nameEl')} hint={t('picker.createHint')}>
+            {/* The name is what the coach just typed, so it is already there and is not asked
+                for again. */}
+            <Field label={t('library.name')} hint={t('picker.createHint')}>
               {({ id }) => <Input id={id} value={query} readOnly aria-readonly="true" />}
-            </Field>
-
-            <Field label={t('library.nameEn')}>
-              {({ id }) => (
-                <Input id={id} value={nameEn} onChange={(event) => setNameEn(event.target.value)} />
-              )}
             </Field>
 
             {/* The owner's actual request, answered without leaving the session: the movement

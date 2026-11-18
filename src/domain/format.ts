@@ -129,6 +129,11 @@ export function formatSet(set: SetLike, kind: SetKind = set.kind, locale: Locale
     case 'duration': {
       const s = set.seconds
       if (s === null || s === undefined || !Number.isFinite(s) || s < 0) return EMPTY
+      // A held load reads load first, like every other set: «20 kg × 45 δευτ.» (a plank with a
+      // plate, a farmer's walk). Same wording as the Streamlit client.
+      if (load !== null && load !== undefined && Number.isFinite(load) && load > 0) {
+        return `${formatWeight(load, locale)} ${u.kg} × ${formatDuration(s, locale)}`
+      }
       return formatDuration(s, locale)
     }
     case 'distance': {

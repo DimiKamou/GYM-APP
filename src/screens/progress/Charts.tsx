@@ -123,18 +123,18 @@ export function TrendChart({ points, ariaLabel, caption, formatValue }: TrendCha
             vectorEffect="non-scaling-stroke"
           />
         ))}
-        <path d={area} fill="var(--th-accent)" fillOpacity={0.14} />
+        <path d={area} fill="var(--th-brand)" fillOpacity={0.14} />
         <path
           d={line}
           fill="none"
-          stroke="var(--th-accent)"
+          stroke="var(--th-brand)"
           strokeWidth={2}
           strokeLinecap="round"
           strokeLinejoin="round"
           vectorEffect="non-scaling-stroke"
         />
-        <circle cx={last.x} cy={last.y} r={9} fill="var(--th-accent)" fillOpacity={0.2} />
-        <circle cx={last.x} cy={last.y} r={4} fill="var(--th-accent)" />
+        <circle cx={last.x} cy={last.y} r={9} fill="var(--th-brand)" fillOpacity={0.2} />
+        <circle cx={last.x} cy={last.y} r={4} fill="var(--th-brand)" />
       </svg>
 
       <div style={axisRow}>
@@ -290,8 +290,8 @@ export function VolumeBars({ weeks }: VolumeBarsProps) {
               width={barWidth}
               height={height}
               rx={3}
-              fill="var(--th-accent)"
-              fillOpacity={index === weeks.length - 1 ? 1 : 0.45}
+              fill="var(--th-brand)"
+              fillOpacity={index === weeks.length - 1 ? 1 : 0.4}
             />
           )
         })}

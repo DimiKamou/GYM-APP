@@ -23,7 +23,7 @@ import { ExercisePicker } from '@/screens/log/ExercisePicker'
  *
  *   1. the RECENT strip is still the first thing in the sheet — grouping a catalogue is worth
  *      nothing if it costs the coach the one-tap path they use forty times a day;
- *   2. the catalogue underneath is folded under muscle-group headings, so "Πιέσεις Στήθους" is
+ *   2. the catalogue underneath is folded under muscle-group headings, so "Bench Press" is
  *      found under Στήθος without a character being typed;
  *   3. a chip narrows the sheet, and tapping it again gives everything back — a filter with no
  *      way off is the hidden dead end the category pre-filter used to be;
@@ -74,9 +74,19 @@ const auth: AuthContextValue = {
   missingEnv: [],
   resolvedOffline: false,
   isDemo: true,
+  athlete: null,
+  oauthProviders: [],
   error: null,
   signInWithOtp: async () => {},
   verifyOtp: async () => {},
+  signInWithPassword: async () => {},
+  signUpWithPassword: async () => ({ needsCode: false }),
+  signInWithProvider: async () => {},
+  completeOAuth: async () => {},
+  changePassword: async () => {},
+  deleteAccount: async () => {},
+  demoPersona: 'staff',
+  setDemoPersona: () => {},
   signOut: async () => {},
   reload: async () => {},
 }
@@ -224,7 +234,7 @@ async function groups(): Promise<MuscleGroup[]> {
 }
 
 function nameOf(exercise: Exercise): string {
-  return exercise.nameEl ?? exercise.nameEn ?? ''
+  return exercise.nameEn ?? exercise.nameEl ?? ''
 }
 
 beforeEach(() => {
@@ -272,7 +282,7 @@ describe('what the sheet opens on', () => {
     expect(positions).toEqual([...positions].sort((a, b) => a - b))
 
     // The clause from the owner's request, stated as an assertion: no typing, no filter.
-    expect(sectionNamed('Στήθος').rows.some((row) => row.includes('Πιέσεις Στήθους'))).toBe(true)
+    expect(sectionNamed('Στήθος').rows.some((row) => row.includes('Bench Press'))).toBe(true)
   })
 
   it('lists a movement with two primaries under both of its headings', async () => {
@@ -318,7 +328,7 @@ describe('narrowing the sheet', () => {
     expect(before.length).toBeGreaterThan(2)
     // The precondition, so the disappearance below is a filter working rather than a name
     // this sheet never showed in the first place.
-    expect(textOf(sheet())).toContain('Βαθύ Κάθισμα')
+    expect(textOf(sheet())).toContain('Back Squat')
 
     click(filterChip('Στήθος'))
     await settle(2)
@@ -327,8 +337,8 @@ describe('narrowing the sheet', () => {
     // hides — the fast path stays where it is under every filter.
     const filtered = labels().filter((label) => label !== i18n.t('picker.recent'))
     expect(filtered).toEqual(['Στήθος'])
-    expect(sectionNamed('Στήθος').rows.some((row) => row.includes('Πιέσεις Στήθους'))).toBe(true)
-    expect(textOf(sheet())).not.toContain('Βαθύ Κάθισμα')
+    expect(sectionNamed('Στήθος').rows.some((row) => row.includes('Bench Press'))).toBe(true)
+    expect(textOf(sheet())).not.toContain('Back Squat')
 
     click(filterChip('Στήθος'))
     await settle(2)
@@ -339,16 +349,16 @@ describe('narrowing the sheet', () => {
     renderPicker()
     await settle()
 
-    expect(textOf(sheet())).toContain('Βαθύ Κάθισμα')
+    expect(textOf(sheet())).toContain('Back Squat')
 
-    // No accents, no final sigma, and it still lands on "Πιέσεις Στήθους".
+    // No accents, no final sigma, and it still lands on "Bench Press".
     typeInto(searchBox(), 'πιεσεισ')
     await settle(2)
 
-    expect(textOf(sheet())).toContain('Πιέσεις Στήθους')
+    expect(textOf(sheet())).toContain('Bench Press')
     // A search is a filter, so the sheet goes flat: one list, under one heading.
     expect(labels()).toContain(i18n.t('picker.allExercises'))
-    expect(textOf(sheet())).not.toContain('Βαθύ Κάθισμα')
+    expect(textOf(sheet())).not.toContain('Back Squat')
   })
 })
 
@@ -372,8 +382,10 @@ describe('adding a movement without leaving the session', () => {
     )
     await settle()
 
-    const created = (await repo.listExercises(GYM)).find((row) => row.nameEl === 'Ζόρμπας Press')
+    // Stored as the one name the gym's list uses (011): English, `name_el` left empty.
+    const created = (await repo.listExercises(GYM)).find((row) => row.nameEn === 'Ζόρμπας Press')
     expect(created).toBeDefined()
+    expect(created?.nameEl).toBeNull()
     if (!created) return
 
     // Chosen for the block, so the coach is back on the sheet with a set to log.
@@ -393,10 +405,11 @@ describe('adding a movement without leaving the session', () => {
     // server's unique index still counts it, and choosing the minted id would point the block
     // at an exercise that will never exist.
     const ARCHIVED = '22222222-2222-4222-8222-222222222222'
+    // English, the namespace the picker now creates in (011): the server's indexes are one
+    // per language, so only a name in the same one can collide.
     await repo.createExercise(GYM, {
       id: ARCHIVED,
-      nameEl: 'Ζόρμπας Press',
-      nameEn: null,
+      nameEn: 'Zorbas Press',
       category: 'upper',
       equipment: 'other',
     })
@@ -404,7 +417,7 @@ describe('adding a movement without leaving the session', () => {
 
     renderPicker()
     await settle()
-    typeInto(searchBox(), 'Ζόρμπας Press')
+    typeInto(searchBox(), 'Zorbas Press')
     await settle()
     click(
       Array.from(sheet().querySelectorAll<HTMLElement>('button')).find(
@@ -416,7 +429,7 @@ describe('adding a movement without leaving the session', () => {
     expect(chosen).toEqual([])
     expect(textOf(sheet())).toContain(i18n.t('library.createFailed'))
     // Nothing was minted behind the refusal either.
-    const named = (await repo.listExercises(GYM)).filter((row) => row.nameEl === 'Ζόρμπας Press')
+    const named = (await repo.listExercises(GYM)).filter((row) => row.nameEn === 'Zorbas Press')
     expect(named.map((row) => row.id)).toEqual([ARCHIVED])
   })
 

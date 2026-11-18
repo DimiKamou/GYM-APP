@@ -134,7 +134,9 @@ describe('formatSet', () => {
     // A prescribed row can carry numbers its stored kind does not render; the caller
     // says which shape it wants rather than reaching for a second formatter.
     const row = set('duration', { loadKg: 80, reps: 8, seconds: 600 })
-    expect(formatSet(row)).toBe('10 λεπτά')
+    // A timed set may hold a load (#29): it reads load first, as Streamlit's format_set does.
+    expect(formatSet(row)).toBe('80 kg × 10 λεπτά')
+    expect(formatSet({ ...row, loadKg: null })).toBe('10 λεπτά')
     expect(formatSet(row, 'weight_reps')).toBe('80×8')
   })
 })

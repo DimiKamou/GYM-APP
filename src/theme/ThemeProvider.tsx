@@ -16,12 +16,13 @@ export type ThemePreference = 'system' | 'daylight' | 'slate'
 export type ResolvedTheme = 'daylight' | 'slate'
 
 const STORAGE_KEY = 'trainhub.theme'
+const DEFAULT_PREFERENCE: ThemePreference = 'slate'
 const DARK_QUERY = '(prefers-color-scheme: dark)'
 
 /** Fallback for the OS chrome colour when the stylesheet has not parsed yet (first paint, tests). */
 const FALLBACK_THEME_COLOR: Record<ResolvedTheme, string> = {
-  daylight: '#F4F0E7',
-  slate: '#161922',
+  daylight: '#FBF8F5',
+  slate: '#0B0A0C',
 }
 
 function isPreference(value: unknown): value is ThemePreference {
@@ -36,9 +37,11 @@ function isPreference(value: unknown): value is ThemePreference {
 function readStoredPreference(): ThemePreference {
   try {
     const raw = window.localStorage.getItem(STORAGE_KEY)
-    return isPreference(raw) ? raw : 'system'
+    // Nothing chosen yet: the brand, which is the dark theme, whatever the OS prefers.
+    // `system` stays one tap away in Settings.
+    return isPreference(raw) ? raw : DEFAULT_PREFERENCE
   } catch {
-    return 'system'
+    return DEFAULT_PREFERENCE
   }
 }
 
@@ -81,7 +84,7 @@ export function applyTheme(theme: ResolvedTheme): void {
   meta.content = fromCss || FALLBACK_THEME_COLOR[theme]
 }
 
-// Run before React mounts. An effect would paint one frame of Daylight into a dark room first,
+// Run before React mounts. An effect would paint one frame of the wrong theme first,
 // which on a phone at 7am is the difference between "themed app" and "flashbang".
 if (typeof document !== 'undefined') {
   applyTheme(resolveTheme(readStoredPreference()))

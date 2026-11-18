@@ -57,7 +57,7 @@ async function openScreen(page: Page, screen: ScreenName): Promise<void> {
   // matter most. Put one exercise on the sheet first.
   await page.getByRole('button', { name: /Προσθήκη άσκησης/ }).first().click()
   await page.waitForTimeout(600)
-  await page.locator('[role="dialog"] button').filter({ hasText: /Πιέσεις Στήθους/ }).first().click()
+  await page.locator('[role="dialog"] button').filter({ hasText: /Bench Press/ }).first().click()
   await page.waitForTimeout(700)
 }
 

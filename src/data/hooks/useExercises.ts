@@ -42,6 +42,22 @@ export function useExercises(): UseQueryResult<Exercise[]> {
   })
 }
 
+/**
+ * The exercises a session names that the live catalogue no longer holds — retired by 011, or
+ * merged into another. Without them an old session renders its blocks with no name at all.
+ */
+export function useExercisesByIds(ids: readonly Uuid[]): UseQueryResult<Exercise[]> {
+  const gymId = useGymId()
+  const repo = useRepo()
+  const sorted = [...ids].sort()
+  return useQuery({
+    queryKey: [...keys.exercises(gymId), 'by-id', sorted.join(',')] as const,
+    queryFn: () => (repo.getExercisesByIds ? repo.getExercisesByIds(gymId, sorted) : Promise.resolve([])),
+    enabled: sorted.length > 0 && typeof repo.getExercisesByIds === 'function',
+    staleTime: 10 * 60_000,
+  })
+}
+
 export function useRecentExercises(
   athleteId: Uuid | undefined,
   limit?: number,

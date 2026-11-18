@@ -121,7 +121,8 @@ const doneChip: CSSProperties = {
   color: 'var(--th-success)',
 }
 
-const actions: CSSProperties = { display: 'flex', gap: 10 }
+// minmax(0, …): two long Greek labels side by side otherwise push the second off the card.
+const actions: CSSProperties = { display: 'grid', gridAutoFlow: 'column', gridAutoColumns: 'minmax(0, 1fr)', gap: 10 }
 
 export function AppointmentCard({
   appointment,
@@ -212,13 +213,13 @@ export function AppointmentCard({
           ) : null}
 
           {appointment.sessionId ? (
-            <Button block variant="primary" trailingIcon="chevron" onClick={onOpenSession}>
+            <Button block variant="brand" trailingIcon="chevron" onClick={onOpenSession}>
               {t('calendar.openSession')}
             </Button>
           ) : (
             <Button
               block
-              variant="primary"
+              variant="brand"
               icon="dumbbell"
               onClick={onStart}
               loading={starting}
