@@ -179,7 +179,9 @@ export function Tabs<T extends string>({ tabs, value, onChange, label, children 
                 onClick={() => onChange(tab.id)}
                 onKeyDown={onKeyDown}
               >
-                {tab.icon ? <Icon name={tab.icon} size={17} strokeWidth={selected ? 2.2 : 1.7} /> : null}
+                {/* The icon marks the open tab only: three Greek labels with an icon each do not fit a
+                    360px phone, and one orange glyph says "you are here" better than five grey ones. */}
+                {tab.icon && selected ? <Icon name={tab.icon} size={17} strokeWidth={2.2} /> : null}
                 <span>{tab.label}</span>
                 {tab.badge ? <span className="th-tabs__badge num">{tab.badge}</span> : null}
               </button>

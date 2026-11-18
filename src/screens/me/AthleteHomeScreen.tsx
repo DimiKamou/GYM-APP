@@ -13,6 +13,7 @@ import { todayIn } from '@/screens/calendar/WeekStrip'
 import { MonthCalendar } from '@/screens/history/HistoryViews'
 import { buildWorkouts, useRecapContext } from '@/screens/history/workouts'
 import { InsightsOverview, RecordsCard } from '@/screens/insights/Insights'
+import { ProgramTab, useHasProgramTab } from '@/screens/me/ProgramTab'
 import { HistoryList } from '@/screens/athlete/HistoryList'
 import { ProgressView } from '@/screens/progress/ProgressSection'
 import { portalProgress } from '@/screens/me/portal'
@@ -20,8 +21,8 @@ import { portalProgress } from '@/screens/me/portal'
 /**
  * The athlete's panel: their own sheet, read-only.
  *
- * Four tabs, from the athlete's side of the clipboard: Αρχική (who is training them and on what,
- * the streak, the latest records), Ιστορικό, Πρόοδος and Ρεκόρ. Every
+ * Tabs, from the athlete's side of the clipboard: Αρχική (who is training them and on what,
+ * the streak, the latest records), Πρόγραμμα (from 016 on), Ιστορικό, Πρόοδος and Ρεκόρ. Every
  * session row carries its date and the coach who wrote it, exactly as the staff see it — "who
  * wrote this line" is the product, and an athlete asking "who put 80 on that?" deserves the
  * same answer the covering coach gets.
@@ -30,7 +31,7 @@ import { portalProgress } from '@/screens/me/portal'
  * sends it (see 015); nothing on this screen has to remember to hide it.
  */
 
-const PORTAL_TABS = ['home', 'history', 'progress', 'records'] as const
+const PORTAL_TABS = ['home', 'program', 'history', 'progress', 'records'] as const
 
 const headerRow: CSSProperties = {
   display: 'flex',
@@ -93,6 +94,7 @@ export function AthleteHomeScreen() {
   const portal = useAthletePortal()
   const [tab, setTab] = useTabParam(PORTAL_TABS, 'home')
   const [historyView, setHistoryView] = useState<'list' | 'month'>('list')
+  const hasProgram = useHasProgramTab()
 
   const progress = useMemo(() => (portal.data ? portalProgress(portal.data) : undefined), [portal.data])
   const ctx = useRecapContext(progress)
@@ -168,6 +170,7 @@ export function AthleteHomeScreen() {
         onChange={setTab}
         tabs={[
           { id: 'home', label: t('insights.tabHome'), icon: 'sparkle' },
+          ...(hasProgram ? [{ id: 'program' as const, label: t('insights.tabProgram'), icon: 'dumbbell' as const }] : []),
           { id: 'history', label: t('insights.tabHistory'), icon: 'list' },
           { id: 'progress', label: t('insights.tabProgress'), icon: 'chart' },
           { id: 'records', label: t('insights.tabRecords'), icon: 'trophy' },
@@ -175,6 +178,8 @@ export function AthleteHomeScreen() {
       >
         {(open) => {
           switch (open) {
+            case 'program':
+              return <ProgramTab />
             case 'history':
               return (
                 <section style={section} aria-label={t('athlete.history')}>

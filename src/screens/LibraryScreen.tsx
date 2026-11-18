@@ -1,5 +1,4 @@
 import { useState, type CSSProperties } from 'react'
-import { useNavigate } from 'react-router-dom'
 import { useTranslation } from 'react-i18next'
 
 import { newId } from '@/data/ids'
@@ -54,6 +53,7 @@ import {
   useToast,
 } from '@/ui'
 import { SyncStatus } from '@/ui/SyncStatus'
+import { LibraryTabs } from '@/screens/library/LibraryTabs'
 
 /**
  * The exercise catalogue.
@@ -250,7 +250,6 @@ export function LibraryScreen() {
 }
 
 function LibraryBody() {
-  const navigate = useNavigate()
   const { t } = useTranslation()
   const locale = currentLocale()
   const toast = useToast()
@@ -331,16 +330,17 @@ function LibraryBody() {
         <h1 className="display" style={titleStyle}>
           {t('library.title')}
         </h1>
+        {/* Icon-only, as on Αθλητές: a worded button beside a two-line Greek title ran off a
+            360px screen. The name stays as the accessible label. */}
         <Button
           variant="primary"
           icon="plus"
+          aria-label={t('library.add')}
           onClick={() => {
             setNotice(null)
             setCreating(true)
           }}
-        >
-          {t('library.add')}
-        </Button>
+        />
       </div>
 
       <div style={searchWrap}>
@@ -361,10 +361,7 @@ function LibraryBody() {
 
   return (
     <Screen label={t('library.title')} header={header} footerSafeArea={false}>
-      {/* Programmes are written from the catalogue's exercises, so their door is here. */}
-      <Button variant="secondary" icon="note" onClick={() => navigate('/programs')}>
-        {t('programs.title')}
-      </Button>
+      <LibraryTabs />
       {/* Above the filters rather than in the header: it must be readable without a tap and
           without pushing the search field off the first screenful. A dead-lettered op turns it
           into a banner here, which is the first thing the eye lands on. */}

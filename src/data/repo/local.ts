@@ -28,6 +28,7 @@ import type {
   AthleteIdentity,
   AthletePortal,
   AthleteProgram,
+  PortalProgram,
   AthleteShare,
   Program,
   ProgramDay,
@@ -608,9 +609,12 @@ export function createLocalRepo(
           athleteName: athlete.fullName,
           gymName: db.gym.name,
           period: { periodDays: share.periodDays ?? null, fromDate: from, toDate: to },
-          sessions,
-          blocks,
-          sets: live(db.sets).filter((x) => blockIds.has(x.blockId) && x.doneAt !== null),
+          // As shared_progress() does since 016: the staff's free text never leaves with a link.
+          sessions: sessions.map((x) => ({ ...x, notes: null })),
+          blocks: blocks.map((x) => ({ ...x, note: null })),
+          sets: live(db.sets)
+            .filter((x) => blockIds.has(x.blockId) && x.doneAt !== null)
+            .map((x) => ({ ...x, note: null })),
           exercises: db.exercises.filter((e) => exerciseIds.has(e.id)),
           exerciseMuscles: live(db.exerciseMuscles)
             .filter((m) => exerciseIds.has(m.exerciseId))
@@ -705,6 +709,15 @@ export function createLocalRepo(
 
     listAthleteSessions: (gymId, athleteId) =>
       read((db) => (gymOf(db, gymId) ? athleteSessionsDesc(db, athleteId) : [])),
+
+    listGymSessions: (gymId, from) =>
+      read((db) =>
+        gymOf(db, gymId)
+          ? live(db.sessions)
+              .filter((s) => s.localDate >= from)
+              .sort((a, b) => compareSessions(b, a))
+          : [],
+      ),
 
     listNotes: (gymId, athleteId) =>
       read((db) =>
@@ -1468,6 +1481,48 @@ export function createLocalRepo(
 
     getAthletePortal: () =>
       read((db): AthletePortal | null => portalOf(db, db.portalAthleteId ?? DEFAULT_PORTAL_ATHLETE)),
+
+    // As my_athlete_program() (016): names and targets, never the owner's remarks.
+    getMyProgram: () =>
+      read((db): PortalProgram | null => {
+        const athleteId = db.portalAthleteId ?? DEFAULT_PORTAL_ATHLETE
+        const assignment = assignmentOf(db, athleteId)
+        const program = assignment ? live(db.programs ?? []).find((p) => p.id === assignment.programId) : undefined
+        if (!assignment || !program) return null
+        const exercises = new Map(db.exercises.map((e) => [e.id, e]))
+        const last = athleteSessionsDesc(db, athleteId).find(
+          (s) => s.athleteProgramId === assignment.id && s.programStep !== null && s.programStep !== undefined,
+        )
+        return {
+          id: program.id,
+          name: program.name,
+          sequence: [...assignment.sequence],
+          lastStep: last?.programStep ?? null,
+          days: live(db.programDays ?? [])
+            .filter((d) => d.programId === program.id)
+            .sort(byPosition)
+            .map((d) => ({
+              id: d.id,
+              position: d.position,
+              name: d.name,
+              items: live(db.programItems ?? [])
+                .filter((i) => i.dayId === d.id)
+                .sort(byPosition)
+                .map((i) => ({
+                  id: i.id,
+                  position: i.position,
+                  exerciseId: i.exerciseId,
+                  nameEn: exercises.get(i.exerciseId)?.nameEn ?? null,
+                  nameEl: exercises.get(i.exerciseId)?.nameEl ?? null,
+                  equipment: i.equipment,
+                  sets: i.sets,
+                  reps: i.reps,
+                  loadKg: i.loadKg,
+                  seconds: i.seconds,
+                })),
+            })),
+        }
+      }),
 
     redeemAthleteInvite: (secret) =>
       serialize(async (): Promise<AthleteRedeemOutcome> => {

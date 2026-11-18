@@ -34,7 +34,8 @@ Android path depends on it.
 
 ## 1. Supabase — once, for both stores
 
-1. Paste `trainhub-αθλητες-στην-εφαρμογη.sql` (015) if it has not been pasted.
+1. Paste `trainhub-αθλητες-στην-εφαρμογη.sql` (015), then
+   `trainhub-σημειωσεις-ιδιωτικες-προγραμμα-αθλητη.sql` (016), if they have not been pasted.
 2. Authentication → URL Configuration → Redirect URLs, add **both**:
    - `https://<domain>/auth/callback` (website)
    - `gr.powerhouse.app://auth/callback` (store apps)

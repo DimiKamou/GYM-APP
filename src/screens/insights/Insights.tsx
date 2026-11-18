@@ -4,8 +4,8 @@ import { useTranslation } from 'react-i18next'
 import type { ProgressData } from '@/data/repo/types'
 import type { AnalyticsData } from '@/domain/analytics'
 import { shiftLocalDate } from '@/domain/calendar'
-import { formatDate, formatWeight } from '@/domain/format'
-import { personalRecords, weeklyFrequency, weekStreak, type PersonalRecord, type WeekCount } from '@/domain/insights'
+import { formatDate, formatSet, formatWeight } from '@/domain/format'
+import { personalRecords, weeklyFrequency, weekStreak, type PersonalRecord, type RecordMeasure, type WeekCount } from '@/domain/insights'
 import type { Block, Exercise, LocalDate, Membership, Uuid } from '@/domain/types'
 import { currentLocale } from '@/i18n'
 import { Card, EmptyState, Icon, type IconName } from '@/ui'
@@ -184,6 +184,13 @@ export function InsightsOverview(props: InsightsProps) {
 
 // ---------------------------------------------------------------------------
 
+const MEASURE_LABEL = {
+  kg: 'progress.est1rm',
+  reps: 'progress.maxReps',
+  seconds: 'insights.longestTime',
+  meters: 'insights.longestDistance',
+} as const satisfies Record<RecordMeasure, string>
+
 const row: CSSProperties = {
   display: 'grid',
   gridTemplateColumns: '36px minmax(0, 1fr) auto',
@@ -221,7 +228,14 @@ export function RecordsList({
       {shown.map((record, index) => {
         const exercise = byId.get(record.exerciseId)
         const author = record.authorId ? names.get(record.authorId) : undefined
-        const value = record.weighted ? formatWeight(record.value, locale, { unit: true }) : t('counts.rep', { count: record.value })
+        const value =
+          record.measure === 'kg'
+            ? formatWeight(record.value, locale, { unit: true })
+            : record.measure === 'seconds'
+              ? formatSet({ kind: 'duration', loadKg: null, reps: null, seconds: record.value, meters: null }, 'duration', locale)
+              : record.measure === 'meters'
+                ? formatSet({ kind: 'distance', loadKg: null, reps: null, seconds: null, meters: record.value }, 'distance', locale)
+                : t('counts.rep', { count: record.value })
         const detail = [
           record.weighted ? t('insights.recordSet', { kg: formatWeight(record.topKg, locale), reps: record.topReps }) : null,
           formatDate(record.date, locale),
@@ -259,7 +273,7 @@ export function RecordsList({
                 {value}
               </span>
               <span style={{ fontSize: 'var(--th-text-xs)', color: 'var(--th-faint)' }}>
-                {record.weighted ? t('progress.est1rm') : t('progress.maxReps')}
+                {t(MEASURE_LABEL[record.measure])}
               </span>
             </span>
           </div>

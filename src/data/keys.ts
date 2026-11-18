@@ -24,12 +24,14 @@ export const keys = {
    * cache is wiped on every change of identity, exactly as the staff keys are.
    */
   athletePortal: (athleteId: Uuid) => ['athlete', athleteId, 'portal'] as const,
+  athleteProgram: (athleteId: Uuid) => ['athlete', athleteId, 'program'] as const,
 
   /** The root of one gym's cache. Never used for a query — only for invalidate/remove. */
   gym: (gymId: Uuid) => ['gym', gymId] as const,
   gymProfile: (gymId: Uuid) => ['gym', gymId, 'profile'] as const,
 
   team: (gymId: Uuid) => ['gym', gymId, 'team'] as const,
+  gymSessions: (gymId: Uuid, from: LocalDate) => ['gym', gymId, 'sessions', from] as const,
   invites: (gymId: Uuid) => ['gym', gymId, 'invites'] as const,
 
   athletes: (gymId: Uuid) => ['gym', gymId, 'athletes'] as const,

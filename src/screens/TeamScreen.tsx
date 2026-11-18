@@ -3,6 +3,7 @@ import { useTranslation } from 'react-i18next'
 
 import { useAuth } from '@/auth/useAuth'
 import {
+  useGymSessions,
   useInviteTrainer,
   useInvites,
   useRevokeInvite,
@@ -14,8 +15,12 @@ import { normalizeText } from '@/domain/text'
 import { currentLocale } from '@/i18n'
 import type { WriteState } from '@/data/repo/types'
 import type { Invite, MemberRole, Membership, Uuid } from '@/domain/types'
-import { Avatar, Button, Card, Chip, EmptyState, Field, Icon, Input, Screen, Sheet, Spinner } from '@/ui'
+import { Avatar, Button, Card, Chip, EmptyState, Field, Icon, Input, Screen, Sheet, Spinner, Tabs, useTabParam } from '@/ui'
 import { publicOrigin } from '@/native/platform'
+import { coachActivity } from '@/domain/dashboard'
+import { shiftLocalDate } from '@/domain/calendar'
+import { TeamActivity } from '@/screens/DashboardScreen'
+import { todayIn } from '@/screens/calendar/WeekStrip'
 
 /**
  * The coaches, their roles, and the two irreversible things an owner can do.
@@ -138,6 +143,19 @@ function expiryDate(invite: Invite): string {
   return invite.expiresAt.slice(0, 10)
 }
 
+const TEAM_TABS = ['members', 'invites', 'activity'] as const
+
+/** Who wrote the gym's workouts over the last 30 days, as every sheet credits them. */
+function TeamActivityTab() {
+  const { t } = useTranslation()
+  const { gym } = useAuth()
+  const from = shiftLocalDate(todayIn(gym?.timezone ?? ''), -30)
+  const sessions = useGymSessions(from)
+  const team = useTeam()
+  if (sessions.isPending || team.isPending) return <Spinner label={t('common.loading')} />
+  return <TeamActivity coaches={coachActivity(sessions.data ?? [], team.data ?? [])} />
+}
+
 export function TeamScreen() {
   const { t } = useTranslation()
   const locale = currentLocale()
@@ -152,6 +170,7 @@ export function TeamScreen() {
   const [transferring, setTransferring] = useState(false)
   const [confirmingRemoval, setConfirmingRemoval] = useState<Uuid | null>(null)
   const [notice, setNotice] = useState<{ text: string; tone: 'ok' | 'bad' } | null>(null)
+  const [tab, setTab] = useTabParam(TEAM_TABS, 'members')
 
   // Not memoised: the local repository edits its rows in place, so an array identity is
   // not evidence that the rows inside it are unchanged.
@@ -192,10 +211,7 @@ export function TeamScreen() {
             setInviting(true)
           }}
           aria-label={t('team.invite')}
-        >
-          {/* The header shares its row with the title; the full name is the sheet's title. */}
-          {t('team.inviteShort')}
-        </Button>
+        />
       </div>
     </>
   )
@@ -228,150 +244,171 @@ export function TeamScreen() {
 
       {notice ? <Notice text={notice.text} tone={notice.tone} /> : null}
 
-      <h2 style={sectionTitle}>{t('team.roster')}</h2>
+      <Tabs
+        label={t('team.tabsLabel')}
+        value={tab}
+        onChange={setTab}
+        tabs={[
+          { id: 'members', label: t('team.tabMembers'), icon: 'users' },
+          { id: 'invites', label: t('team.tabInvites'), icon: 'plus', badge: pending.length },
+          { id: 'activity', label: t('team.tabActivity'), icon: 'chart' },
+        ]}
+      >
+        {(open) =>
+          open === 'invites' ? (
+            <>
+              <h2 style={sectionTitle}>{t('team.pendingInvites')}</h2>
 
-      {team.isPending ? (
-        <Spinner label={t('common.loading')} />
-      ) : team.isError ? (
-        <EmptyState
-          icon="alert"
-          title={t('team.loadFailed')}
-          description={t('errors.genericBody')}
-          action={
-            <Button variant="secondary" icon="undo" onClick={() => void team.refetch()}>
-              {t('common.retry')}
-            </Button>
-          }
-        />
-      ) : (
-        <div style={listStyle}>
-          {members.map((row) => {
-            const isMe = row.id === me?.id
-            const removable = isOwner && !isMe && row.role !== 'owner'
-            return (
-              <Card key={row.id}>
-                <div style={rowTop}>
-                  <Avatar fullName={row.displayName} size={40} />
-                  <span style={nameCol}>
-                    <span style={nameStyle}>
-                      {row.displayName}
-                      {isMe ? ` · ${t('common.you')}` : ''}
-                    </span>
-                    <span style={subStyle}>{row.email}</span>
-                  </span>
-                  <span style={{ display: 'flex', gap: 6, flexWrap: 'wrap', justifyContent: 'flex-end' }}>
-                    <Chip icon={row.role === 'owner' ? 'pin' : 'users'}>{t(`roles.${row.role}`)}</Chip>
-                    {row.status !== 'active' ? <Chip>{t(`statuses.${row.status}`)}</Chip> : null}
-                  </span>
-                </div>
-
-                {removable ? (
-                  <div style={rowActions}>
-                    {confirmingRemoval === row.id ? (
-                      <>
-                        <p style={bodyText}>
-                          <strong>{t('team.removeConfirm')}</strong> {t('team.removeExplain')}
-                        </p>
+              {invites.isPending ? (
+                <Spinner label={t('common.loading')} />
+              ) : pending.length === 0 ? (
+                <p style={mutedText}>{t('team.noPending')}</p>
+              ) : (
+                <div style={listStyle}>
+                  {pending.map((row) => (
+                    <Card key={row.id}>
+                      <div style={rowTop}>
+                        <span style={nameCol}>
+                          <span style={nameStyle}>{row.email ?? t('team.openInvite')}</span>
+                          <span style={subStyle}>
+                            {t(`roles.${row.role}`)} ·{' '}
+                            {t('team.expires', { date: formatDate(expiryDate(row), locale) })}
+                          </span>
+                        </span>
                         <Button
-                          variant="danger"
-                          icon="trash"
-                          loading={updateMember.isPending}
-                          disabled={updateMember.isPending}
-                          onClick={() => void removeTrainer(row)}
+                          variant="dangerQuiet"
+                          size="sm"
+                          disabled={!isOwner || revoke.isPending}
+                          title={isOwner ? undefined : t('team.ownerOnly')}
+                          onClick={async () => {
+                            const state = await revoke.mutateAsync(row.id)
+                            setNotice(
+                              state === 'failed'
+                                ? { text: t('team.revokeFailed'), tone: 'bad' }
+                                : { text: t('team.revokeDone'), tone: 'ok' },
+                            )
+                          }}
                         >
-                          {t('team.removeTrainer')}
+                          {t('team.revoke')}
                         </Button>
-                        <Button variant="quiet" onClick={() => setConfirmingRemoval(null)}>
-                          {t('common.cancel')}
-                        </Button>
-                      </>
-                    ) : (
-                      // One of the two survivors of the confirm-dialog cull: removing a
-                      // trainer is not something a six-second undo toast can carry.
-                      <Button
-                        variant="dangerQuiet"
-                        icon="trash"
-                        onClick={() => {
-                          setNotice(null)
-                          setConfirmingRemoval(row.id)
-                        }}
-                      >
-                        {t('team.removeTrainer')}
-                      </Button>
-                    )}
-                  </div>
-                ) : null}
-              </Card>
-            )
-          })}
-        </div>
-      )}
+                      </div>
+                    </Card>
+                  ))}
+                </div>
+              )}
+            </>
+          ) : open === 'activity' ? (
+            <TeamActivityTab />
+          ) : (
+            <>
+              <h2 style={sectionTitle}>{t('team.roster')}</h2>
 
-      {isOwner ? (
-        <Card tone="flat">
-          <p style={bodyText}>
-            <strong>{t('team.transfer')}</strong>
-          </p>
-          <p style={{ ...mutedText, marginTop: 6 }}>
-            {successors.length === 0
-              ? t('team.transferNoCandidates')
-              : t('team.transferExplain', { name: successors[0].displayName })}
-          </p>
-          <div style={{ marginTop: 10 }}>
-            <Button
-              variant="dangerQuiet"
-              icon="users"
-              disabled={successors.length === 0}
-              onClick={() => {
-                setNotice(null)
-                setTransferring(true)
-              }}
-            >
-              {t('team.transfer')}
-            </Button>
-          </div>
-        </Card>
-      ) : null}
+              {team.isPending ? (
+                <Spinner label={t('common.loading')} />
+              ) : team.isError ? (
+                <EmptyState
+                  icon="alert"
+                  title={t('team.loadFailed')}
+                  description={t('errors.genericBody')}
+                  action={
+                    <Button variant="secondary" icon="undo" onClick={() => void team.refetch()}>
+                      {t('common.retry')}
+                    </Button>
+                  }
+                />
+              ) : (
+                <div style={listStyle}>
+                  {members.map((row) => {
+                    const isMe = row.id === me?.id
+                    const removable = isOwner && !isMe && row.role !== 'owner'
+                    return (
+                      <Card key={row.id}>
+                        <div style={rowTop}>
+                          <Avatar fullName={row.displayName} size={40} />
+                          <span style={nameCol}>
+                            <span style={nameStyle}>
+                              {row.displayName}
+                              {isMe ? ` · ${t('common.you')}` : ''}
+                            </span>
+                            <span style={subStyle}>{row.email}</span>
+                          </span>
+                          <span style={{ display: 'flex', gap: 6, flexWrap: 'wrap', justifyContent: 'flex-end' }}>
+                            <Chip icon={row.role === 'owner' ? 'pin' : 'users'}>{t(`roles.${row.role}`)}</Chip>
+                            {row.status !== 'active' ? <Chip>{t(`statuses.${row.status}`)}</Chip> : null}
+                          </span>
+                        </div>
 
-      <h2 style={sectionTitle}>{t('team.pendingInvites')}</h2>
-
-      {invites.isPending ? (
-        <Spinner label={t('common.loading')} />
-      ) : pending.length === 0 ? (
-        <p style={mutedText}>{t('team.noPending')}</p>
-      ) : (
-        <div style={listStyle}>
-          {pending.map((row) => (
-            <Card key={row.id}>
-              <div style={rowTop}>
-                <span style={nameCol}>
-                  <span style={nameStyle}>{row.email ?? t('team.openInvite')}</span>
-                  <span style={subStyle}>
-                    {t(`roles.${row.role}`)} ·{' '}
-                    {t('team.expires', { date: formatDate(expiryDate(row), locale) })}
-                  </span>
-                </span>
-                <Button
-                  variant="dangerQuiet"
-                  size="sm"
-                  disabled={!isOwner || revoke.isPending}
-                  title={isOwner ? undefined : t('team.ownerOnly')}
-                  onClick={async () => {
-                    const state = await revoke.mutateAsync(row.id)
-                    setNotice(
-                      state === 'failed'
-                        ? { text: t('team.revokeFailed'), tone: 'bad' }
-                        : { text: t('team.revokeDone'), tone: 'ok' },
+                        {removable ? (
+                          <div style={rowActions}>
+                            {confirmingRemoval === row.id ? (
+                              <>
+                                <p style={bodyText}>
+                                  <strong>{t('team.removeConfirm')}</strong> {t('team.removeExplain')}
+                                </p>
+                                <Button
+                                  variant="danger"
+                                  icon="trash"
+                                  loading={updateMember.isPending}
+                                  disabled={updateMember.isPending}
+                                  onClick={() => void removeTrainer(row)}
+                                >
+                                  {t('team.removeTrainer')}
+                                </Button>
+                                <Button variant="quiet" onClick={() => setConfirmingRemoval(null)}>
+                                  {t('common.cancel')}
+                                </Button>
+                              </>
+                            ) : (
+                              // One of the two survivors of the confirm-dialog cull: removing a
+                              // trainer is not something a six-second undo toast can carry.
+                              <Button
+                                variant="dangerQuiet"
+                                icon="trash"
+                                onClick={() => {
+                                  setNotice(null)
+                                  setConfirmingRemoval(row.id)
+                                }}
+                              >
+                                {t('team.removeTrainer')}
+                              </Button>
+                            )}
+                          </div>
+                        ) : null}
+                      </Card>
                     )
-                  }}
-                >
-                  {t('team.revoke')}
-                </Button>
-              </div>
-            </Card>
-          ))}
-        </div>
-      )}
+                  })}
+                </div>
+              )}
+
+              {isOwner ? (
+                <Card tone="flat">
+                  <p style={bodyText}>
+                    <strong>{t('team.transfer')}</strong>
+                  </p>
+                  <p style={{ ...mutedText, marginTop: 6 }}>
+                    {successors.length === 0
+                      ? t('team.transferNoCandidates')
+                      : t('team.transferExplain', { name: successors[0].displayName })}
+                  </p>
+                  <div style={{ marginTop: 10 }}>
+                    <Button
+                      variant="dangerQuiet"
+                      icon="users"
+                      disabled={successors.length === 0}
+                      onClick={() => {
+                        setNotice(null)
+                        setTransferring(true)
+                      }}
+                    >
+                      {t('team.transfer')}
+                    </Button>
+                  </div>
+                </Card>
+              ) : null}
+            </>
+          )
+        }
+      </Tabs>
 
       <InviteSheet
         open={inviting}

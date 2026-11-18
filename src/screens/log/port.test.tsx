@@ -248,6 +248,10 @@ describe('programmes and links follow the server’s rules', () => {
     const page = await shares?.fetch(token)
     expect(page?.athleteName).toBeTruthy()
     expect(page?.sessions.every((s) => s.athleteId === NIKOS)).toBe(true)
+    // The staff's free text stays with the staff (016).
+    expect(page?.sessions.some((s) => s.notes)).toBe(false)
+    expect(page?.blocks.some((b) => b.note)).toBe(false)
+    expect(page?.sets.some((x) => x.note)).toBe(false)
     await shares?.revoke(GYM, token)
     expect(await shares?.fetch(token)).toBeNull()
   })

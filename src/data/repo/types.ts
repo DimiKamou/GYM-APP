@@ -20,6 +20,7 @@ import type {
   AppointmentType,
   Athlete,
   AthleteProgram,
+  PortalProgram,
   AthleteShare,
   Block,
   Program,
@@ -194,6 +195,8 @@ export interface Repo {
   /** The five-second read: pinned warnings, the latest note, and the last session in one line. */
   getBriefing(gymId: Uuid, athleteId: Uuid): Promise<Briefing | null>
   listAthleteSessions(gymId: Uuid, athleteId: Uuid): Promise<Session[]>
+  /** Every live session in the gym from `from` on: the owner's dashboard and the team's activity. */
+  listGymSessions(gymId: Uuid, from: LocalDate): Promise<Session[]>
   listNotes(gymId: Uuid, athleteId: Uuid): Promise<Array<Note & { authorName: string | null }>>
   getProgressData(gymId: Uuid, athleteId: Uuid): Promise<ProgressData>
 
@@ -332,6 +335,11 @@ export interface AthleteSide {
   getMyAthlete(): Promise<AthleteIdentity | null>
   getAthletePortal(): Promise<AthletePortal | null>
   redeemAthleteInvite(secret: string): Promise<AthleteRedeemOutcome>
+  /**
+   * `my_athlete_program()` (016). Null when there is no programme; 'unavailable' on a database
+   * before 016, where the tab is simply not drawn.
+   */
+  getMyProgram?(): Promise<PortalProgram | null | 'unavailable'>
 }
 
 export function athleteSideOf(repo: Repo): AthleteSide | null {

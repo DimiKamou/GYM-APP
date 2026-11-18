@@ -71,6 +71,7 @@ export const el = {
   },
 
   nav: {
+    dashboard: 'Πίνακας',
     athletes: 'Αθλητές',
     calendar: 'Ημερολόγιο',
     library: 'Ασκήσεις',
@@ -233,6 +234,10 @@ export const el = {
 
   /** The athlete's own panel. */
   portal: {
+    programNone: 'Ο προπονητής σου δεν σου έχει δώσει πρόγραμμα ακόμα.',
+    programOrder: 'Σειρά ημερών',
+    programNext: 'Επόμενη',
+    programEmptyDay: 'Χωρίς ασκήσεις ακόμα.',
     title: 'Το πρόγραμμά μου',
     account: 'Λογαριασμός',
     gym: 'Γυμναστήριο',
@@ -547,6 +552,7 @@ export const el = {
   },
 
   library: {
+    sections: 'Ενότητες βιβλιοθήκης',
     title: 'Βιβλιοθήκη ασκήσεων',
     add: 'Νέα άσκηση',
     category: 'Κατηγορία',
@@ -596,10 +602,13 @@ export const el = {
   },
 
   team: {
+    tabsLabel: 'Ενότητες ομάδας',
+    tabMembers: 'Μέλη',
+    tabInvites: 'Προσκλήσεις',
+    tabActivity: 'Δραστηριότητα',
     title: 'Ομάδα',
     roster: 'Σύνθεση',
     invite: 'Πρόσκληση προπονητή',
-    inviteShort: 'Πρόσκληση',
     inviteEmail: 'Email προπονητή',
     sendInvite: 'Αποστολή',
     pendingInvites: 'Εκκρεμείς προσκλήσεις',
@@ -753,7 +762,34 @@ export const el = {
     resetMismatch: 'Η λέξη δεν ταιριάζει.',
   },
 
+  dashboard: {
+    pendingInvites_one: '{{count}} εκκρεμής πρόσκληση',
+    pendingInvites_other: '{{count}} εκκρεμείς προσκλήσεις',
+    manageTeam: 'Διαχείριση ομάδας',
+    title: 'Πίνακας',
+    tabsLabel: 'Ενότητες πίνακα',
+    tabOverview: 'Επισκόπηση',
+    tabAthletes: 'Αθλητές',
+    tabTeam: 'Ομάδα',
+    weekVs: 'Εβδομάδα · πριν {{count}}',
+    activeAthletes: 'Ενεργοί αθλητές (30 ημ.)',
+    today: 'Ραντεβού σήμερα',
+    drifting: 'Χρειάζονται ένα τηλέφωνο',
+    gymWeeks: 'Προπονήσεις γυμναστηρίου ανά εβδομάδα',
+    driftHint: 'Αθλητές χωρίς προπόνηση για {{days}}+ ημέρες. Η μεγαλύτερη απουσία πρώτη.',
+    daysAgo_one: '{{count}} ημέρα',
+    daysAgo_other: '{{count}} ημέρες',
+    lastOn: 'τελευταία {{date}}',
+    never: 'Καμία προπόνηση ακόμα',
+    allGood: 'Όλοι οι αθλητές προπονήθηκαν τις τελευταίες δύο εβδομάδες.',
+    teamTitle: 'Η ομάδα, τελευταίες 30 ημέρες',
+    teamHint: 'Ποιος έγραψε τις προπονήσεις, όπως το λέει κάθε φύλλο.',
+    noActivity: 'Καμία προπόνηση αυτόν τον μήνα',
+  },
+
   insights: {
+    longestTime: 'Μεγ. χρόνος',
+    longestDistance: 'Μεγ. απόσταση',
     tabsLabel: 'Ενότητες αθλητή',
     tabHistory: 'Ιστορικό',
     tabProgress: 'Πρόοδος',
@@ -770,7 +806,7 @@ export const el = {
     frequencyHint: 'Οι τελευταίες 12 εβδομάδες· η τελευταία στήλη είναι η τρέχουσα.',
     weekSessions: 'Εβδομάδα {{date}}: {{count}}',
     recordsTitle: 'Προσωπικά ρεκόρ',
-    recordsHint: 'Η καλύτερη μέρα κάθε άσκησης: εκτιμώμενο 1RM με βάρος, επαναλήψεις χωρίς.',
+    recordsHint: 'Η καλύτερη μέρα κάθε άσκησης: εκτιμώμενο 1RM με βάρος, επαναλήψεις χωρίς, χρόνος ή απόσταση για αντοχή.',
     recordsEmpty: 'Κανένα ρεκόρ ακόμα',
     recordSet: '{{kg}} × {{reps}}',
     recordFrom: 'από {{count}} προπονήσεις',

@@ -561,3 +561,21 @@ membership, no athlete link — but it can call `bootstrap_gym()` and create an
 empty second gym, after which 006 and 011 refuse to run again. If that happens:
 `update public.gyms set deleted_at = now() where id = '<the stray gym>';`
 
+
+## 11. Private notes on share links, and the athlete's programme (`016`)
+
+Paste `trainhub-σημειωσεις-ιδιωτικες-προγραμμα-αθλητη.sql` from the repository
+root (`016_private_notes_athlete_program.sql`, byte for byte). It needs 013. One
+DO block, re-runnable.
+
+- **`shared_progress(token)`** no longer returns `sessions.notes`, `blocks.note`
+  or `sets.note`. A share link goes to an athlete or a parent and can be
+  forwarded; those columns are written for the next coach. Neither client drew
+  them, so nothing on screen changes — only what leaves the server.
+- **`my_athlete_program()`** — the signed-in athlete's programme: name, order of
+  days, the step their last workout trained, each day's targets. Column by
+  column; `programs.notes` and `program_items.note` stay with the staff. The
+  athlete panel's Πρόγραμμα tab appears once this has run.
+
+`tests/09_private_notes_program_test.sql` asserts both, including that no note
+text reaches either function.
