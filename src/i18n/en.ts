@@ -410,6 +410,11 @@ export const en: Translation = {
   },
 
   log: {
+    openWorkouts: 'Open workouts',
+    addAthleteTab: 'Athlete',
+    addAthleteTitle: 'Add an athlete to the session',
+    addAthleteHint: 'Each athlete gets their own workout, on their own sheet. Switch between them with the tabs.',
+    closeWorkoutTab: 'Close tab: {{name}}',
     addSuperset: 'Super set',
     doneExercise: 'Done with this exercise',
     forGroup: 'For which muscle group',

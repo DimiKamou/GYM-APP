@@ -450,6 +450,11 @@ export const el = {
   },
 
   log: {
+    openWorkouts: 'Ανοιχτές προπονήσεις',
+    addAthleteTab: 'Αθλητής',
+    addAthleteTitle: 'Προσθήκη αθλητή στο περσοναλ',
+    addAthleteHint: 'Κάθε αθλητής παίρνει τη δική του προπόνηση, στο δικό του φύλλο. Εναλλάσσεσαι από τις καρτέλες.',
+    closeWorkoutTab: 'Κλείσιμο καρτέλας: {{name}}',
     addSuperset: 'Super set',
     doneExercise: 'Τέλος άσκησης',
     forGroup: 'Για ποια μυϊκή ομάδα',

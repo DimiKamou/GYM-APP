@@ -174,7 +174,7 @@ export function Screen({
         {t('a11y.skipToContent')}
       </a>
 
-      {header ? <div style={headerStyle}>{header}</div> : null}
+      {header ? <div style={headerStyle} className="th-screen-header">{header}</div> : null}
       <div
         id={bodyId}
         // Focusable but not tabbable: it is the skip link's landing pad, never a stop of its
