@@ -1095,3 +1095,15 @@
   background: var(--th-brand);
   box-shadow: 0 0 12px color-mix(in srgb, var(--th-brand) 60%, transparent);
 }
+
+/* A workout tab carries the athlete's initials: in a room of three, a face-sized cue beats a name. */
+.th-session-tab__avatar {
+  display: inline-flex;
+}
+
+/* In a screen's fixed header the strip sits flush at the top, not stuck inside a scroller. */
+.th-screen-header .th-tabs {
+  position: static;
+  margin-bottom: 10px;
+  padding-top: 0;
+}

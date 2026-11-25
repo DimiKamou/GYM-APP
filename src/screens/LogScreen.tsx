@@ -34,6 +34,7 @@ import { formatDate, formatSet, formatWeight, type Locale } from '@/domain/forma
 import type { Block, Equipment, LastPerformance, SetKind, Uuid, WorkoutSet } from '@/domain/types'
 import { currentLocale } from '@/i18n'
 import {
+  afterSheetClosed,
   Button,
   EmptyState,
   Keypad,
@@ -56,7 +57,10 @@ import { useHistory, workoutsBefore, type Workout } from '@/screens/history/work
 import { useMuscleIndex } from '@/screens/log/ExercisePicker'
 import { todayIn } from '@/screens/calendar/WeekStrip'
 import { muscleGroupName } from '@/ui/MuscleChip'
-import { useAuth } from '@/auth/useAuth'
+import { useAuth, useGymId } from '@/auth/useAuth'
+import { useOpenSessions } from '@/data/openSessions'
+import { neighbourOf } from '@/domain/openSessions'
+import { SessionTabs } from '@/screens/log/SessionTabs'
 
 /**
  * The Workout Log — the screen the whole product is timed against.
@@ -244,12 +248,19 @@ function withSessionRpe(notes: string | null, rpe: number): string {
  * one is added later, is harmless — the nearest provider wins for this subtree.
  */
 export function LogScreen() {
+  // Keyed by the workout: switching athletes in a group session is a fresh screen, so nothing of
+  // Νίκος's — an open pad, a picker, a half-typed number — can land on Ελένη's sheet. The toast
+  // provider stays outside the key, so «Η προπόνηση ολοκληρώθηκε» survives the switch.
+  const { sessionId } = useParams<'sessionId'>()
   return (
     <ToastProvider>
-      <LogScreenBody />
+      <LogScreenBody key={sessionId} />
     </ToastProvider>
   )
 }
+
+/** Each workout's rest timer, kept across tab switches: three athletes rest on three clocks. */
+const restBySession = new Map<Uuid, number>()
 
 function LogScreenBody() {
   const { t } = useTranslation()
@@ -288,7 +299,23 @@ function LogScreenBody() {
     (session?.blocks ?? []).map((b) => b.programItemId).filter((id): id is Uuid => Boolean(id)),
   )
   const updateBlock = useUpdateBlock()
-  const [restEndsAt, setRestEndsAt] = useState<number | null>(null)
+  const [restEndsAt, setRestEndsAt] = useState<number | null>(() => (sessionId ? (restBySession.get(sessionId) ?? null) : null))
+  useEffect(() => {
+    if (!sessionId) return
+    if (restEndsAt) restBySession.set(sessionId, restEndsAt)
+    else restBySession.delete(sessionId)
+  }, [restEndsAt, sessionId])
+  const { membership } = useAuth()
+  const gymId = useGymId()
+  const openSessions = useOpenSessions(gymId, membership?.id ?? null)
+  const isOpenTab = openSessions.list.some((e) => e.sessionId === sessionId)
+  // A workout being logged is a tab; an old, finished one opened to read it is not.
+  const registerTab = openSessions.open
+  useEffect(() => {
+    if (sessionId && session && session.status !== 'finished') registerTab(sessionId, session.athleteId)
+    // Once per workout: re-registering on every set would keep restarting its expiry clock.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [sessionId, session?.athleteId, session?.status === 'finished'])
   const [finishOpen, setFinishOpen] = useState(false)
   const [finishing, setFinishing] = useState(false)
 
@@ -661,6 +688,10 @@ function LogScreenBody() {
       await finishSession.mutateAsync({ sessionId, athleteId })
       setFinishOpen(false)
       toast.show({ message: t('log.sessionFinished') })
+      // In a group session, the next athlete's tab: the coach is still in the room.
+      const next = neighbourOf(openSessions.list, sessionId)
+      openSessions.close(sessionId)
+      if (next) afterSheetClosed(() => navigate(`/log/${next.sessionId}`, { replace: true }))
     } finally {
       setFinishing(false)
     }
@@ -827,6 +858,11 @@ function LogScreenBody() {
       <Screen
         label={t('log.title')}
         header={
+          <>
+          {/* Above the name: a tab changes the whole sheet, name and warnings included. */}
+          {session.status !== 'finished' || isOpenTab ? (
+            <SessionTabs sessionId={session.id} athleteId={session.athleteId} />
+          ) : null}
           <SessionHeader
             session={session}
             athlete={athlete.data}
@@ -839,6 +875,7 @@ function LogScreenBody() {
             onBack={goBack}
             onTitleChange={renameSession}
           />
+          </>
         }
         footer={
           <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>

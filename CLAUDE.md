@@ -25,6 +25,9 @@ feature is.
   it; it reads only through `my_athlete()` / `my_athlete_portal()`, which build every object column by
   column. Never give athletes access by adding a role to `memberships` or a permissive policy to a table —
   either opens every athlete's sheet and every staff note in the gym.
+- **A personal session for two or three is two or three workouts**, each on its own athlete's sheet, open as
+  tabs above the log (`src/domain/openSessions.ts`, kept per gym and member on the phone, expiring after
+  4 hours). Never one shared session for a group: every set must stay on one athlete's sheet with its coach.
 - **Assignment is a filter, never a fence.** Any active member may log for any athlete in the gym. Fencing by
   assignment stops work when a coach covers a sick colleague, and the workaround is a shared login.
 - **Greek is the default locale.** English is the fallback.
